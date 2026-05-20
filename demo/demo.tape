@@ -1,24 +1,32 @@
-# turbo-bible demo
+# turbo-bible demo — tuned for social sharing (Snapchat / Discord).
 #
 # Render with:
 #   vhs demo/demo.tape
 #
 # Requires:
-#   - `cargo build --release` has been run (we invoke ./target/release/turbo-bible).
+#   - `cargo build --release` has been run.
 #   - The bible.sqlite has been populated by scripts/import_translations.py.
 #
-# The tape isolates config state under a temp XDG_CONFIG_HOME so the demo
-# starts on a clean splash (no "Continue" entry from prior runs).
+# Tuning notes (vs. earlier readme-style tape):
+#   - FontSize 20 → readable on phone screens.
+#   - Terminal width sits just under the 120-col sidebar threshold, so the
+#     reading pane uses the full width (no half-empty "References" gutter).
+#   - WindowBar adds a chrome frame that looks polished in Discord previews.
+#   - Sleeps trimmed ~40% and typing sped up so the whole loop is ~22s.
+#   - XDG_CONFIG_HOME is redirected to a temp dir → splash starts clean
+#     every re-record.
 
 Output demo/demo.gif
 
-Set Shell    "bash"
-Set FontSize 14
-Set Width    1400
-Set Height   820
-Set Padding  20
-Set Theme    "Catppuccin Mocha"
-Set TypingSpeed 55ms
+Set Shell        "bash"
+Set FontSize     20
+Set Width        1400
+Set Height       820
+Set Padding      18
+Set Theme        "Catppuccin Mocha"
+Set TypingSpeed  35ms
+Set WindowBar    Colorful
+Set WindowBarSize 36
 
 # --- Setup (hidden) -----------------------------------------------------
 Hide
@@ -31,86 +39,81 @@ Show
 # --- Launch -------------------------------------------------------------
 Type "./target/release/turbo-bible"
 Enter
-Sleep 2500ms
-
-# --- Splash: filterable book picker -------------------------------------
-# Show the title art + daily verse + OT/NT columns for a beat.
 Sleep 1500ms
 
-# Filter the book list — narrows both OT (Job, Joshua, Joel, Jonah) and
-# NT (John, 1/2/3 John) to anything matching "jo".
+# --- Splash: filterable book picker -------------------------------------
+Sleep 800ms
+
+# Filter "jo" → narrows OT (Job/Joshua/Joel/Jonah) + NT (John, 1/2/3 John).
 Type "/"
-Sleep 400ms
+Sleep 250ms
 Type "jo"
-Sleep 1200ms
+Sleep 700ms
 Enter
-Sleep 600ms
+Sleep 350ms
 
-# Hop over to the New Testament column and open John.
+# Hop to the New Testament column and open John.
 Tab
-Sleep 600ms
+Sleep 350ms
 Enter
-Sleep 2500ms
+Sleep 1400ms
 
-# --- Reading: move the cursor through John 1 ----------------------------
+# --- Reading: walk the cursor through John 1 ----------------------------
 Down
-Sleep 300ms
+Sleep 180ms
 Down
-Sleep 300ms
+Sleep 180ms
 Down
-Sleep 300ms
+Sleep 180ms
 Down
-Sleep 300ms
-Down
-Sleep 600ms
+Sleep 350ms
 
 # --- Goto dialog: jump straight to John 3:16 ----------------------------
 Type ":"
-Sleep 500ms
+Sleep 250ms
 Type "John 3:16"
-Sleep 900ms
+Sleep 550ms
 Enter
-Sleep 2500ms
+Sleep 1700ms
 
 # --- Find dialog: FTS5 search for "love" --------------------------------
 Type "/"
-Sleep 500ms
+Sleep 250ms
 Type "love"
-Sleep 1200ms
-# Browse a few BM25-ranked hits, then jump to one.
+Sleep 700ms
 Down
-Sleep 350ms
+Sleep 220ms
 Down
-Sleep 350ms
+Sleep 220ms
 Down
-Sleep 350ms
+Sleep 220ms
 Enter
-Sleep 2500ms
+Sleep 1600ms
 
-# --- Bookmarks: toggle on the current verse, open list, dismiss ---------
+# --- Bookmarks: toggle then open the list -------------------------------
 Type "b"
-Sleep 800ms
+Sleep 450ms
 Type "M"
-Sleep 1800ms
+Sleep 1300ms
 Escape
-Sleep 800ms
+Sleep 350ms
 
-# --- Translations picker: switch to Bibelen 1930 (Norwegian) ------------
+# --- Translations: switch to Reina-Valera 1909 (Spanish) ----------------
 Type "t"
-Sleep 1200ms
+Sleep 700ms
 Down
-Sleep 500ms
+Sleep 350ms
 Enter
-Sleep 2500ms
+Sleep 1800ms
 
 # --- Help overlay -------------------------------------------------------
 Type ":help"
-Sleep 600ms
+Sleep 350ms
 Enter
-Sleep 3000ms
+Sleep 2200ms
 Escape
-Sleep 600ms
+Sleep 350ms
 
 # --- Quit ---------------------------------------------------------------
 Type "q"
-Sleep 600ms
+Sleep 400ms
