@@ -73,16 +73,17 @@ pub struct TranslationInfo {
     pub license: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Book {
     pub code: String,
     pub name: String,
     pub abbreviation: String,
     pub testament: String,
-    #[expect(
-        dead_code,
-        reason = "roadmap: canonical ordinal exposed to consumers; iteration order is already enforced by the SELECT's `ORDER BY b.ord` server-side"
-    )]
+    // Canonical ordinal kept on the struct so consumers don't have to round-trip
+    // through the DB. Iteration order is already enforced by the SELECT's
+    // `ORDER BY b.ord` server-side; this field exists to support sort/compare
+    // off the in-memory list. (Derived PartialEq now reads it too, so dead_code
+    // no longer applies.)
     pub ord: i64,
     /// Full title from the source page (e.g. "Evangeliet etter Matteus").
     /// Falls back to `name` when not populated.

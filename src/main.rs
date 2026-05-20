@@ -82,11 +82,7 @@ impl History {
     }
     fn push(&mut self, p: Position) {
         self.stack.truncate(self.cur + 1);
-        if self
-            .stack
-            .last()
-            .is_none_or(|last| last.book != p.book || last.chapter != p.chapter)
-        {
+        if self.stack.last().is_none_or(|last| !last.same_chapter(&p)) {
             self.stack.push(p);
             self.cur = self.stack.len() - 1;
         }

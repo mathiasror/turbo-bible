@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::{LEGACY_TRANSLATION, REPLACEMENT_TRANSLATION};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Bookmark {
     pub translation: String,
     pub book: String,

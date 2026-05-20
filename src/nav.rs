@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 
 use crate::db::{Book, Db};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Position {
     pub book: String,
     pub chapter: i64,
@@ -12,6 +12,15 @@ pub struct Position {
     /// cursor on verse `v` (e.g. find-results, bookmarks, `:John 3:16`).
     /// `None` means "no preference" — the receiver lands on verse 1.
     pub verse: Option<i64>,
+}
+
+impl Position {
+    /// Chapter-level equality: same book + chapter, regardless of verse hint.
+    /// Used by the History stack to dedup consecutive entries that resolve to
+    /// the same chapter even if the cursor verse differs.
+    pub fn same_chapter(&self, other: &Position) -> bool {
+        self.book == other.book && self.chapter == other.chapter
+    }
 }
 
 pub struct Navigator<'a> {
