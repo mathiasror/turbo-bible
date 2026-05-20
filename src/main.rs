@@ -139,13 +139,17 @@ fn main() -> Result<()> {
         Ok(false) => {}
         Err(e) => eprintln!("warning: FTS optimize skipped: {e}"),
     }
+    // Non-fatal save failures collected here and replayed to stderr after
+    // restore_terminal. Inside the TUI loop, eprintln would mangle the
+    // alternate-screen display, so we defer.
+    let mut warnings: Vec<String> = Vec::new();
     let (persisted, config) = state::load_with_migration();
     theme::init(config.theme.clone());
     let translation = resolve_translation(&args, &db_path, &config)?;
     // Save right away so the on-disk layout converges to the split form.
-    let _ = config::save(&config);
+    save_or_warn(&mut warnings, "config save", config::save(&config));
     if let Some(ps) = &persisted {
-        let _ = state::save(ps);
+        save_or_warn(&mut warnings, "state save", state::save(ps));
     }
     let mut db = Db::open_ro(&db_path, &translation)?;
     let books = db.list_books()?;
@@ -193,6 +197,7 @@ fn main() -> Result<()> {
             &mut cursor_verse,
             None,
             &config,
+            &mut warnings,
         );
         final_pos = Some(pos);
         final_cursor_verse = cursor_verse;
@@ -228,6 +233,7 @@ fn main() -> Result<()> {
                 qotd,
             }),
             &config,
+            &mut warnings,
         );
         final_pos = Some(pos);
         final_cursor_verse = cursor_verse;
@@ -236,20 +242,37 @@ fn main() -> Result<()> {
     restore_terminal(&mut term)?;
 
     if let Some(p) = final_pos {
-        let _ = state::save(&state::PersistedState {
-            translation: db.translation.clone(),
-            book: p.book,
-            chapter: p.chapter,
-            verse: final_cursor_verse,
-        });
+        save_or_warn(
+            &mut warnings,
+            "state save",
+            state::save(&state::PersistedState {
+                translation: db.translation.clone(),
+                book: p.book,
+                chapter: p.chapter,
+                verse: final_cursor_verse,
+            }),
+        );
         // The active translation at quit becomes the default for next launch.
         // The picker already persisted on click, but a no-picker session also
         // wants the current translation remembered.
         let mut cfg = config::load();
         cfg.default_translation = Some(db.translation.clone());
-        let _ = config::save(&cfg);
+        save_or_warn(&mut warnings, "config save", config::save(&cfg));
+    }
+    // Replay deferred save warnings now that the alternate screen is gone.
+    for w in &warnings {
+        eprintln!("warning: {w}");
     }
     result
+}
+
+/// Push a one-line message into `out` when `r` is an error, otherwise no-op.
+/// The collector pattern keeps in-TUI failures from mangling the
+/// alternate-screen display — they get printed after `restore_terminal`.
+fn save_or_warn<T>(out: &mut Vec<String>, what: &str, r: anyhow::Result<T>) {
+    if let Err(e) = r {
+        out.push(format!("{what} failed: {e:#}"));
+    }
 }
 
 /// Resolve the DB path: explicit `--db` flag wins; otherwise
@@ -302,6 +325,7 @@ fn run(
     cursor_verse: &mut i64,
     initial_splash: Option<SplashSeed>,
     config: &config::Config,
+    warnings: &mut Vec<String>,
 ) -> Result<()> {
     let mut keys = KeyState::with_user_bindings(&config.keys);
     let mut history = History::new(pos.clone());
@@ -323,7 +347,7 @@ fn run(
     // Persist the migrated bookmarks immediately so the file on disk is in the
     // new TOML format with translation rewritten — survives a crash before any
     // user action triggers another save.
-    let _ = bookmarks.save();
+    save_or_warn(warnings, "bookmarks save (post-migration)", bookmarks.save());
     let mut verse_layout_two_line = config.reading.two_line_verses;
     let mut last_label_for_splash: Option<(Position, String)> =
         books.iter().find(|b| b.code == pos.book).map(|b| {
@@ -501,7 +525,11 @@ fn run(
                             }
                             BookmarksOutcome::Delete(bm) => {
                                 bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
-                                let _ = bookmarks.save();
+                                save_or_warn(
+                                    warnings,
+                                    "bookmarks save (delete)",
+                                    bookmarks.save(),
+                                );
                             }
                         }
                         continue;
@@ -520,7 +548,11 @@ fn run(
                                     passage,
                                     cursor_verse,
                                 )?;
-                                let _ = persist_default_translation(&code);
+                                save_or_warn(
+                                    warnings,
+                                    "default-translation persist",
+                                    persist_default_translation(&code),
+                                );
                                 update_splash_label(
                                     &mut last_label_for_splash,
                                     &books,
@@ -622,7 +654,11 @@ fn run(
                                         label: None,
                                         created_at: bookmark::now_unix(),
                                     });
-                                    let _ = bookmarks.save();
+                                    save_or_warn(
+                                        warnings,
+                                        "bookmarks save (add)",
+                                        bookmarks.save(),
+                                    );
                                     visual_anchor = None;
                                 }
                                 Action::OpenBookmarks => {
