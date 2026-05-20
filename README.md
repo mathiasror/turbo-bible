@@ -11,6 +11,10 @@ public-domain translations:
 
 ![turbo-bible demo](demo/demo.gif)
 
+For a narrative walk-through of every feature, see
+[`docs/USAGE.md`](docs/USAGE.md). The keymap and config layout below are
+the reference; the guide is the tutorial.
+
 All three are imported from [`scrollmapper/bible_databases`][scrollmapper] at
 a pinned commit by `../scripts/import_translations.py`.
 
