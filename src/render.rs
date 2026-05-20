@@ -99,7 +99,7 @@ pub fn render_passage(
                 if !emitted {
                     // Already a blank line from the previous verse; don't
                     // double it before the heading.
-                    if !out.last().map_or(true, is_blank) {
+                    if !out.last().is_none_or(is_blank) {
                         out.push(rl_blank());
                     }
                     emitted = true;
@@ -114,7 +114,7 @@ pub fn render_passage(
             }
         }
 
-        let in_selection = selection.map_or(false, |(s, e)| v.number >= s && v.number <= e);
+        let in_selection = selection.is_some_and(|(s, e)| v.number >= s && v.number <= e);
         let is_cursor_verse = v.number == cursor_verse;
         let on_cursor = is_cursor_verse || in_selection;
         // The gutter glyph: cursor wins (so the active verse is always
@@ -283,8 +283,7 @@ pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
                     .line
                     .spans
                     .last()
-                    .and_then(|s| s.style.bg)
-                    .map_or(false, |c| c == cursor_bg);
+                    .and_then(|s| s.style.bg) == Some(cursor_bg);
                 let pad_style = if is_cursor_row { cursor_pad } else { blue_bg };
                 spans.push(Span::styled(" ".repeat(pad), pad_style));
             }

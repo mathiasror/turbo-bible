@@ -114,10 +114,10 @@ impl KeyState {
     }
 
     pub fn tick(&mut self) {
-        if let Some(t) = self.last {
-            if t.elapsed() > Duration::from_millis(500) {
-                self.reset();
-            }
+        if let Some(t) = self.last
+            && t.elapsed() > Duration::from_millis(500)
+        {
+            self.reset();
         }
     }
 
@@ -131,17 +131,18 @@ impl KeyState {
         self.tick();
         // Count prefix: digits while no pending operator. '0' is line-start,
         // not a count, when it's the first digit.
-        if self.pending.is_empty() && key.modifiers.is_empty() {
-            if let KeyCode::Char(c) = key.code {
-                if c.is_ascii_digit() && !(self.count == 0 && c == '0') {
-                    self.count = self
-                        .count
-                        .saturating_mul(10)
-                        .saturating_add(c.to_digit(10).unwrap() as u16);
-                    self.last = Some(Instant::now());
-                    return None;
-                }
-            }
+        if self.pending.is_empty()
+            && key.modifiers.is_empty()
+            && let KeyCode::Char(c) = key.code
+            && c.is_ascii_digit()
+            && !(self.count == 0 && c == '0')
+        {
+            self.count = self
+                .count
+                .saturating_mul(10)
+                .saturating_add(c.to_digit(10).unwrap() as u16);
+            self.last = Some(Instant::now());
+            return None;
         }
         self.pending.push(key);
         self.last = Some(Instant::now());

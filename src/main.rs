@@ -68,7 +68,7 @@ impl History {
         if self
             .stack
             .last()
-            .map_or(true, |last| last.book != p.book || last.chapter != p.chapter)
+            .is_none_or(|last| last.book != p.book || last.chapter != p.chapter)
         {
             self.stack.push(p);
             self.cur = self.stack.len() - 1;

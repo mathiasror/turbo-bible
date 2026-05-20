@@ -61,22 +61,20 @@ pub struct BookmarkStore {
 impl BookmarkStore {
     pub fn load() -> Self {
         // Preferred: TOML.
-        if let Ok(path) = bookmarks_path() {
-            if let Ok(txt) = fs::read_to_string(&path) {
-                if let Ok(mut s) = toml::from_str::<BookmarkStore>(&txt) {
-                    s.rewrite_legacy_translation();
-                    return s;
-                }
-            }
+        if let Ok(path) = bookmarks_path()
+            && let Ok(txt) = fs::read_to_string(&path)
+            && let Ok(mut s) = toml::from_str::<BookmarkStore>(&txt)
+        {
+            s.rewrite_legacy_translation();
+            return s;
         }
         // Fallback: legacy JSON file from v1.
-        if let Ok(legacy) = legacy_bookmarks_path() {
-            if let Ok(txt) = fs::read_to_string(&legacy) {
-                if let Ok(mut s) = serde_json::from_str::<BookmarkStore>(&txt) {
-                    s.rewrite_legacy_translation();
-                    return s;
-                }
-            }
+        if let Ok(legacy) = legacy_bookmarks_path()
+            && let Ok(txt) = fs::read_to_string(&legacy)
+            && let Ok(mut s) = serde_json::from_str::<BookmarkStore>(&txt)
+        {
+            s.rewrite_legacy_translation();
+            return s;
         }
         Self::default()
     }

@@ -194,11 +194,11 @@ impl KeyBind {
         // SHIFT on some terminals and without on others — treat as equivalent.
         let mut want = self.modifiers;
         let mut got = ev.modifiers;
-        if let (KeyCode::Char(c1), KeyCode::Char(c2)) = (self.code, ev.code) {
-            if c1.is_ascii_uppercase() || c2.is_ascii_uppercase() {
-                want.remove(KeyModifiers::SHIFT);
-                got.remove(KeyModifiers::SHIFT);
-            }
+        if let (KeyCode::Char(c1), KeyCode::Char(c2)) = (self.code, ev.code)
+            && (c1.is_ascii_uppercase() || c2.is_ascii_uppercase())
+        {
+            want.remove(KeyModifiers::SHIFT);
+            got.remove(KeyModifiers::SHIFT);
         }
         self.code == ev.code && want == got
     }

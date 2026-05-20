@@ -83,10 +83,10 @@ pub fn load_with_migration() -> (Option<PersistedState>, Config) {
 
     // Hoist default_translation out of state. Don't clobber an existing config
     // value — config wins, because the user may have edited it deliberately.
-    if config.default_translation.is_none() {
-        if let Some(t) = legacy.default_translation {
-            config.default_translation = Some(rename_legacy_str(t));
-        }
+    if config.default_translation.is_none()
+        && let Some(t) = legacy.default_translation
+    {
+        config.default_translation = Some(rename_legacy_str(t));
     }
 
     let mut state = PersistedState {
@@ -95,10 +95,10 @@ pub fn load_with_migration() -> (Option<PersistedState>, Config) {
         chapter: legacy.chapter,
         verse: legacy.verse,
     };
-    if let Some(t) = &config.default_translation {
-        if t == LEGACY_TRANSLATION {
-            config.default_translation = Some(REPLACEMENT_TRANSLATION.into());
-        }
+    if let Some(t) = &config.default_translation
+        && t == LEGACY_TRANSLATION
+    {
+        config.default_translation = Some(REPLACEMENT_TRANSLATION.into());
     }
     rename_legacy(&mut state);
     (Some(state), config)

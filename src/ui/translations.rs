@@ -99,11 +99,7 @@ impl TranslationsDialog {
             let visible = (inner.height as usize)
                 .saturating_sub(lines.len())
                 .saturating_sub(2);
-            let scroll = if self.cursor + 1 > visible {
-                (self.cursor + 1) - visible
-            } else {
-                0
-            };
+            let scroll = (self.cursor + 1).saturating_sub(visible);
             for (i, t) in self.items.iter().enumerate().skip(scroll).take(visible) {
                 let on = i == self.cursor;
                 let mark = if on { "  \u{25B8} " } else { "    " };

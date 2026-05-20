@@ -200,10 +200,10 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
                 // Require word boundary after the candidate (digit or space or end).
                 let after = s[cand.len()..].chars().next();
                 let ok = matches!(after, None | Some(' ') | Some('\t'))
-                    || after.map_or(false, |c| c.is_ascii_digit());
+                    || after.is_some_and(|c| c.is_ascii_digit());
                 if ok {
                     let len = cand.len();
-                    if best.as_ref().map_or(true, |(n, _)| len > *n) {
+                    if best.as_ref().is_none_or(|(n, _)| len > *n) {
                         best = Some((len, b.code.clone()));
                     }
                 }
@@ -216,7 +216,7 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
     if rest.is_empty() {
         return Some(Position { book: code, chapter: 1, verse: None });
     }
-    let (chap_str, verse_str) = match rest.find(|c: char| c == ':' || c == ',' || c == '.') {
+    let (chap_str, verse_str) = match rest.find([':', ',', '.']) {
         Some(i) => (rest[..i].trim(), rest[i + 1..].trim()),
         None => (rest, ""),
     };

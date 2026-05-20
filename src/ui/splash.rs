@@ -160,10 +160,10 @@ impl SplashView {
     }
 
     pub fn handle(&mut self, key: KeyEvent) -> SplashOutcome {
-        if let Some(t) = self.pending_g {
-            if t.elapsed() > Duration::from_millis(500) {
-                self.pending_g = None;
-            }
+        if let Some(t) = self.pending_g
+            && t.elapsed() > Duration::from_millis(500)
+        {
+            self.pending_g = None;
         }
         match self.mode {
             SplashMode::Filter => self.handle_filter(key),
@@ -251,16 +251,16 @@ impl SplashView {
 
     fn handle_normal(&mut self, key: KeyEvent) -> SplashOutcome {
         // Count prefix.
-        if key.modifiers.is_empty() {
-            if let KeyCode::Char(c) = key.code {
-                if c.is_ascii_digit() && !(self.count == 0 && c == '0') {
-                    self.count = self
-                        .count
-                        .saturating_mul(10)
-                        .saturating_add(c.to_digit(10).unwrap() as u16);
-                    return SplashOutcome::Continue;
-                }
-            }
+        if key.modifiers.is_empty()
+            && let KeyCode::Char(c) = key.code
+            && c.is_ascii_digit()
+            && !(self.count == 0 && c == '0')
+        {
+            self.count = self
+                .count
+                .saturating_mul(10)
+                .saturating_add(c.to_digit(10).unwrap() as u16);
+            return SplashOutcome::Continue;
         }
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);

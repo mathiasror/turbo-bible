@@ -83,11 +83,11 @@ pub fn parse_highlighted(s: &str) -> (String, Vec<(usize, usize)>) {
     // Merge adjacent ranges (FTS5 can emit consecutive runs for adjacent terms).
     let mut merged: Vec<(usize, usize)> = Vec::with_capacity(hits.len());
     for r in hits {
-        if let Some(last) = merged.last_mut() {
-            if r.0 <= last.1 {
-                last.1 = last.1.max(r.1);
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && r.0 <= last.1
+        {
+            last.1 = last.1.max(r.1);
+            continue;
         }
         merged.push(r);
     }
