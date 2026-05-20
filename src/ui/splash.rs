@@ -1,0 +1,923 @@
+//! Startup splash: title art, daily verse, and a two-column book picker
+//! (Det gamle testamentet | Det nye testamentet). Vim-style navigation.
+
+use std::time::{Duration, Instant};
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Widget};
+
+use crate::db::Book;
+use crate::nav::Position;
+use crate::quote::DailyQuote;
+use crate::theme;
+use crate::ui::dialog;
+
+const TITLE_TURBO: &[&str] = &[
+    "████████╗██╗   ██╗██████╗ ██████╗  ██████╗ ",
+    "╚══██╔══╝██║   ██║██╔══██╗██╔══██╗██╔═══██╗",
+    "   ██║   ██║   ██║██████╔╝██████╔╝██║   ██║",
+    "   ██║   ██║   ██║██╔══██╗██╔══██╗██║   ██║",
+    "   ██║   ╚██████╔╝██║  ██║██████╔╝╚██████╔╝",
+    "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝  ╚═════╝ ",
+];
+const TITLE_BIBLE: &[&str] = &[
+    "██████╗ ██╗██████╗ ██╗     ███████╗",
+    "██╔══██╗██║██╔══██╗██║     ██╔════╝",
+    "██████╔╝██║██████╔╝██║     █████╗  ",
+    "██╔══██╗██║██╔══██╗██║     ██╔══╝  ",
+    "██████╔╝██║██████╔╝███████╗███████╗",
+    "╚═════╝ ╚═╝╚═════╝ ╚══════╝╚══════╝",
+];
+const TITLE_COMPACT: &str = "T U R B O   B I B L E";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SplashMode {
+    Normal,
+    Filter,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SplashColumn {
+    OT,
+    NT,
+}
+
+pub struct SplashView {
+    books_ot: Vec<Book>,
+    books_nt: Vec<Book>,
+    last: Option<(Position, String)>,
+    pub filter: String,
+    pub focus: SplashColumn,
+    pub cursor_ot: usize,
+    pub cursor_nt: usize,
+    /// True when the cursor is on the "Continue" row above the columns.
+    pub on_continue: bool,
+    pub translation_name: String,
+    pub mode: SplashMode,
+    pub quote: Option<DailyQuote>,
+    pending_g: Option<Instant>,
+    count: u16,
+}
+
+pub enum SplashOutcome {
+    Continue,
+    OpenBook(Position),
+    OpenGoto,
+    OpenFind,
+    Quit,
+}
+
+impl SplashView {
+    pub fn new(
+        books: Vec<Book>,
+        last: Option<(Position, String)>,
+        translation_name: String,
+        quote: Option<DailyQuote>,
+    ) -> Self {
+        let (books_ot, books_nt): (Vec<Book>, Vec<Book>) =
+            books.into_iter().partition(|b| b.testament == "OT");
+        let on_continue = last.is_some();
+        Self {
+            books_ot,
+            books_nt,
+            last,
+            filter: String::new(),
+            focus: SplashColumn::OT,
+            cursor_ot: 0,
+            cursor_nt: 0,
+            on_continue,
+            translation_name,
+            mode: SplashMode::Normal,
+            quote,
+            pending_g: None,
+            count: 0,
+        }
+    }
+
+    fn matches(&self, b: &Book) -> bool {
+        if self.filter.is_empty() {
+            return true;
+        }
+        let f = self.filter.to_lowercase();
+        let hay = format!(
+            "{} {} {}",
+            b.name.to_lowercase(),
+            b.abbreviation.to_lowercase(),
+            b.code.to_lowercase()
+        );
+        hay.contains(&f)
+    }
+
+    fn entries(&self, col: SplashColumn) -> Vec<&Book> {
+        let src = match col {
+            SplashColumn::OT => &self.books_ot,
+            SplashColumn::NT => &self.books_nt,
+        };
+        src.iter().filter(|b| self.matches(b)).collect()
+    }
+
+    fn current_cursor(&self) -> usize {
+        match self.focus {
+            SplashColumn::OT => self.cursor_ot,
+            SplashColumn::NT => self.cursor_nt,
+        }
+    }
+
+    fn set_current_cursor(&mut self, value: usize) {
+        match self.focus {
+            SplashColumn::OT => self.cursor_ot = value,
+            SplashColumn::NT => self.cursor_nt = value,
+        }
+    }
+
+    fn current_max_idx(&self) -> usize {
+        self.entries(self.focus).len().saturating_sub(1)
+    }
+
+    fn switch_focus(&mut self, to: SplashColumn) {
+        self.focus = to;
+        let max = self.current_max_idx();
+        let cur = self.current_cursor();
+        self.set_current_cursor(cur.min(max));
+        self.on_continue = false;
+    }
+
+    fn count_or(&self, default: usize) -> usize {
+        if self.count == 0 {
+            default
+        } else {
+            self.count as usize
+        }
+    }
+
+    pub fn handle(&mut self, key: KeyEvent) -> SplashOutcome {
+        if let Some(t) = self.pending_g {
+            if t.elapsed() > Duration::from_millis(500) {
+                self.pending_g = None;
+            }
+        }
+        match self.mode {
+            SplashMode::Filter => self.handle_filter(key),
+            SplashMode::Normal => self.handle_normal(key),
+        }
+    }
+
+    fn handle_filter(&mut self, key: KeyEvent) -> SplashOutcome {
+        match key.code {
+            KeyCode::Esc => {
+                self.filter.clear();
+                self.cursor_ot = 0;
+                self.cursor_nt = 0;
+                self.mode = SplashMode::Normal;
+                SplashOutcome::Continue
+            }
+            KeyCode::Enter => {
+                self.mode = SplashMode::Normal;
+                SplashOutcome::Continue
+            }
+            KeyCode::Backspace => {
+                self.filter.pop();
+                self.cursor_ot = 0;
+                self.cursor_nt = 0;
+                SplashOutcome::Continue
+            }
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'u' => {
+                self.filter.clear();
+                self.cursor_ot = 0;
+                self.cursor_nt = 0;
+                SplashOutcome::Continue
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.filter.push(c);
+                self.cursor_ot = 0;
+                self.cursor_nt = 0;
+                SplashOutcome::Continue
+            }
+            _ => SplashOutcome::Continue,
+        }
+    }
+
+    fn open_current(&self) -> Option<Position> {
+        if self.on_continue {
+            return self.last.as_ref().map(|(p, _)| p.clone());
+        }
+        let entries = self.entries(self.focus);
+        entries.get(self.current_cursor()).map(|b| Position {
+            book: b.code.clone(),
+            chapter: 1,
+        })
+    }
+
+    fn move_down(&mut self, step: usize) {
+        if self.on_continue {
+            self.on_continue = false;
+            // Land at the top of the focused column.
+            self.set_current_cursor(0);
+            if step > 1 {
+                let new = step - 1;
+                let max = self.current_max_idx();
+                self.set_current_cursor(new.min(max));
+            }
+            return;
+        }
+        let max = self.current_max_idx();
+        let new = (self.current_cursor() + step).min(max);
+        self.set_current_cursor(new);
+    }
+
+    fn move_up(&mut self, step: usize) {
+        if self.on_continue {
+            return;
+        }
+        let cur = self.current_cursor();
+        if step > cur && self.last.is_some() {
+            // Stepped past the top → land on Continue.
+            self.on_continue = true;
+            self.set_current_cursor(0);
+        } else {
+            self.set_current_cursor(cur.saturating_sub(step));
+        }
+    }
+
+    fn handle_normal(&mut self, key: KeyEvent) -> SplashOutcome {
+        // Count prefix.
+        if key.modifiers.is_empty() {
+            if let KeyCode::Char(c) = key.code {
+                if c.is_ascii_digit() && !(self.count == 0 && c == '0') {
+                    self.count = self
+                        .count
+                        .saturating_mul(10)
+                        .saturating_add(c.to_digit(10).unwrap() as u16);
+                    return SplashOutcome::Continue;
+                }
+            }
+        }
+
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let res = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') if !ctrl => SplashOutcome::Quit,
+            KeyCode::Char('c') if ctrl => SplashOutcome::Quit,
+            KeyCode::F(2) => SplashOutcome::OpenGoto,
+            KeyCode::F(3) => SplashOutcome::OpenFind,
+            KeyCode::Char(':') => SplashOutcome::OpenGoto,
+
+            KeyCode::Char('/') => {
+                self.mode = SplashMode::Filter;
+                self.filter.clear();
+                self.cursor_ot = 0;
+                self.cursor_nt = 0;
+                SplashOutcome::Continue
+            }
+
+            KeyCode::Enter | KeyCode::Char('o') => {
+                if let Some(p) = self.open_current() {
+                    return SplashOutcome::OpenBook(p);
+                }
+                SplashOutcome::Continue
+            }
+
+            // Column-switch
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.switch_focus(SplashColumn::OT);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.switch_focus(SplashColumn::NT);
+                SplashOutcome::Continue
+            }
+            KeyCode::Tab => {
+                let to = match self.focus {
+                    SplashColumn::OT => SplashColumn::NT,
+                    SplashColumn::NT => SplashColumn::OT,
+                };
+                self.switch_focus(to);
+                SplashOutcome::Continue
+            }
+
+            // Vertical
+            KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('n') => {
+                let step = self.count_or(1);
+                self.move_down(step);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('k') | KeyCode::Up | KeyCode::Char('N') => {
+                let step = self.count_or(1);
+                self.move_up(step);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('d') if ctrl => {
+                self.move_down(10);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('u') if ctrl => {
+                self.move_up(10);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('f') if ctrl => {
+                self.move_down(20);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('b') if ctrl => {
+                self.move_up(20);
+                SplashOutcome::Continue
+            }
+            KeyCode::PageDown => {
+                self.move_down(20);
+                SplashOutcome::Continue
+            }
+            KeyCode::PageUp => {
+                self.move_up(20);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('G') => {
+                self.on_continue = false;
+                let max = self.current_max_idx();
+                let n = self.count;
+                let target = if n == 0 { max } else { (n as usize).saturating_sub(1).min(max) };
+                self.set_current_cursor(target);
+                SplashOutcome::Continue
+            }
+            KeyCode::Char('g') => {
+                if self.pending_g.is_some() {
+                    // gg → top: Continue if present, else cursor=0.
+                    if self.last.is_some() {
+                        self.on_continue = true;
+                    }
+                    self.set_current_cursor(0);
+                    self.pending_g = None;
+                } else {
+                    self.pending_g = Some(Instant::now());
+                    self.count = 0;
+                    return SplashOutcome::Continue;
+                }
+                SplashOutcome::Continue
+            }
+            KeyCode::Home => {
+                if self.last.is_some() {
+                    self.on_continue = true;
+                }
+                self.set_current_cursor(0);
+                SplashOutcome::Continue
+            }
+            KeyCode::End => {
+                self.on_continue = false;
+                self.set_current_cursor(self.current_max_idx());
+                SplashOutcome::Continue
+            }
+
+            _ => SplashOutcome::Continue,
+        };
+        self.count = 0;
+        self.pending_g = None;
+        res
+    }
+
+    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
+        let w = outer.width.saturating_sub(6).min(110);
+        let h = outer.height.saturating_sub(2);
+        let area = dialog::center(outer, w, h);
+        let inner = dialog::draw_dialog(area, "TURBO BIBLE", buf);
+
+        let bg = Style::new().bg(theme::BLUE);
+        let title_style = Style::new()
+            .fg(theme::YELLOW)
+            .bg(theme::BLUE)
+            .add_modifier(Modifier::BOLD);
+        let subtitle = Style::new()
+            .fg(theme::CYAN)
+            .bg(theme::BLUE)
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE);
+        let label = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
+        let key_style = Style::new()
+            .fg(theme::BRIGHT_WHITE)
+            .bg(theme::BLUE)
+            .add_modifier(Modifier::BOLD);
+        let sel = Style::new()
+            .fg(theme::BRIGHT_WHITE)
+            .bg(theme::CYAN)
+            .add_modifier(Modifier::BOLD);
+        let dim_cursor = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::DARK_GREY);
+        let filter_style = Style::new()
+            .fg(theme::BLACK)
+            .bg(theme::CYAN)
+            .add_modifier(Modifier::BOLD);
+        let mode_style = match self.mode {
+            SplashMode::Filter => Style::new()
+                .fg(theme::BLACK)
+                .bg(theme::YELLOW)
+                .add_modifier(Modifier::BOLD),
+            SplashMode::Normal => Style::new()
+                .fg(theme::BLACK)
+                .bg(theme::CYAN)
+                .add_modifier(Modifier::BOLD),
+        };
+        let column_header = Style::new()
+            .fg(theme::YELLOW)
+            .bg(theme::BLUE)
+            .add_modifier(Modifier::BOLD);
+        let column_header_focused = Style::new()
+            .fg(theme::BRIGHT_WHITE)
+            .bg(theme::BLUE)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+
+        let inner_w = inner.width as usize;
+        let blank = || Line::from(Span::styled(" ".repeat(inner_w), bg));
+        let center_padded = |row: &str, st: Style| -> Line<'static> {
+            let pad_left = inner_w.saturating_sub(row.chars().count()) / 2;
+            let pad_right = inner_w
+                .saturating_sub(pad_left)
+                .saturating_sub(row.chars().count());
+            Line::from(vec![
+                Span::styled(" ".repeat(pad_left), bg),
+                Span::styled(row.to_string(), st),
+                Span::styled(" ".repeat(pad_right), bg),
+            ])
+        };
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(blank());
+
+        // Title — prefer side-by-side ("TURBO  BIBLE" on one 6-row logo).
+        // Fall back to stacked, then to plain text on narrow terminals.
+        let avail = inner.height as usize;
+        let combined_w = TITLE_TURBO[0].chars().count() + 2 + TITLE_BIBLE[0].chars().count();
+        if inner_w >= combined_w && avail >= 12 {
+            for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
+                lines.push(center_padded(&format!("{t}  {b}"), title_style));
+            }
+        } else if inner_w >= TITLE_TURBO[0].chars().count() && avail >= 22 {
+            for row in TITLE_TURBO.iter().chain(TITLE_BIBLE.iter()) {
+                lines.push(center_padded(row, title_style));
+            }
+        } else {
+            lines.push(center_padded(TITLE_COMPACT, title_style));
+        }
+        lines.push(blank());
+        lines.push(center_padded(&format!("· {} ·", self.translation_name), subtitle));
+
+        // Daily verse — word-wrapped to fit the column, then a reference
+        // line. Not truncated; uses as many lines as it needs.
+        if let Some(q) = &self.quote {
+            lines.push(blank());
+            let max_width = inner_w.saturating_sub(8).max(20);
+            // Wrap the body so it renders as one block; the open and close
+            // curly quotes hug the first/last words.
+            let mut body_lines = word_wrap(&q.text, max_width);
+            if let Some(first) = body_lines.first_mut() {
+                *first = format!("\u{201C}{first}");
+            }
+            if let Some(last) = body_lines.last_mut() {
+                *last = format!("{last}\u{201D}");
+            }
+            for body_line in &body_lines {
+                lines.push(center_padded(body_line, label));
+            }
+            lines.push(center_padded(&format!("\u{2014} {}", q.reference), dim));
+        }
+
+        // Filter row
+        lines.push(blank());
+        let mode_label = match self.mode {
+            SplashMode::Normal => " NORMAL ",
+            SplashMode::Filter => " FILTER ",
+        };
+        let filter_display = if self.filter.is_empty() {
+            match self.mode {
+                SplashMode::Filter => " (type to filter) ".to_string(),
+                SplashMode::Normal => " /  to filter ".to_string(),
+            }
+        } else {
+            format!(" {} ", self.filter)
+        };
+        let mut filter_row = vec![
+            Span::styled("  ", bg),
+            Span::styled(mode_label, mode_style),
+            Span::styled("  ", bg),
+            Span::styled(filter_display.clone(), filter_style),
+        ];
+        let used_filter: usize = 2 + mode_label.chars().count() + 2 + filter_display.chars().count();
+        let mut cursor_extra = 0;
+        if self.mode == SplashMode::Filter {
+            filter_row.push(Span::styled(
+                "\u{2588}",
+                filter_style.fg(theme::BRIGHT_WHITE),
+            ));
+            cursor_extra = 1;
+        }
+        if (used_filter + cursor_extra) < inner_w {
+            filter_row.push(Span::styled(
+                " ".repeat(inner_w - used_filter - cursor_extra),
+                bg,
+            ));
+        }
+        lines.push(Line::from(filter_row));
+        lines.push(blank());
+
+        // Continue line — full width, highlighted if on_continue.
+        if let Some((_p, label_str)) = &self.last {
+            let on = self.on_continue;
+            let row_style = if on { sel } else { label };
+            let mark = if on { "  \u{25B8} " } else { "    " };
+            let content = format!("Continue: {}", label_str);
+            let used = mark.chars().count() + content.chars().count();
+            let pad = inner_w.saturating_sub(used);
+            lines.push(Line::from(vec![
+                Span::styled(mark, if on { sel } else { dim }),
+                Span::styled(content, row_style),
+                Span::styled(" ".repeat(pad), if on { sel } else { bg }),
+            ]));
+            lines.push(blank());
+        }
+
+        // Column headers
+        let entries_ot = self.entries(SplashColumn::OT);
+        let entries_nt = self.entries(SplashColumn::NT);
+        let total_count = entries_ot.len() + entries_nt.len();
+
+        let (col_left, col_right, gap) = split_columns(inner_w);
+        let ot_header = format!(
+            " Det gamle testamentet  ({}) ",
+            entries_ot.len()
+        );
+        let nt_header = format!(
+            " Det nye testamentet  ({}) ",
+            entries_nt.len()
+        );
+        let ot_header_style = if self.focus == SplashColumn::OT && !self.on_continue {
+            column_header_focused
+        } else {
+            column_header
+        };
+        let nt_header_style = if self.focus == SplashColumn::NT && !self.on_continue {
+            column_header_focused
+        } else {
+            column_header
+        };
+        lines.push(Line::from(vec![
+            Span::styled(left_padded(&ot_header, col_left), ot_header_style),
+            Span::styled(" ".repeat(gap), bg),
+            Span::styled(left_padded(&nt_header, col_right), nt_header_style),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("─".repeat(col_left), dim),
+            Span::styled(" ".repeat(gap), bg),
+            Span::styled("─".repeat(col_right), dim),
+        ]));
+
+        // Entries: side-by-side.
+        let header_len = lines.len();
+        let visible_rows = (inner.height as usize)
+            .saturating_sub(header_len)
+            .saturating_sub(1); // footer
+
+        let scroll_ot = scroll_for(self.cursor_ot, entries_ot.len(), visible_rows);
+        let scroll_nt = scroll_for(self.cursor_nt, entries_nt.len(), visible_rows);
+
+        for row in 0..visible_rows {
+            let i_ot = scroll_ot + row;
+            let i_nt = scroll_nt + row;
+            let left = render_entry_cell(
+                entries_ot.get(i_ot).copied(),
+                i_ot,
+                self.cursor_ot,
+                self.focus == SplashColumn::OT && !self.on_continue,
+                col_left,
+                sel,
+                label,
+                dim,
+                dim_cursor,
+                bg,
+            );
+            let right = render_entry_cell(
+                entries_nt.get(i_nt).copied(),
+                i_nt,
+                self.cursor_nt,
+                self.focus == SplashColumn::NT && !self.on_continue,
+                col_right,
+                sel,
+                label,
+                dim,
+                dim_cursor,
+                bg,
+            );
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            spans.extend(left);
+            spans.push(Span::styled(" ".repeat(gap), bg));
+            spans.extend(right);
+            lines.push(Line::from(spans));
+        }
+
+        // Footer hint.
+        let count_text = if self.on_continue {
+            "Continue".to_string()
+        } else {
+            let entries_focused = match self.focus {
+                SplashColumn::OT => &entries_ot,
+                SplashColumn::NT => &entries_nt,
+            };
+            let len = entries_focused.len();
+            if len == 0 {
+                format!("0/0 ({} total)", total_count)
+            } else {
+                format!(
+                    "{}/{} ({} total)",
+                    self.current_cursor() + 1,
+                    len,
+                    total_count
+                )
+            }
+        };
+        let footer = match self.mode {
+            SplashMode::Normal => vec![
+                Span::styled("  ", bg),
+                Span::styled("j k ", key_style),
+                Span::styled("move  ", dim),
+                Span::styled("h l ", key_style),
+                Span::styled("col  ", dim),
+                Span::styled("gg G ", key_style),
+                Span::styled("ends  ", dim),
+                Span::styled("/ ", key_style),
+                Span::styled("filter  ", dim),
+                Span::styled("Enter ", key_style),
+                Span::styled("open  ", dim),
+                Span::styled("F2 F3 ", key_style),
+                Span::styled("Goto/Find  ", dim),
+                Span::styled("q ", key_style),
+                Span::styled("quit   ", dim),
+                Span::styled(count_text, key_style),
+            ],
+            SplashMode::Filter => vec![
+                Span::styled("  ", bg),
+                Span::styled("type ", key_style),
+                Span::styled("to filter  ", dim),
+                Span::styled("Enter ", key_style),
+                Span::styled("done  ", dim),
+                Span::styled("Esc ", key_style),
+                Span::styled("clear  ", dim),
+                Span::styled("Ctrl-U ", key_style),
+                Span::styled("wipe   ", dim),
+                Span::styled(count_text, key_style),
+            ],
+        };
+        lines.push(Line::from(footer));
+
+        Paragraph::new(lines).style(bg).render(inner, buf);
+    }
+}
+
+/// Greedy word-wrap: split `text` into lines no wider than `max_width`
+/// characters, breaking on whitespace.
+fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            // Word longer than max_width: emit as its own (slightly over-long) line.
+            current = word.to_string();
+            continue;
+        }
+        // +1 for the joining space.
+        if current.chars().count() + 1 + word.chars().count() <= max_width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+fn split_columns(inner_w: usize) -> (usize, usize, usize) {
+    // gap of 4 between columns; split remainder roughly evenly.
+    let gap = 4;
+    let usable = inner_w.saturating_sub(gap);
+    let left = usable / 2;
+    let right = usable - left;
+    (left, right, gap)
+}
+
+fn scroll_for(cursor: usize, total: usize, visible: usize) -> usize {
+    if visible == 0 || total <= visible {
+        return 0;
+    }
+    let max_top = total - visible;
+    if cursor < visible {
+        0
+    } else {
+        ((cursor + 1) - visible).min(max_top)
+    }
+}
+
+fn left_padded(s: &str, width: usize) -> String {
+    let used = s.chars().count();
+    if used >= width {
+        s.chars().take(width).collect()
+    } else {
+        format!("{}{}", s, " ".repeat(width - used))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_entry_cell(
+    book: Option<&Book>,
+    idx: usize,
+    cursor_idx: usize,
+    column_has_focus: bool,
+    width: usize,
+    sel: Style,
+    label: Style,
+    dim: Style,
+    dim_cursor: Style,
+    bg: Style,
+) -> Vec<Span<'static>> {
+    let Some(b) = book else {
+        return vec![Span::styled(" ".repeat(width), bg)];
+    };
+    // Only render the cursor on the column that currently has focus. The
+    // unfocused column remembers its position internally, but nothing visible
+    // hints at it — avoids the "ghost cursor" effect.
+    let _ = dim_cursor;
+    let is_cursor = idx == cursor_idx && column_has_focus;
+
+    let row_style = if is_cursor { sel } else { label };
+    let mark_style = if is_cursor { sel } else { dim };
+    let detail_style = if is_cursor { sel } else { dim };
+
+    let mark = if is_cursor { "\u{25B8} " } else { "  " };
+    let mark_w = mark.chars().count();
+    let abbr_w = 8usize.min(width.saturating_sub(mark_w));
+    let abbr_padded = format!("{:<w$}", truncate(&b.abbreviation, abbr_w.saturating_sub(1)), w = abbr_w);
+
+    let name_w = width
+        .saturating_sub(mark_w)
+        .saturating_sub(abbr_padded.chars().count());
+    let name_field = truncate(b.display_name(), name_w);
+    let name_padded = format!("{:<w$}", name_field, w = name_w);
+
+    let used = mark_w + name_padded.chars().count() + abbr_padded.chars().count();
+    let pad_right = width.saturating_sub(used);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::styled(mark.to_string(), mark_style));
+    spans.push(Span::styled(name_padded, row_style));
+    spans.push(Span::styled(abbr_padded, detail_style));
+    if pad_right > 0 {
+        spans.push(Span::styled(
+            " ".repeat(pad_right),
+            if is_cursor { row_style } else { bg },
+        ));
+    }
+    spans
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        s.to_string()
+    } else if max == 0 {
+        String::new()
+    } else {
+        s.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Color;
+
+    fn fake_books(n_ot: usize, n_nt: usize) -> Vec<Book> {
+        let mut out = Vec::new();
+        for i in 0..n_ot {
+            out.push(Book {
+                code: format!("O{i:02}"),
+                name: format!("OT Book {i}"),
+                abbreviation: format!("OT{i}"),
+                testament: "OT".into(),
+                ord: i as i64,
+                full_name: None,
+            });
+        }
+        for i in 0..n_nt {
+            out.push(Book {
+                code: format!("N{i:02}"),
+                name: format!("NT Book {i}"),
+                abbreviation: format!("NT{i}"),
+                testament: "NT".into(),
+                ord: (n_ot + i) as i64,
+                full_name: None,
+            });
+        }
+        out
+    }
+
+    fn find_cursor_row(buf: &Buffer) -> Option<u16> {
+        let cyan = Color::Rgb(0, 170, 170);
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                if buf[(x, y)].bg == cyan && buf[(x, y)].fg == Color::Rgb(255, 255, 255) {
+                    return Some(y);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn cursor_visible_in_ot_column() {
+        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        for target in [0usize, 5, 20, 38] {
+            splash.focus = SplashColumn::OT;
+            splash.cursor_ot = target;
+            splash.on_continue = false;
+            let area = Rect::new(0, 0, 110, 36);
+            let mut buf = Buffer::empty(area);
+            splash.render(area, &mut buf);
+            assert!(
+                find_cursor_row(&buf).is_some(),
+                "OT cursor invisible at {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_visible_in_nt_column() {
+        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        for target in [0usize, 5, 15, 26] {
+            splash.focus = SplashColumn::NT;
+            splash.cursor_nt = target;
+            splash.on_continue = false;
+            let area = Rect::new(0, 0, 110, 36);
+            let mut buf = Buffer::empty(area);
+            splash.render(area, &mut buf);
+            assert!(
+                find_cursor_row(&buf).is_some(),
+                "NT cursor invisible at {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn title_renders_side_by_side_when_wide_enough() {
+        let splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        let area = Rect::new(0, 0, 110, 30);
+        let mut buf = Buffer::empty(area);
+        splash.render(area, &mut buf);
+        // The combined-art row contains TURBO art ending with "██████╗ " and
+        // immediately afterwards (after the "  " gap) BIBLE art starting with
+        // "██████╗". On a single row we should see both signatures.
+        let mut found_combined = false;
+        for y in 0..area.height {
+            let mut row_text = String::new();
+            for x in 0..area.width {
+                row_text.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            // The TURBO art's row 1 ends "██████╗  ██████╗ "; the BIBLE art's
+            // row 1 begins "██████╗ ██╗██████╗". Look for the unique BIBLE
+            // signature "██╗██████╗ ██╗     ███████╗" which only appears in
+            // BIBLE's first row, and verify the row ALSO contains TURBO's
+            // "╗██╗   ██╗" signature.
+            if row_text.contains("██╗     ███████╗")
+                && row_text.contains("██████╗  ██████╗ ")
+            {
+                found_combined = true;
+                break;
+            }
+        }
+        assert!(
+            found_combined,
+            "expected TURBO and BIBLE block letters on the same row"
+        );
+    }
+
+    #[test]
+    fn switch_focus_clamps_cursor() {
+        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        splash.cursor_ot = 35; // valid in OT
+        splash.switch_focus(SplashColumn::NT);
+        assert!(splash.cursor_nt <= 26);
+    }
+
+    #[test]
+    fn move_up_from_top_lands_on_continue() {
+        let last = Some((Position { book: "MRK".into(), chapter: 1 }, "Markus 1:1".into()));
+        let mut splash = SplashView::new(fake_books(39, 27), last, "t".into(), None);
+        splash.on_continue = false;
+        splash.cursor_ot = 0;
+        splash.move_up(1);
+        assert!(splash.on_continue);
+    }
+}
