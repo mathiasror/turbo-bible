@@ -16,8 +16,9 @@ reference, see the [README](../README.md). For an animated overview, see
 8. [Footnotes and cross-references](#footnotes-and-cross-references)
 9. [Visual selection and yank](#visual-selection-and-yank)
 10. [Translations](#translations)
-11. [Customizing keys, theme, and layout](#customizing-keys-theme-and-layout)
-12. [Where things live](#where-things-live)
+11. [Help: built-in keymap cheat sheet](#help-built-in-keymap-cheat-sheet)
+12. [Customizing keys, theme, and layout](#customizing-keys-theme-and-layout)
+13. [Where things live](#where-things-live)
 
 ## First launch
 
@@ -41,6 +42,8 @@ Translation resolution at startup follows this order:
 ```
 
 ## The splash screen
+
+![Splash screen — title art, daily verse, and the OT/NT book picker](screenshots/01-splash.png)
 
 The splash is the home screen. It has three parts:
 
@@ -66,11 +69,15 @@ the narrowed view; `Esc` clears the filter; `Ctrl-U` wipes the input. From
 filter mode, `Enter` does **not** open the focused book — it just exits
 filter mode. Press `Enter` again (now in NORMAL mode) to actually open.
 
+![Splash filter mode — typing "jo" narrows both columns to four books each](screenshots/02-splash-filter.png)
+
 The dialogs are reachable directly from the splash too: `:` or `F2` for
 Goto, `/` is filter on splash but `F3` for Find from anywhere,
 `t` or `F5` for Translations.
 
 ## The reading view
+
+![Reading view — John 3:16, cursor verse highlighted in cyan](screenshots/03-reading.png)
 
 Opening a book lands you at chapter 1, verse 1. The layout has four
 regions:
@@ -121,6 +128,8 @@ and book-level navigation. It is in-memory — quitting clears it.
 
 ## Goto: jumping to a reference
 
+![Goto dialog — typing a reference shows a live preview of the destination](screenshots/04-goto.png)
+
 `F2` or `:` opens the Goto dialog. Type a free-text reference and hit
 `Enter`. The parser accepts any of these forms:
 
@@ -150,6 +159,8 @@ when the parser doesn't understand your input (preview empty = no match).
 
 ## Find: full-text search
 
+![Find dialog — BM25-ranked verses containing "love", highlighted in place](screenshots/05-find.png)
+
 `F3` or `/` (from the reading view) opens Find. Type a query; results
 populate as you type, ranked by BM25. `↑` / `↓` browse the result list,
 `Enter` jumps the cursor to the matched verse, `Esc` cancels.
@@ -171,6 +182,8 @@ Results are scoped to the **current translation**. Switch translations
 first if you want to search a different one.
 
 ## Bookmarks
+
+![Bookmarks dialog — saved entries sorted in canonical book/chapter/verse order](screenshots/06-bookmarks.png)
 
 Two-key workflow: `b` toggles a bookmark on the cursor verse;
 `M` (or `F4`) opens the bookmarks list. In the list, `↑`/`↓` or `j`/`k`
@@ -215,6 +228,8 @@ politely.
 
 ## Visual selection and yank
 
+![Visual mode — anchor at verse 19, cursor at 22, range highlighted; status bar reads "VISUAL · 2L"](screenshots/08-visual.png)
+
 Press `v` to enter **VISUAL** mode. The current cursor verse becomes the
 anchor; moving the cursor (`j`/`k`, `Ctrl-D`, `gg`, count prefix, etc.)
 extends the highlighted range. `V` or `Esc` cancels.
@@ -230,6 +245,8 @@ After taking the action, visual mode clears automatically.
 
 ## Translations
 
+![Translations picker — all installed translations; the current one is highlighted](screenshots/07-translations.png)
+
 `t` or `F5` opens the **Translations** picker from either the splash or
 the reading view. `j`/`k`/`↑`/`↓` to highlight, `Enter` to select, `Esc`
 to cancel.
@@ -243,6 +260,15 @@ The selected translation becomes the default for the next launch — it's
 written to `config.toml` as `default_translation`. Override with the
 `--translation` CLI flag if you want a one-off run in a different
 translation.
+
+## Help: built-in keymap cheat sheet
+
+![Help overlay — full keymap grouped by section](screenshots/09-help.png)
+
+`F1` (or `:help`) overlays a compact cheat sheet of every keybinding,
+grouped by Movement, Selection & bookmarks, Reading view, Dialogs, and
+Quit. `Esc` or `Enter` closes it. The same content lives in `src/ui/help.rs`
+— a single source of truth for the keymap.
 
 ## Customizing keys, theme, and layout
 

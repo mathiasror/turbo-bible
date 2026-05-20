@@ -57,3 +57,8 @@ run *args:
 demo:
     cargo build --release
     vhs demo/demo.tape
+
+# Re-render the labelled screenshots under docs/screenshots/.
+screenshots:
+    cargo build --release
+    vhs demo/screenshots.tape
