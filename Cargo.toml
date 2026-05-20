@@ -24,5 +24,6 @@ smallvec = "1"
 toml = "0.8"
 
 [dev-dependencies]
+proptest = "1"
 rexpect = "0.5"
 tempfile = "3"

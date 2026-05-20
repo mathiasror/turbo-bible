@@ -320,4 +320,175 @@ mod tests {
     fn rejects_unknown() {
         assert!(parse_reference("xyzzy 1", &books()).is_none());
     }
+
+    // ----- Ambiguity policy -----
+    //
+    // parse_reference picks the LONGEST prefix match across each book's
+    // (name, abbreviation, code) tuple. These tests pin the resulting
+    // behavior for inputs that are deliberately ambiguous.
+
+    /// Mixed-translation corpus: English KJV book overlaps with Norwegian
+    /// Bokmål book whose name is a prefix of the KJV name. Tests where the
+    /// match should land per the longest-match rule.
+    fn multi_lang_books() -> Vec<Book> {
+        vec![
+            Book {
+                code: "JHN".into(),
+                name: "John".into(),
+                abbreviation: "Jn".into(),
+                testament: "NT".into(),
+                ord: 43,
+                full_name: None,
+            },
+            // "Johannes" contains "John" as a strict prefix.
+            Book {
+                code: "JHN_NB".into(),
+                name: "Johannes".into(),
+                abbreviation: "Joh".into(),
+                testament: "NT".into(),
+                ord: 99,
+                full_name: None,
+            },
+            // "1 John" and "1 Johannes" — number-leading book names.
+            Book {
+                code: "1JN".into(),
+                name: "1 John".into(),
+                abbreviation: "1 Jn".into(),
+                testament: "NT".into(),
+                ord: 62,
+                full_name: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn ambiguity_typing_johannes_beats_john() {
+        // "Johannes" (8 chars) is longer than "John" (4 chars), so when both
+        // are valid prefixes of the input "johannes 1:1", the longer wins.
+        let p = parse_reference("johannes 1:1", &multi_lang_books()).unwrap();
+        assert_eq!(p.book, "JHN_NB");
+    }
+
+    #[test]
+    fn ambiguity_typing_john_matches_john_not_johannes() {
+        // Word-boundary check: "john 1" has a space after "john", so
+        // "Johannes" can't match (no boundary at char index 4).
+        let p = parse_reference("john 1", &multi_lang_books()).unwrap();
+        assert_eq!(p.book, "JHN");
+    }
+
+    #[test]
+    fn ambiguity_typing_jn_matches_short_abbreviation() {
+        // "Jn" is the abbreviation; "Joh" is also a valid prefix of
+        // "Johannes" (3 chars) — but "jn" (2 chars) doesn't match "Joh" at
+        // all. So only "JHN" is in the running.
+        let p = parse_reference("jn 1", &multi_lang_books()).unwrap();
+        assert_eq!(p.book, "JHN");
+    }
+
+    #[test]
+    fn ambiguity_number_prefixed_book_wins_over_unprefixed() {
+        // "1 John 1" should match the "1 John" book (length 6), not the
+        // shorter "John" (length 4 starting at offset 2).
+        let p = parse_reference("1 John 1", &multi_lang_books()).unwrap();
+        assert_eq!(p.book, "1JN");
+    }
+
+    #[test]
+    fn rejects_chapter_zero_or_negative() {
+        assert!(parse_reference("Mark 0", &books()).is_none());
+        // The grammar matches `[+-]?\d+` so negative parses, but is filtered.
+        assert!(parse_reference("Mark -1", &books()).is_none());
+    }
+
+    #[test]
+    fn rejects_verse_zero() {
+        // chapter is OK but verse < 1 gets filtered.
+        let p = parse_reference("Mark 1:0", &books()).unwrap();
+        assert_eq!(p.verse, None, "verse 0 must be dropped, not preserved");
+    }
+
+    #[test]
+    fn three_separators_are_equivalent() {
+        // ':' (English), ',' (Norwegian/Spanish), '.' all bind chapter:verse.
+        for sep in [':', ',', '.'] {
+            let s = format!("Mark 3{sep}14");
+            let p = parse_reference(&s, &books())
+                .unwrap_or_else(|| panic!("failed for separator {sep:?}"));
+            assert_eq!(p.book, "MRK");
+            assert_eq!(p.chapter, 3);
+            assert_eq!(p.verse, Some(14));
+        }
+    }
+
+    // ----- Property-based tests -----
+
+    proptest::proptest! {
+        /// Every book in the corpus round-trips through its OSIS code.
+        #[test]
+        fn roundtrip_via_code(
+            idx in 0usize..4,
+            chapter in 1i64..150,
+        ) {
+            let bs = books();
+            let book = &bs[idx];
+            let input = format!("{} {}", book.code, chapter);
+            let p = parse_reference(&input, &bs).expect("roundtrip");
+            proptest::prop_assert_eq!(p.book, book.code.clone());
+            proptest::prop_assert_eq!(p.chapter, chapter);
+        }
+
+        /// Every book in the corpus round-trips through its full name.
+        #[test]
+        fn roundtrip_via_name(
+            idx in 0usize..4,
+            chapter in 1i64..150,
+        ) {
+            let bs = books();
+            let book = &bs[idx];
+            let input = format!("{} {}", book.name, chapter);
+            let p = parse_reference(&input, &bs).expect("roundtrip");
+            proptest::prop_assert_eq!(p.book, book.code.clone());
+            proptest::prop_assert_eq!(p.chapter, chapter);
+        }
+
+        /// Every book in the corpus round-trips through its abbreviation.
+        #[test]
+        fn roundtrip_via_abbreviation(
+            idx in 0usize..4,
+            chapter in 1i64..150,
+        ) {
+            let bs = books();
+            let book = &bs[idx];
+            let input = format!("{} {}", book.abbreviation, chapter);
+            let p = parse_reference(&input, &bs).expect("roundtrip");
+            proptest::prop_assert_eq!(p.book, book.code.clone());
+            proptest::prop_assert_eq!(p.chapter, chapter);
+        }
+
+        /// Random alphanumeric strings that don't start with any book prefix
+        /// must return None — the parser should never accept garbage.
+        #[test]
+        fn rejects_random_non_matching_strings(
+            junk in "[xyz]{1,8}",
+            n in 1i64..100,
+        ) {
+            let input = format!("{junk} {n}");
+            proptest::prop_assert!(parse_reference(&input, &books()).is_none());
+        }
+
+        /// Determinism: the parser is a pure function of (input, books).
+        #[test]
+        fn deterministic(
+            idx in 0usize..4,
+            chapter in 1i64..150,
+        ) {
+            let bs = books();
+            let book = &bs[idx];
+            let input = format!("{} {}", book.name, chapter);
+            let p1 = parse_reference(&input, &bs);
+            let p2 = parse_reference(&input, &bs);
+            proptest::prop_assert_eq!(p1, p2);
+        }
+    }
 }
