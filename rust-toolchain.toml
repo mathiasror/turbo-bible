@@ -1,0 +1,8 @@
+[toolchain]
+# Track latest stable rather than pin to MSRV — pinning to 1.88 would
+# downgrade contributors running 1.95+, and the MSRV gate lives in
+# Cargo.toml's rust-version field. Bumping `channel` to a specific
+# version is the right move only once we hit a reproducibility issue.
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
