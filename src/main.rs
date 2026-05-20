@@ -11,11 +11,12 @@ mod theme;
 mod ui;
 
 use std::io::{self, Stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use etcetera::{choose_base_strategy, BaseStrategy};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -93,9 +94,10 @@ impl History {
 #[derive(Parser, Debug)]
 #[command(version, about = "Turbo-Vision Bible reader")]
 struct Args {
-    /// Path to bible.sqlite (defaults to ../bible.sqlite relative to bin)
-    #[arg(long, default_value = "../bible.sqlite")]
-    db: PathBuf,
+    /// Path to bible.sqlite. Defaults to `$XDG_DATA_HOME/turbo-bible/bible.sqlite`
+    /// (i.e. `~/.local/share/turbo-bible/bible.sqlite` on Linux/macOS).
+    #[arg(long)]
+    db: Option<PathBuf>,
 
     /// Translation code. If omitted, falls back to the picker default
     /// stored in state.toml, then to the first translation in the DB.
@@ -115,20 +117,21 @@ type Tty = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    match db::ensure_fts_optimized(&args.db) {
+    let db_path = resolve_db_path(&args)?;
+    match db::ensure_fts_optimized(&db_path) {
         Ok(true) => eprintln!("Optimizing search index (one-time)…"),
         Ok(false) => {}
         Err(e) => eprintln!("warning: FTS optimize skipped: {e}"),
     }
     let (persisted, config) = state::load_with_migration();
     theme::init(config.theme.clone());
-    let translation = resolve_translation(&args, &config)?;
+    let translation = resolve_translation(&args, &db_path, &config)?;
     // Save right away so the on-disk layout converges to the split form.
     let _ = config::save(&config);
     if let Some(ps) = &persisted {
         let _ = state::save(ps);
     }
-    let mut db = Db::open_ro(&args.db, &translation)?;
+    let mut db = Db::open_ro(&db_path, &translation)?;
     let books = db.list_books()?;
     let translation_label = db.translation_label()?;
 
@@ -218,8 +221,25 @@ fn main() -> Result<()> {
     result
 }
 
+/// Resolve the DB path: explicit `--db` flag wins; otherwise
+/// `$XDG_DATA_HOME/turbo-bible/bible.sqlite` (typically `~/.local/share/...`).
+fn resolve_db_path(args: &Args) -> Result<PathBuf> {
+    if let Some(p) = args.db.clone() {
+        return Ok(p);
+    }
+    let strategy = choose_base_strategy()?;
+    let mut p = strategy.data_dir();
+    p.push("turbo-bible");
+    p.push("bible.sqlite");
+    Ok(p)
+}
+
 /// Startup translation resolution: `--translation` > config default > first DB row.
-fn resolve_translation(args: &Args, cfg: &config::Config) -> Result<String> {
+fn resolve_translation(
+    args: &Args,
+    db_path: &Path,
+    cfg: &config::Config,
+) -> Result<String> {
     if let Some(t) = args.translation.as_ref() {
         return Ok(t.clone());
     }
@@ -227,12 +247,18 @@ fn resolve_translation(args: &Args, cfg: &config::Config) -> Result<String> {
         return Ok(t);
     }
     // Probe the DB for the first installed translation.
-    let probe = Db::open_ro(&args.db, "")?;
+    if !db_path.exists() {
+        anyhow::bail!(
+            "{} does not exist. Run `python3 scripts/import_translations.py` to create it.",
+            db_path.display()
+        );
+    }
+    let probe = Db::open_ro(db_path, "")?;
     let mut list = probe.list_translations()?;
     if list.is_empty() {
         anyhow::bail!(
             "No translations installed in {}. Run scripts/import_translations.py first.",
-            args.db.display()
+            db_path.display()
         );
     }
     Ok(list.remove(0).code)

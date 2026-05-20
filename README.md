@@ -16,15 +16,18 @@ a pinned commit by `../scripts/import_translations.py`.
 
 ## Setup
 
-Run the importer once to populate `../bible.sqlite`:
+Run the importer once to populate the database:
 
 ```sh
 python3 ../scripts/import_translations.py
 ```
 
-It backs up any pre-existing DB to `../backups/`, downloads from a pinned
-upstream commit, rewrites the schema, and rebuilds the FTS5 index. Pass
-`--only en-kjv` to import a subset.
+It writes to `$XDG_DATA_HOME/turbo-bible/bible.sqlite` (typically
+`~/.local/share/turbo-bible/bible.sqlite`), backs up any pre-existing DB
+to `~/.local/share/turbo-bible/backups/`, caches scrollmapper downloads
+in `~/.cache/turbo-bible/scrollmapper/`, then rebuilds the FTS5 index.
+Pass `--only en-kjv` to import a subset, or `--db /custom/path.sqlite`
+to relocate.
 
 ## Run
 
@@ -124,16 +127,19 @@ follows it.
 
 ## State and configuration
 
-All persisted under `~/.config/turbo-bible/`:
+XDG-style paths:
 
-| File             | Purpose |
-| ---------------- | ------- |
-| `state.toml`     | last-position bookkeeping (book/chapter/verse) — written on quit |
-| `bookmarks.toml` | saved bookmarks |
-| `config.toml`    | user preferences (theme, keybindings, reading layout) |
+| Path                                    | Purpose |
+| --------------------------------------- | ------- |
+| `~/.config/turbo-bible/state.toml`      | last-position bookkeeping (book/chapter/verse) — written on quit |
+| `~/.config/turbo-bible/bookmarks.toml`  | saved bookmarks |
+| `~/.config/turbo-bible/config.toml`     | user preferences (theme, keybindings, reading layout) |
+| `~/.local/share/turbo-bible/bible.sqlite` | the verse database (populated by the importer) |
+| `~/.local/share/turbo-bible/backups/`   | backups of the DB before re-imports |
+| `~/.cache/turbo-bible/scrollmapper/`    | cached downloads from scrollmapper |
 
-Legacy `state.json` / `bookmarks.json` are migrated to TOML on first launch
-and removed.
+Legacy `state.json` / `bookmarks.json` under `~/.config/turbo-bible/` are
+migrated to TOML on first launch and removed.
 
 ### `config.toml` layout
 
