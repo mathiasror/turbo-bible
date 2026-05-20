@@ -2,6 +2,13 @@
 name = "turbo-bible"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Turbo Vision–styled terminal Bible reader with FTS5 search."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["bible", "tui", "ratatui", "terminal", "turbo-vision"]
+categories = ["command-line-utilities", "text-processing"]
+publish = false
 
 [dependencies]
 anyhow = "1"
