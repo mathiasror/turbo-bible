@@ -40,10 +40,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use etcetera::{BaseStrategy, choose_base_strategy};
 use ratatui::style::Color;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::paths;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -149,7 +150,7 @@ impl HexColor {
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
-    pub fn to_color(self) -> Color {
+    pub const fn to_color(self) -> Color {
         Color::Rgb(self.r, self.g, self.b)
     }
 }
@@ -170,7 +171,7 @@ impl<'de> Deserialize<'de> for HexColor {
             )));
         }
         let parse = |s: &str| u8::from_str_radix(s, 16).map_err(D::Error::custom);
-        Ok(HexColor {
+        Ok(Self {
             r: parse(&hex[0..2])?,
             g: parse(&hex[2..4])?,
             b: parse(&hex[4..6])?,
@@ -333,15 +334,8 @@ fn parse_key(raw: &str) -> Result<KeyBind, String> {
 
 // --------------------------- File IO ---------------------------
 
-fn config_dir() -> Result<PathBuf> {
-    let strategy = choose_base_strategy()?;
-    let mut p = strategy.config_dir();
-    p.push("turbo-bible");
-    Ok(p)
-}
-
 fn config_path() -> Result<PathBuf> {
-    let mut p = config_dir()?;
+    let mut p = paths::config_dir()?;
     p.push("config.toml");
     Ok(p)
 }
@@ -350,8 +344,22 @@ pub fn load() -> Config {
     let Ok(path) = config_path() else {
         return Config::default();
     };
-    let Ok(txt) = fs::read_to_string(path) else {
-        return Config::default();
+    let txt = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // No config yet — silent default; the first save will create one.
+            return Config::default();
+        }
+        Err(e) => {
+            // File present but unreadable (permissions, IO error, …) — the
+            // user expected their settings to apply. Surface the reason
+            // before falling back to defaults.
+            eprintln!(
+                "warning: could not read {}: {e}; using defaults",
+                path.display()
+            );
+            return Config::default();
+        }
     };
     toml::from_str(&txt).unwrap_or_else(|e| {
         eprintln!("config.toml: {e}; using defaults");
@@ -360,7 +368,7 @@ pub fn load() -> Config {
 }
 
 pub fn save(cfg: &Config) -> Result<()> {
-    let dir = config_dir()?;
+    let dir = paths::config_dir()?;
     fs::create_dir_all(&dir)?;
     let path = config_path()?;
     let txt = toml::to_string_pretty(cfg)?;

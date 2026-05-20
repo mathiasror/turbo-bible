@@ -11,10 +11,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use etcetera::{BaseStrategy, choose_base_strategy};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{self, Config};
+use crate::paths;
 
 pub const LEGACY_TRANSLATION: &str = "nb-2024";
 pub const REPLACEMENT_TRANSLATION: &str = "nb-1930";
@@ -39,21 +39,14 @@ struct LegacyState {
     default_translation: Option<String>,
 }
 
-fn config_dir() -> Result<PathBuf> {
-    let strategy = choose_base_strategy()?;
-    let mut p = strategy.config_dir();
-    p.push("turbo-bible");
-    Ok(p)
-}
-
 fn state_path() -> Result<PathBuf> {
-    let mut p = config_dir()?;
+    let mut p = paths::config_dir()?;
     p.push("state.toml");
     Ok(p)
 }
 
 fn legacy_state_path() -> Result<PathBuf> {
-    let mut p = config_dir()?;
+    let mut p = paths::config_dir()?;
     p.push("state.json");
     Ok(p)
 }
@@ -131,7 +124,7 @@ fn rename_legacy(s: &mut PersistedState) {
 }
 
 pub fn save(state: &PersistedState) -> Result<()> {
-    let dir = config_dir()?;
+    let dir = paths::config_dir()?;
     fs::create_dir_all(&dir)?;
     let path = state_path()?;
     let txt = toml::to_string_pretty(state)?;

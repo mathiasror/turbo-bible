@@ -14,6 +14,7 @@ use ratatui::widgets::{Paragraph, Widget};
 use crate::db::Book;
 use crate::nav::Position;
 use crate::quote::DailyQuote;
+use crate::text::word_wrap;
 use crate::theme;
 use crate::ui::dialog;
 
@@ -125,14 +126,14 @@ impl SplashView {
         src.iter().filter(|b| self.matches(b)).collect()
     }
 
-    fn current_cursor(&self) -> usize {
+    const fn current_cursor(&self) -> usize {
         match self.focus {
             SplashColumn::OT => self.cursor_ot,
             SplashColumn::NT => self.cursor_nt,
         }
     }
 
-    fn set_current_cursor(&mut self, value: usize) {
+    const fn set_current_cursor(&mut self, value: usize) {
         match self.focus {
             SplashColumn::OT => self.cursor_ot = value,
             SplashColumn::NT => self.cursor_nt = value,
@@ -151,7 +152,7 @@ impl SplashView {
         self.on_continue = false;
     }
 
-    fn count_or(&self, default: usize) -> usize {
+    const fn count_or(&self, default: usize) -> usize {
         if self.count == 0 {
             default
         } else {
@@ -235,7 +236,7 @@ impl SplashView {
         self.set_current_cursor(new);
     }
 
-    fn move_up(&mut self, step: usize) {
+    const fn move_up(&mut self, step: usize) {
         if self.on_continue {
             return;
         }
@@ -256,10 +257,9 @@ impl SplashView {
             && c.is_ascii_digit()
             && !(self.count == 0 && c == '0')
         {
-            self.count = self
-                .count
-                .saturating_mul(10)
-                .saturating_add(c.to_digit(10).unwrap() as u16);
+            // Digit guard above ensures `to_digit(10)` is 0..=9 (always fits u16).
+            let digit = u16::try_from(c.to_digit(10).unwrap_or(0)).unwrap_or(0);
+            self.count = self.count.saturating_mul(10).saturating_add(digit);
             return SplashOutcome::Continue;
         }
 
@@ -307,12 +307,12 @@ impl SplashView {
             }
 
             // Vertical
-            KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('n') => {
+            KeyCode::Char('j' | 'n') | KeyCode::Down => {
                 let step = self.count_or(1);
                 self.move_down(step);
                 SplashOutcome::Continue
             }
-            KeyCode::Char('k') | KeyCode::Up | KeyCode::Char('N') => {
+            KeyCode::Char('k' | 'N') | KeyCode::Up => {
                 let step = self.count_or(1);
                 self.move_up(step);
                 SplashOutcome::Continue
@@ -541,7 +541,7 @@ impl SplashView {
             let on = self.on_continue;
             let row_style = if on { sel } else { label };
             let mark = if on { "  \u{25B8} " } else { "    " };
-            let content = format!("Continue: {}", label_str);
+            let content = format!("Continue: {label_str}");
             let used = mark.chars().count() + content.chars().count();
             let pad = inner_w.saturating_sub(used);
             lines.push(Line::from(vec![
@@ -635,7 +635,7 @@ impl SplashView {
             };
             let len = entries_focused.len();
             if len == 0 {
-                format!("0/0 ({} total)", total_count)
+                format!("0/0 ({total_count} total)")
             } else {
                 format!(
                     "{}/{} ({} total)",
@@ -683,36 +683,7 @@ impl SplashView {
     }
 }
 
-/// Greedy word-wrap: split `text` into lines no wider than `max_width`
-/// characters, breaking on whitespace.
-fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        return vec![text.to_string()];
-    }
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            // Word longer than max_width: emit as its own (slightly over-long) line.
-            current = word.to_string();
-            continue;
-        }
-        // +1 for the joining space.
-        if current.chars().count() + 1 + word.chars().count() <= max_width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            out.push(std::mem::take(&mut current));
-            current = word.to_string();
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
-
-fn split_columns(inner_w: usize) -> (usize, usize, usize) {
+const fn split_columns(inner_w: usize) -> (usize, usize, usize) {
     // gap of 4 between columns; split remainder roughly evenly.
     let gap = 4;
     let usable = inner_w.saturating_sub(gap);
@@ -781,7 +752,7 @@ fn render_entry_cell(
         .saturating_sub(mark_w)
         .saturating_sub(abbr_padded.chars().count());
     let name_field = truncate(b.display_name(), name_w);
-    let name_padded = format!("{:<w$}", name_field, w = name_w);
+    let name_padded = format!("{name_field:<name_w$}");
 
     let used = mark_w + name_padded.chars().count() + abbr_padded.chars().count();
     let pad_right = width.saturating_sub(used);
@@ -839,7 +810,7 @@ mod tests {
                 name: format!("OT Book {i}"),
                 abbreviation: format!("OT{i}"),
                 testament: "OT".into(),
-                ord: i as i64,
+                ord: i64::try_from(i).expect("test ord fits i64"),
                 full_name: None,
             });
         }
@@ -849,7 +820,7 @@ mod tests {
                 name: format!("NT Book {i}"),
                 abbreviation: format!("NT{i}"),
                 testament: "NT".into(),
-                ord: (n_ot + i) as i64,
+                ord: i64::try_from(n_ot + i).expect("test ord fits i64"),
                 full_name: None,
             });
         }

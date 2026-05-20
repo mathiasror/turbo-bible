@@ -85,13 +85,12 @@ impl FootnoteDialog {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => FootnoteOutcome::Cancel,
-            KeyCode::Enter => {
-                if let Some(item) = self.xrefs.get(self.selected) {
+            KeyCode::Enter => self
+                .xrefs
+                .get(self.selected)
+                .map_or(FootnoteOutcome::Continue, |item| {
                     FootnoteOutcome::Jump(item.target.clone())
-                } else {
-                    FootnoteOutcome::Continue
-                }
-            }
+                }),
             _ => FootnoteOutcome::Continue,
         }
     }

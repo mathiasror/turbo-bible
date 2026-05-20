@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use etcetera::{BaseStrategy, choose_base_strategy};
 use serde::{Deserialize, Serialize};
 
+use crate::paths;
 use crate::state::{LEGACY_TRANSLATION, REPLACEMENT_TRANSLATION};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ impl Bookmark {
     pub fn matches_chapter(&self, translation: &str, book: &str, chapter: i64) -> bool {
         self.translation == translation && self.book == book && self.chapter == chapter
     }
-    pub fn same_range(&self, other: &Bookmark) -> bool {
+    pub fn same_range(&self, other: &Self) -> bool {
         self.translation == other.translation
             && self.book == other.book
             && self.chapter == other.chapter
@@ -63,7 +63,7 @@ impl BookmarkStore {
         // Preferred: TOML.
         if let Ok(path) = bookmarks_path()
             && let Ok(txt) = fs::read_to_string(&path)
-            && let Ok(mut s) = toml::from_str::<BookmarkStore>(&txt)
+            && let Ok(mut s) = toml::from_str::<Self>(&txt)
         {
             s.rewrite_legacy_translation();
             return s;
@@ -71,7 +71,7 @@ impl BookmarkStore {
         // Fallback: legacy JSON file from v1.
         if let Ok(legacy) = legacy_bookmarks_path()
             && let Ok(txt) = fs::read_to_string(&legacy)
-            && let Ok(mut s) = serde_json::from_str::<BookmarkStore>(&txt)
+            && let Ok(mut s) = serde_json::from_str::<Self>(&txt)
         {
             s.rewrite_legacy_translation();
             return s;
@@ -80,7 +80,7 @@ impl BookmarkStore {
     }
 
     pub fn save(&self) -> Result<()> {
-        let dir = config_dir()?;
+        let dir = paths::config_dir()?;
         fs::create_dir_all(&dir)?;
         let path = bookmarks_path()?;
         let txt = toml::to_string_pretty(self)?;
@@ -111,25 +111,17 @@ impl BookmarkStore {
 pub fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn config_dir() -> Result<PathBuf> {
-    let strategy = choose_base_strategy()?;
-    let mut p = strategy.config_dir();
-    p.push("turbo-bible");
-    Ok(p)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn bookmarks_path() -> Result<PathBuf> {
-    let mut p = config_dir()?;
+    let mut p = paths::config_dir()?;
     p.push("bookmarks.toml");
     Ok(p)
 }
 
 fn legacy_bookmarks_path() -> Result<PathBuf> {
-    let mut p = config_dir()?;
+    let mut p = paths::config_dir()?;
     p.push("bookmarks.json");
     Ok(p)
 }

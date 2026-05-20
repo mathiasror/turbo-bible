@@ -28,7 +28,7 @@ fn project_db() -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
-fn binary_path() -> &'static str {
+const fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_turbo-bible")
 }
 

@@ -1,4 +1,4 @@
-//! SQLite access layer. Types live next to the queries that return them.
+//! `SQLite` access layer. Types live next to the queries that return them.
 
 use std::path::Path;
 
@@ -143,12 +143,26 @@ pub struct Passage {
 
 pub struct Db {
     conn: Connection,
-    pub translation: String,
+    /// Active translation code. Use [`Db::translation`] / [`Db::set_translation`]
+    /// rather than reaching in directly so the call sites stay greppable
+    /// and a future invalidation hook has somewhere to live.
+    translation: String,
 }
 
 impl Db {
-    pub(crate) fn conn(&self) -> &Connection {
+    pub(crate) const fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    pub fn translation(&self) -> &str {
+        &self.translation
+    }
+
+    /// Bare setter. Callers that need an atomic translation swap (i.e.
+    /// roll back on a follow-up failure) must implement that themselves;
+    /// see `switch_translation` in `main.rs`.
+    pub fn set_translation(&mut self, code: String) {
+        self.translation = code;
     }
 
     pub fn open_ro(path: &Path, translation: &str) -> Result<Self> {

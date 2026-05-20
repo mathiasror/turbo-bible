@@ -19,7 +19,7 @@ pub struct PassageView<'a> {
     pub two_line_verses: bool,
 }
 
-impl<'a> Widget for PassageView<'a> {
+impl Widget for PassageView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         theme::draw_shadow(buf, area);
 
@@ -60,7 +60,10 @@ impl<'a> Widget for PassageView<'a> {
         let viewport = inner.height as usize;
         let target_top = cursor_line.saturating_sub(viewport / 3);
         let max_top = rendered.len().saturating_sub(viewport);
-        let scroll = target_top.min(max_top) as u16;
+        // Scroll fits in `u16` because the rendered chapter is bounded by
+        // visible rows × wrap width; clamp to u16::MAX in the (unreachable)
+        // case where it doesn't.
+        let scroll = u16::try_from(target_top.min(max_top)).unwrap_or(u16::MAX);
 
         let lines: Vec<Line<'static>> = pad_to_width(&rendered, inner.width);
         Paragraph::new(lines)

@@ -18,11 +18,11 @@ pub enum HelpOutcome {
 }
 
 impl HelpDialog {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 
-    pub fn handle(&self, key: KeyEvent) -> HelpOutcome {
+    pub const fn handle(&self, key: KeyEvent) -> HelpOutcome {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::F(1) => {
                 HelpOutcome::Cancel
@@ -52,7 +52,7 @@ impl HelpDialog {
             Section(&'static str),
             Entry(&'static str, &'static str),
         }
-        use Row::*;
+        use Row::{Entry, Section};
         let rows: &[Row] = &[
             Section("Movement"),
             Entry("j  k  ↓ ↑", "next / previous verse"),
@@ -96,7 +96,7 @@ impl HelpDialog {
                 Entry(k, desc) => {
                     lines.push(Line::from(vec![
                         Span::styled("    ", bg),
-                        Span::styled(format!("{:<22}", k), key),
+                        Span::styled(format!("{k:<22}"), key),
                         Span::styled(desc.to_string(), label),
                     ]));
                 }

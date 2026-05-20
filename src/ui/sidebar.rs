@@ -17,7 +17,7 @@ pub struct SidebarView<'a> {
     pub selection: Option<(i64, i64)>,
 }
 
-impl<'a> Widget for SidebarView<'a> {
+impl Widget for SidebarView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         theme::draw_shadow(buf, area);
 
@@ -45,7 +45,7 @@ impl<'a> Widget for SidebarView<'a> {
             }
         }
 
-        let lines = build_lines(self.passage, self.cursor_verse, self.selection, inner.width);
+        let lines = build_lines(self.passage, self.cursor_verse, self.selection);
         Paragraph::new(lines)
             .style(Style::new().bg(theme::blue()))
             .wrap(Wrap { trim: false })
@@ -57,7 +57,6 @@ fn build_lines(
     p: &Passage,
     cursor_verse: i64,
     selection: Option<(i64, i64)>,
-    _width: u16,
 ) -> Vec<Line<'static>> {
     let bg = Style::new().bg(theme::blue());
     let body = Style::new().fg(theme::bright_white()).bg(theme::blue());

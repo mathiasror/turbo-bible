@@ -67,8 +67,9 @@ impl TranslationsDialog {
             KeyCode::Enter | KeyCode::Char('o') => self
                 .items
                 .get(self.cursor)
-                .map(|t| TranslationsOutcome::Select(t.code.clone()))
-                .unwrap_or(TranslationsOutcome::Continue),
+                .map_or(TranslationsOutcome::Continue, |t| {
+                    TranslationsOutcome::Select(t.code.clone())
+                }),
             _ => TranslationsOutcome::Continue,
         }
     }

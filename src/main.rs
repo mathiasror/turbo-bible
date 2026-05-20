@@ -1,12 +1,16 @@
+#![deny(unsafe_code)]
+
 mod bookmark;
 mod config;
 mod db;
 mod keys;
 mod nav;
+mod paths;
 mod quote;
 mod render;
 mod search;
 mod state;
+mod text;
 mod theme;
 mod ui;
 
@@ -24,7 +28,6 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use etcetera::{BaseStrategy, choose_base_strategy};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -51,7 +54,7 @@ enum Bg {
 /// What to seed the splash screen with on startup: the optional "Continue"
 /// target (most recently read position + its label) plus the optional verse
 /// of the day. None of these are required, but their tuple-of-options shape
-/// was complex enough to trip clippy::type_complexity; the named struct also
+/// was complex enough to trip `clippy::type_complexity`; the named struct also
 /// reads better at the call site.
 struct SplashSeed {
     last: Option<(Position, String)>,
@@ -67,6 +70,11 @@ enum Dialog {
     Bookmarks(crate::ui::bookmarks::BookmarksDialog),
     Translations(TranslationsDialog),
 }
+
+/// Upper bound on the jump-history stack. Long reading sessions
+/// shouldn't grow memory unbounded; 100 entries covers typical Ctrl-O/I
+/// usage with room to spare.
+const HISTORY_CAP: usize = 100;
 
 struct History {
     stack: Vec<Position>,
@@ -84,7 +92,13 @@ impl History {
         self.stack.truncate(self.cur + 1);
         if self.stack.last().is_none_or(|last| !last.same_chapter(&p)) {
             self.stack.push(p);
-            self.cur = self.stack.len() - 1;
+            if self.stack.len() > HISTORY_CAP {
+                let drop = self.stack.len() - HISTORY_CAP;
+                self.stack.drain(..drop);
+                self.cur = self.stack.len().saturating_sub(1);
+            } else {
+                self.cur = self.stack.len() - 1;
+            }
         }
     }
     fn back(&mut self) -> Option<Position> {
@@ -127,6 +141,93 @@ struct Args {
 
 type Tty = Terminal<CrosstermBackend<Stdout>>;
 
+/// Mutable state owned by the run loop but threaded through the
+/// extracted dispatch helpers. Separating this from the externally-owned
+/// reader state (`AppCtx`) keeps method signatures short and lets the
+/// dispatch helpers be free functions.
+struct LoopState {
+    books: Vec<Book>,
+    translation_label: String,
+    bg: Bg,
+    dialog: Dialog,
+    history: History,
+    bookmarks: bookmark::BookmarkStore,
+    last_query: Option<String>,
+    last_label_for_splash: Option<(Position, String)>,
+    visual_anchor: Option<i64>,
+    show_sidebar: bool,
+    max_reading_width: u16,
+    verse_layout_two_line: bool,
+    keys: KeyState,
+}
+
+/// Borrowed bundle of the externally-owned reader state. Built fresh
+/// per dispatch call so the extracted handlers don't need to take six
+/// separate `&mut` parameters.
+struct AppCtx<'a> {
+    db: &'a mut Db,
+    pos: &'a mut Position,
+    passage: &'a mut Passage,
+    cursor_verse: &'a mut i64,
+    warnings: &'a mut Vec<String>,
+}
+
+/// Outcome of a per-key dispatch call. `Quit` ends the loop; `Continue`
+/// keeps going (regardless of whether the key was consumed).
+enum DispatchStep {
+    Continue,
+    Quit,
+}
+
+/// RAII handle for the terminal's raw-mode + alternate-screen state.
+/// Restores the terminal on drop, so a panic between `init` and the
+/// normal end-of-`run()` cleanup still leaves the user with a sane
+/// shell instead of a corrupted display.
+struct TerminalGuard {
+    term: Tty,
+    active: bool,
+}
+
+impl TerminalGuard {
+    fn init() -> Result<Self> {
+        enable_raw_mode()?;
+        let mut out = io::stdout();
+        execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
+        let term = Terminal::new(CrosstermBackend::new(out))?;
+        Ok(Self { term, active: true })
+    }
+
+    const fn terminal(&mut self) -> &mut Tty {
+        &mut self.term
+    }
+
+    /// Explicit, ordered cleanup so the surrounding code can react to
+    /// errors. Drop also calls this with errors swallowed.
+    fn restore(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        self.active = false;
+        disable_raw_mode()?;
+        execute!(
+            self.term.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )?;
+        self.term.show_cursor()?;
+        Ok(())
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        // Best-effort cleanup on panic / early exit. We can't propagate
+        // errors out of Drop; if restore failed at the explicit call
+        // site the user already saw that diagnostic.
+        let _ = self.restore();
+    }
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let db_path = resolve_db_path(&args)?;
@@ -156,11 +257,10 @@ fn main() -> Result<()> {
         .as_ref()
         .filter(|ps| ps.translation == translation)
         .map(|ps| {
-            let label = books
-                .iter()
-                .find(|b| b.code == ps.book)
-                .map(|b| format!("{} {}:{}", b.name, ps.chapter, ps.verse))
-                .unwrap_or_else(|| format!("{} {}:{}", ps.book, ps.chapter, ps.verse));
+            let label = books.iter().find(|b| b.code == ps.book).map_or_else(
+                || format!("{} {}:{}", ps.book, ps.chapter, ps.verse),
+                |b| format!("{} {}:{}", b.name, ps.chapter, ps.verse),
+            );
             (
                 Position {
                     book: ps.book.clone(),
@@ -172,7 +272,7 @@ fn main() -> Result<()> {
         });
 
     // Starting screen: if --book was passed explicitly, go straight to reading.
-    let mut term = init_terminal()?;
+    let mut guard = TerminalGuard::init()?;
     let final_pos: Option<Position>;
     let final_cursor_verse: i64;
     let result = if let Some(book_code) = args.book.clone() {
@@ -184,7 +284,7 @@ fn main() -> Result<()> {
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = 1;
         let r = run(
-            &mut term,
+            guard.terminal(),
             &mut db,
             books,
             translation_label,
@@ -200,7 +300,7 @@ fn main() -> Result<()> {
         r
     } else {
         let qotd = if config.reading.show_daily_quote {
-            quote::pick(&db).unwrap_or(None)
+            quote::pick(&db, db.translation()).unwrap_or(None)
         } else {
             None
         };
@@ -215,9 +315,9 @@ fn main() -> Result<()> {
             },
         };
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
-        let mut cursor_verse: i64 = persisted.as_ref().map(|p| p.verse).unwrap_or(1).max(1);
+        let mut cursor_verse: i64 = persisted.as_ref().map_or(1, |p| p.verse).max(1);
         let r = run(
-            &mut term,
+            guard.terminal(),
             &mut db,
             books,
             translation_label,
@@ -235,14 +335,14 @@ fn main() -> Result<()> {
         final_cursor_verse = cursor_verse;
         r
     };
-    restore_terminal(&mut term)?;
+    guard.restore()?;
 
     if let Some(p) = final_pos {
         save_or_warn(
             &mut warnings,
             "state save",
             state::save(&state::PersistedState {
-                translation: db.translation.clone(),
+                translation: db.translation().to_string(),
                 book: p.book,
                 chapter: p.chapter,
                 verse: final_cursor_verse,
@@ -252,7 +352,7 @@ fn main() -> Result<()> {
         // The picker already persisted on click, but a no-picker session also
         // wants the current translation remembered.
         let mut cfg = config::load();
-        cfg.default_translation = Some(db.translation.clone());
+        cfg.default_translation = Some(db.translation().to_string());
         save_or_warn(&mut warnings, "config save", config::save(&cfg));
     }
     // Replay deferred save warnings now that the alternate screen is gone.
@@ -277,9 +377,7 @@ fn resolve_db_path(args: &Args) -> Result<PathBuf> {
     if let Some(p) = args.db.clone() {
         return Ok(p);
     }
-    let strategy = choose_base_strategy()?;
-    let mut p = strategy.data_dir();
-    p.push("turbo-bible");
+    let mut p = paths::data_dir()?;
     p.push("bible.sqlite");
     Ok(p)
 }
@@ -310,12 +408,17 @@ fn resolve_translation(args: &Args, db_path: &Path, cfg: &config::Config) -> Res
     Ok(list.remove(0).code)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "wired from `main()` which constructs all the loop-local state; \
+              bundling into a struct would just move the long signature \
+              up one level"
+)]
 fn run(
     term: &mut Tty,
     db: &mut Db,
-    mut books: Vec<Book>,
-    mut translation_label: String,
+    books: Vec<Book>,
+    translation_label: String,
     pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
@@ -323,421 +426,546 @@ fn run(
     config: &config::Config,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
-    let mut keys = KeyState::with_user_bindings(&config.keys, config.input.keymap);
-    // Last `/`-search query — populated whenever the Find dialog produces a
-    // jump, consumed by `n` / `N` to step canonically through the hits.
-    let mut last_query: Option<String> = None;
-    let mut history = History::new(pos.clone());
-    let mut bg = match initial_splash {
-        Some(seed) => Bg::Splash(Box::new(SplashView::new(
-            books.clone(),
-            seed.last,
-            translation_label.clone(),
-            db.translation.clone(),
-            seed.qotd,
-        ))),
-        None => Bg::Reading,
-    };
-    let mut dialog: Dialog = Dialog::None;
-    let mut show_sidebar = config.reading.show_sidebar;
-    let max_reading_width = config.reading.max_width;
-    let mut visual_anchor: Option<i64> = None;
-    let mut bookmarks = bookmark::BookmarkStore::load();
-    // Persist the migrated bookmarks immediately so the file on disk is in the
-    // new TOML format with translation rewritten — survives a crash before any
-    // user action triggers another save.
-    save_or_warn(
+    let mut state = LoopState::new(
+        books,
+        translation_label,
+        pos,
+        *cursor_verse,
+        initial_splash,
+        db.translation(),
+        config,
         warnings,
-        "bookmarks save (post-migration)",
-        bookmarks.save(),
     );
-    let mut verse_layout_two_line = config.reading.two_line_verses;
-    let mut last_label_for_splash: Option<(Position, String)> =
-        books.iter().find(|b| b.code == pos.book).map(|b| {
-            (
-                pos.clone(),
-                format!("{} {}:{}", b.name, pos.chapter, *cursor_verse),
-            )
-        });
 
     loop {
-        let status = make_status(&bg, show_sidebar);
-        let bookmarked_in_chapter = bookmarks_set(&bookmarks, &db.translation, pos);
-        let menu_title = format!(" Turbo Bible \u{00B7} {} ", translation_label);
-        term.draw(|f| {
-            let area = f.area();
-            let buf = f.buffer_mut();
-            match &bg {
-                Bg::Splash(s) => {
-                    // Plain blue desktop behind the splash window.
-                    crate::ui::desktop::render(
-                        ratatui::layout::Rect::new(
-                            area.x,
-                            area.y + 1,
-                            area.width,
-                            area.height.saturating_sub(2),
-                        ),
-                        buf,
-                    );
-                    crate::ui::menubar::render(
-                        &menu_title,
-                        ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
-                        buf,
-                    );
-                    let mode_tag =
-                        mode_tag_for(&bg, &dialog, visual_anchor.is_some(), verse_layout_two_line);
-                    crate::ui::statusbar::render(
-                        &status,
-                        ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
-                        buf,
-                        &mode_tag,
-                    );
-                    let body = ratatui::layout::Rect::new(
+        draw_frame(term, &state, passage, *cursor_verse)?;
+
+        if event::poll(Duration::from_millis(150))? {
+            let term_height = term.size().map_or(24, |s| s.height);
+            let raw_event = event::read()?;
+            let synth: Option<KeyEvent> = match raw_event {
+                Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
+                Event::Mouse(me) => {
+                    mouse_to_key(me, term_height, &make_status(&state.bg, state.show_sidebar))
+                }
+                _ => None,
+            };
+            if let Some(key) = synth {
+                let mut ctx = AppCtx {
+                    db,
+                    pos,
+                    passage,
+                    cursor_verse,
+                    warnings,
+                };
+                let step = dispatch_key(&mut state, &mut ctx, key)?;
+                if matches!(step, DispatchStep::Quit) {
+                    return Ok(());
+                }
+            }
+        } else {
+            state.keys.tick();
+        }
+    }
+}
+
+impl LoopState {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        books: Vec<Book>,
+        translation_label: String,
+        pos: &Position,
+        cursor_verse: i64,
+        initial_splash: Option<SplashSeed>,
+        translation: &str,
+        config: &config::Config,
+        warnings: &mut Vec<String>,
+    ) -> Self {
+        let keys = KeyState::with_user_bindings(&config.keys, config.input.keymap);
+        let history = History::new(pos.clone());
+        let bg = match initial_splash {
+            Some(seed) => Bg::Splash(Box::new(SplashView::new(
+                books.clone(),
+                seed.last,
+                translation_label.clone(),
+                translation.to_string(),
+                seed.qotd,
+            ))),
+            None => Bg::Reading,
+        };
+        let bookmarks = bookmark::BookmarkStore::load();
+        // Persist the migrated bookmarks immediately so the file on disk is
+        // in the new TOML format with translation rewritten — survives a
+        // crash before any user action triggers another save.
+        save_or_warn(
+            warnings,
+            "bookmarks save (post-migration)",
+            bookmarks.save(),
+        );
+        let last_label_for_splash: Option<(Position, String)> =
+            books.iter().find(|b| b.code == pos.book).map(|b| {
+                (
+                    pos.clone(),
+                    format!("{} {}:{}", b.name, pos.chapter, cursor_verse),
+                )
+            });
+        Self {
+            books,
+            translation_label,
+            bg,
+            dialog: Dialog::None,
+            history,
+            bookmarks,
+            last_query: None,
+            last_label_for_splash,
+            visual_anchor: None,
+            show_sidebar: config.reading.show_sidebar,
+            max_reading_width: config.reading.max_width,
+            verse_layout_two_line: config.reading.two_line_verses,
+            keys,
+        }
+    }
+}
+
+/// One pass of the draw cycle. Kept inline (vs split into per-bg
+/// helpers) because the closure borrows many fields and pulling it apart
+/// duplicates the dialog overlay match.
+fn draw_frame(
+    term: &mut Tty,
+    state: &LoopState,
+    passage: &Passage,
+    cursor_verse: i64,
+) -> Result<()> {
+    let status = make_status(&state.bg, state.show_sidebar);
+    let bookmarked_in_chapter = bookmarks_set(
+        &state.bookmarks,
+        state.bookmarks_translation(passage),
+        &Position {
+            book: passage.book_code.clone(),
+            chapter: passage.chapter,
+            verse: None,
+        },
+    );
+    let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
+    term.draw(|f| {
+        let area = f.area();
+        let buf = f.buffer_mut();
+        match &state.bg {
+            Bg::Splash(s) => {
+                crate::ui::desktop::render(
+                    ratatui::layout::Rect::new(
                         area.x,
                         area.y + 1,
                         area.width,
                         area.height.saturating_sub(2),
+                    ),
+                    buf,
+                );
+                crate::ui::menubar::render(
+                    &menu_title,
+                    ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
+                    buf,
+                );
+                let mode_tag = mode_tag_for(
+                    &state.bg,
+                    &state.dialog,
+                    state.visual_anchor.is_some(),
+                    state.verse_layout_two_line,
+                );
+                crate::ui::statusbar::render(
+                    &status,
+                    ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
+                    buf,
+                    &mode_tag,
+                );
+                let body = ratatui::layout::Rect::new(
+                    area.x,
+                    area.y + 1,
+                    area.width,
+                    area.height.saturating_sub(2),
+                );
+                s.render(body, buf);
+            }
+            Bg::Reading => {
+                let mode_tag = mode_tag_for(
+                    &state.bg,
+                    &state.dialog,
+                    state.visual_anchor.is_some(),
+                    state.verse_layout_two_line,
+                );
+                let selection = state.visual_anchor.map(|a| {
+                    let c = cursor_verse;
+                    if a <= c { (a, c) } else { (c, a) }
+                });
+                ui::Frame {
+                    menu_title: &menu_title,
+                    status: &status,
+                    status_mode: &mode_tag,
+                    passage: Some(passage),
+                    cursor_verse,
+                    selection,
+                    bookmarked: &bookmarked_in_chapter,
+                    show_sidebar: state.show_sidebar,
+                    two_line_verses: state.verse_layout_two_line,
+                    max_reading_width: state.max_reading_width,
+                }
+                .render(area, buf);
+            }
+        }
+        match &state.dialog {
+            Dialog::None => {}
+            Dialog::Goto(d) => d.render(area, buf, &state.books),
+            Dialog::Find(d) => d.render(area, buf, &state.books),
+            Dialog::Footnote(d) => d.render(area, buf, &state.books),
+            Dialog::Help(d) => d.render(area, buf),
+            Dialog::Bookmarks(d) => d.render(area, buf, &state.books),
+            Dialog::Translations(d) => d.render(area, buf),
+        }
+    })?;
+    Ok(())
+}
+
+impl LoopState {
+    /// Translation lookup helper used only by `draw_frame` so the
+    /// `bookmarks_set` call site can read `db.translation()` without
+    /// holding `&db` (which would conflict with the simultaneous
+    /// mutable draw borrow). The active passage's translation always
+    /// matches the active DB translation.
+    fn bookmarks_translation<'a>(&self, passage: &'a Passage) -> &'a str {
+        &passage.translation
+    }
+}
+
+/// Route a key event: dialog has first refusal, then the active
+/// background. Returns `Quit` only when the user asked to leave.
+fn dispatch_key(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Result<DispatchStep> {
+    if !matches!(state.dialog, Dialog::None) {
+        return dispatch_dialog(state, ctx, key);
+    }
+    match &mut state.bg {
+        Bg::Splash(_) => dispatch_splash(state, ctx, key),
+        Bg::Reading => dispatch_reading(state, ctx, key),
+    }
+}
+
+/// Common dialog-close-after-jump path: load the new passage, push to
+/// history, refresh the splash "Continue" label, and reset bg+dialog.
+fn close_with_jump(state: &mut LoopState, ctx: &mut AppCtx, p: Position) -> Result<()> {
+    jump_to(
+        p,
+        ctx.db,
+        ctx.pos,
+        ctx.passage,
+        ctx.cursor_verse,
+        &mut state.history,
+    )?;
+    update_splash_label(
+        &mut state.last_label_for_splash,
+        &state.books,
+        ctx.pos,
+        *ctx.cursor_verse,
+    );
+    state.bg = Bg::Reading;
+    state.dialog = Dialog::None;
+    Ok(())
+}
+
+fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Result<DispatchStep> {
+    match &mut state.dialog {
+        Dialog::None => Ok(DispatchStep::Continue),
+        Dialog::Goto(d) => match d.handle(key, &state.books) {
+            GotoOutcome::Continue => Ok(DispatchStep::Continue),
+            GotoOutcome::Cancel => {
+                state.dialog = Dialog::None;
+                Ok(DispatchStep::Continue)
+            }
+            GotoOutcome::Jump(p) => {
+                close_with_jump(state, ctx, p)?;
+                Ok(DispatchStep::Continue)
+            }
+            GotoOutcome::Command(GotoCommand::Quit) => Ok(DispatchStep::Quit),
+            GotoOutcome::Command(GotoCommand::Help) => {
+                state.dialog = Dialog::Help(HelpDialog::new());
+                Ok(DispatchStep::Continue)
+            }
+        },
+        Dialog::Find(d) => match d.handle(key, ctx.db) {
+            FindOutcome::Continue => Ok(DispatchStep::Continue),
+            FindOutcome::Cancel => {
+                state.dialog = Dialog::None;
+                Ok(DispatchStep::Continue)
+            }
+            FindOutcome::Jump(p, q) => {
+                state.last_query = Some(q);
+                close_with_jump(state, ctx, p)?;
+                Ok(DispatchStep::Continue)
+            }
+        },
+        Dialog::Footnote(d) => match d.handle(key) {
+            FootnoteOutcome::Continue => Ok(DispatchStep::Continue),
+            FootnoteOutcome::Cancel => {
+                state.dialog = Dialog::None;
+                Ok(DispatchStep::Continue)
+            }
+            FootnoteOutcome::Jump(p) => {
+                close_with_jump(state, ctx, p)?;
+                Ok(DispatchStep::Continue)
+            }
+        },
+        Dialog::Help(d) => {
+            if let HelpOutcome::Cancel = d.handle(key) {
+                state.dialog = Dialog::None;
+            }
+            Ok(DispatchStep::Continue)
+        }
+        Dialog::Bookmarks(d) => {
+            use crate::ui::bookmarks::BookmarksOutcome;
+            match d.handle(key) {
+                BookmarksOutcome::Continue => {}
+                BookmarksOutcome::Cancel => state.dialog = Dialog::None,
+                BookmarksOutcome::Jump(p) => close_with_jump(state, ctx, p)?,
+                BookmarksOutcome::Delete(bm) => {
+                    state.bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
+                    save_or_warn(
+                        ctx.warnings,
+                        "bookmarks save (delete)",
+                        state.bookmarks.save(),
                     );
-                    s.render(body, buf);
-                }
-                Bg::Reading => {
-                    let mode_tag =
-                        mode_tag_for(&bg, &dialog, visual_anchor.is_some(), verse_layout_two_line);
-                    let selection = visual_anchor.map(|a| {
-                        let c = *cursor_verse;
-                        if a <= c { (a, c) } else { (c, a) }
-                    });
-                    ui::Frame {
-                        menu_title: &menu_title,
-                        status: &status,
-                        status_mode: &mode_tag,
-                        passage: Some(passage),
-                        cursor_verse: *cursor_verse,
-                        selection,
-                        bookmarked: &bookmarked_in_chapter,
-                        show_sidebar,
-                        two_line_verses: verse_layout_two_line,
-                        max_reading_width,
-                    }
-                    .render(area, buf);
                 }
             }
-            match &dialog {
-                Dialog::None => {}
-                Dialog::Goto(d) => d.render(area, buf, &books),
-                Dialog::Find(d) => d.render(area, buf, &books),
-                Dialog::Footnote(d) => d.render(area, buf, &books),
-                Dialog::Help(d) => d.render(area, buf),
-                Dialog::Bookmarks(d) => d.render(area, buf, &books),
-                Dialog::Translations(d) => d.render(area, buf),
-            }
-        })?;
-
-        if event::poll(Duration::from_millis(150))? {
-            let term_height = term.size().map(|s| s.height).unwrap_or(24);
-            let raw_event = event::read()?;
-            let synth: Option<KeyEvent> = match raw_event {
-                Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
-                Event::Mouse(me) => mouse_to_key(me, term_height, &status),
-                _ => None,
-            };
-            if let Some(key) = synth {
-                // Dialogs consume input first.
-                match &mut dialog {
-                    Dialog::None => {}
-                    Dialog::Goto(d) => {
-                        match d.handle(key, &books) {
-                            GotoOutcome::Continue => {}
-                            GotoOutcome::Cancel => dialog = Dialog::None,
-                            GotoOutcome::Jump(p) => {
-                                jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(
-                                    &mut last_label_for_splash,
-                                    &books,
-                                    pos,
-                                    *cursor_verse,
-                                );
-                                bg = Bg::Reading;
-                                dialog = Dialog::None;
-                            }
-                            GotoOutcome::Command(GotoCommand::Quit) => return Ok(()),
-                            GotoOutcome::Command(GotoCommand::Help) => {
-                                dialog = Dialog::Help(HelpDialog::new());
-                            }
-                        }
-                        continue;
-                    }
-                    Dialog::Find(d) => {
-                        match d.handle(key, db) {
-                            FindOutcome::Continue => {}
-                            FindOutcome::Cancel => dialog = Dialog::None,
-                            FindOutcome::Jump(p, q) => {
-                                last_query = Some(q);
-                                jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(
-                                    &mut last_label_for_splash,
-                                    &books,
-                                    pos,
-                                    *cursor_verse,
-                                );
-                                bg = Bg::Reading;
-                                dialog = Dialog::None;
-                            }
-                        }
-                        continue;
-                    }
-                    Dialog::Footnote(d) => {
-                        match d.handle(key) {
-                            FootnoteOutcome::Continue => {}
-                            FootnoteOutcome::Cancel => dialog = Dialog::None,
-                            FootnoteOutcome::Jump(p) => {
-                                jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(
-                                    &mut last_label_for_splash,
-                                    &books,
-                                    pos,
-                                    *cursor_verse,
-                                );
-                                bg = Bg::Reading;
-                                dialog = Dialog::None;
-                            }
-                        }
-                        continue;
-                    }
-                    Dialog::Help(d) => {
-                        match d.handle(key) {
-                            HelpOutcome::Continue => {}
-                            HelpOutcome::Cancel => dialog = Dialog::None,
-                        }
-                        continue;
-                    }
-                    Dialog::Bookmarks(d) => {
-                        use crate::ui::bookmarks::BookmarksOutcome;
-                        match d.handle(key) {
-                            BookmarksOutcome::Continue => {}
-                            BookmarksOutcome::Cancel => dialog = Dialog::None,
-                            BookmarksOutcome::Jump(p) => {
-                                jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(
-                                    &mut last_label_for_splash,
-                                    &books,
-                                    pos,
-                                    *cursor_verse,
-                                );
-                                bg = Bg::Reading;
-                                dialog = Dialog::None;
-                            }
-                            BookmarksOutcome::Delete(bm) => {
-                                bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
-                                save_or_warn(warnings, "bookmarks save (delete)", bookmarks.save());
-                            }
-                        }
-                        continue;
-                    }
-                    Dialog::Translations(d) => {
-                        match d.handle(key) {
-                            TranslationsOutcome::Continue => {}
-                            TranslationsOutcome::Cancel => dialog = Dialog::None,
-                            TranslationsOutcome::Select(code) => {
-                                switch_translation(
-                                    db,
-                                    &mut books,
-                                    &mut translation_label,
-                                    &code,
-                                    pos,
-                                    passage,
-                                    cursor_verse,
-                                )?;
-                                save_or_warn(
-                                    warnings,
-                                    "default-translation persist",
-                                    persist_default_translation(&code),
-                                );
-                                update_splash_label(
-                                    &mut last_label_for_splash,
-                                    &books,
-                                    pos,
-                                    *cursor_verse,
-                                );
-                                dialog = Dialog::None;
-                            }
-                        }
-                        continue;
-                    }
-                }
-
-                // No dialog: route to current background.
-                match &mut bg {
-                    Bg::Splash(s) => match s.handle(key) {
-                        SplashOutcome::Continue => {}
-                        SplashOutcome::Quit => return Ok(()),
-                        SplashOutcome::OpenGoto => dialog = Dialog::Goto(GotoDialog::new()),
-                        SplashOutcome::OpenFind => dialog = Dialog::Find(FindDialog::new()),
-                        SplashOutcome::OpenBook(p) => {
-                            jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                            update_splash_label(
-                                &mut last_label_for_splash,
-                                &books,
-                                pos,
-                                *cursor_verse,
-                            );
-                            bg = Bg::Reading;
-                        }
-                        SplashOutcome::OpenTranslations => {
-                            dialog = Dialog::Translations(TranslationsDialog::new(
-                                db.list_translations()?,
-                                &db.translation,
-                            ));
-                        }
-                    },
-                    Bg::Reading => {
-                        if let Some(action) = keys.handle(key) {
-                            match action {
-                                Action::OpenGoto => dialog = Dialog::Goto(GotoDialog::new()),
-                                Action::OpenFind => dialog = Dialog::Find(FindDialog::new()),
-                                Action::OpenHelp => dialog = Dialog::Help(HelpDialog::new()),
-                                Action::OpenFootnote => {
-                                    let target =
-                                        format!("{}.{}.{}", pos.book, pos.chapter, *cursor_verse);
-                                    let notes: Vec<_> = passage
-                                        .footnotes
-                                        .iter()
-                                        .filter(|fn_| fn_.verse_osis == target)
-                                        .cloned()
-                                        .collect();
-                                    let label = format!(
-                                        "{} {}:{}",
-                                        passage.book_abbrev, pos.chapter, *cursor_verse
-                                    );
-                                    dialog = Dialog::Footnote(FootnoteDialog::new(label, notes));
-                                }
-                                Action::JumpBack => {
-                                    if let Some(p) = history.back() {
-                                        *pos = p;
-                                        *passage = db.load_passage(&pos.book, pos.chapter)?;
-                                        *cursor_verse = 1;
-                                    }
-                                }
-                                Action::JumpForward => {
-                                    if let Some(p) = history.forward() {
-                                        *pos = p;
-                                        *passage = db.load_passage(&pos.book, pos.chapter)?;
-                                        *cursor_verse = 1;
-                                    }
-                                }
-                                Action::CopyVerse => {
-                                    let _ = copy_verse_to_clipboard(passage, pos, *cursor_verse);
-                                }
-                                Action::ToggleSidebar => show_sidebar = !show_sidebar,
-                                Action::ToggleVerseLayout => {
-                                    verse_layout_two_line = !verse_layout_two_line
-                                }
-                                Action::ToggleVisual => {
-                                    visual_anchor = if visual_anchor.is_some() {
-                                        None
-                                    } else {
-                                        Some(*cursor_verse)
-                                    };
-                                }
-                                Action::AddBookmark => {
-                                    let (s, e) = match visual_anchor {
-                                        Some(a) if a <= *cursor_verse => (a, *cursor_verse),
-                                        Some(a) => (*cursor_verse, a),
-                                        None => (*cursor_verse, *cursor_verse),
-                                    };
-                                    bookmarks.add(bookmark::Bookmark {
-                                        translation: db.translation.clone(),
-                                        book: pos.book.clone(),
-                                        chapter: pos.chapter,
-                                        start_verse: s,
-                                        end_verse: e,
-                                        label: None,
-                                        created_at: bookmark::now_unix(),
-                                    });
-                                    save_or_warn(
-                                        warnings,
-                                        "bookmarks save (add)",
-                                        bookmarks.save(),
-                                    );
-                                    visual_anchor = None;
-                                }
-                                Action::OpenBookmarks => {
-                                    let mut d =
-                                        crate::ui::bookmarks::BookmarksDialog::new(&bookmarks);
-                                    d.sort_canonical(&books);
-                                    dialog = Dialog::Bookmarks(d);
-                                }
-                                Action::OpenTranslations => {
-                                    dialog = Dialog::Translations(TranslationsDialog::new(
-                                        db.list_translations()?,
-                                        &db.translation,
-                                    ));
-                                }
-                                Action::Back => {
-                                    // In visual mode, Esc cancels the selection
-                                    // instead of returning to splash.
-                                    if visual_anchor.is_some() {
-                                        visual_anchor = None;
-                                    } else {
-                                        update_splash_label(
-                                            &mut last_label_for_splash,
-                                            &books,
-                                            pos,
-                                            *cursor_verse,
-                                        );
-                                        let qotd = quote::pick(db).unwrap_or(None);
-                                        bg = Bg::Splash(Box::new(SplashView::new(
-                                            books.clone(),
-                                            last_label_for_splash.clone(),
-                                            translation_label.clone(),
-                                            db.translation.clone(),
-                                            qotd,
-                                        )));
-                                    }
-                                }
-                                Action::Quit => return Ok(()),
-                                Action::SearchNext | Action::SearchPrev => {
-                                    if let Some(q) = last_query.as_deref()
-                                        && let Some(p) = repeat_search(
-                                            db,
-                                            &books,
-                                            q,
-                                            pos,
-                                            *cursor_verse,
-                                            matches!(action, Action::SearchNext),
-                                        )
-                                    {
-                                        jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                        update_splash_label(
-                                            &mut last_label_for_splash,
-                                            &books,
-                                            pos,
-                                            *cursor_verse,
-                                        );
-                                    }
-                                }
-                                _ => {
-                                    if apply_action(
-                                        action,
-                                        db,
-                                        &books,
-                                        pos,
-                                        passage,
-                                        cursor_verse,
-                                        &mut history,
-                                    )? {
-                                        return Ok(());
-                                    }
-                                }
-                            }
-                        }
-                    }
+            Ok(DispatchStep::Continue)
+        }
+        Dialog::Translations(d) => {
+            match d.handle(key) {
+                TranslationsOutcome::Continue => {}
+                TranslationsOutcome::Cancel => state.dialog = Dialog::None,
+                TranslationsOutcome::Select(code) => {
+                    switch_translation(
+                        ctx.db,
+                        &mut state.books,
+                        &mut state.translation_label,
+                        &code,
+                        ctx.pos,
+                        ctx.passage,
+                        ctx.cursor_verse,
+                    )?;
+                    save_or_warn(
+                        ctx.warnings,
+                        "default-translation persist",
+                        persist_default_translation(&code),
+                    );
+                    update_splash_label(
+                        &mut state.last_label_for_splash,
+                        &state.books,
+                        ctx.pos,
+                        *ctx.cursor_verse,
+                    );
+                    state.dialog = Dialog::None;
                 }
             }
-        } else {
-            keys.tick();
+            Ok(DispatchStep::Continue)
         }
     }
+}
+
+fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Result<DispatchStep> {
+    let outcome = if let Bg::Splash(s) = &mut state.bg {
+        s.handle(key)
+    } else {
+        return Ok(DispatchStep::Continue);
+    };
+    match outcome {
+        SplashOutcome::Continue => Ok(DispatchStep::Continue),
+        SplashOutcome::Quit => Ok(DispatchStep::Quit),
+        SplashOutcome::OpenGoto => {
+            state.dialog = Dialog::Goto(GotoDialog::new());
+            Ok(DispatchStep::Continue)
+        }
+        SplashOutcome::OpenFind => {
+            state.dialog = Dialog::Find(FindDialog::new());
+            Ok(DispatchStep::Continue)
+        }
+        SplashOutcome::OpenBook(p) => {
+            jump_to(
+                p,
+                ctx.db,
+                ctx.pos,
+                ctx.passage,
+                ctx.cursor_verse,
+                &mut state.history,
+            )?;
+            update_splash_label(
+                &mut state.last_label_for_splash,
+                &state.books,
+                ctx.pos,
+                *ctx.cursor_verse,
+            );
+            state.bg = Bg::Reading;
+            Ok(DispatchStep::Continue)
+        }
+        SplashOutcome::OpenTranslations => {
+            state.dialog = Dialog::Translations(TranslationsDialog::new(
+                ctx.db.list_translations()?,
+                ctx.db.translation(),
+            ));
+            Ok(DispatchStep::Continue)
+        }
+    }
+}
+
+fn dispatch_reading(
+    state: &mut LoopState,
+    ctx: &mut AppCtx,
+    key: KeyEvent,
+) -> Result<DispatchStep> {
+    let Some(action) = state.keys.handle(key) else {
+        return Ok(DispatchStep::Continue);
+    };
+    match action {
+        Action::OpenGoto => state.dialog = Dialog::Goto(GotoDialog::new()),
+        Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new()),
+        Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
+        Action::OpenFootnote => {
+            let target = format!("{}.{}.{}", ctx.pos.book, ctx.pos.chapter, *ctx.cursor_verse);
+            let notes: Vec<_> = ctx
+                .passage
+                .footnotes
+                .iter()
+                .filter(|fn_| fn_.verse_osis == target)
+                .cloned()
+                .collect();
+            let label = format!(
+                "{} {}:{}",
+                ctx.passage.book_abbrev, ctx.pos.chapter, *ctx.cursor_verse
+            );
+            state.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes));
+        }
+        Action::JumpBack => {
+            if let Some(p) = state.history.back() {
+                *ctx.pos = p;
+                *ctx.passage = ctx.db.load_passage(&ctx.pos.book, ctx.pos.chapter)?;
+                *ctx.cursor_verse = 1;
+            }
+        }
+        Action::JumpForward => {
+            if let Some(p) = state.history.forward() {
+                *ctx.pos = p;
+                *ctx.passage = ctx.db.load_passage(&ctx.pos.book, ctx.pos.chapter)?;
+                *ctx.cursor_verse = 1;
+            }
+        }
+        Action::CopyVerse => {
+            save_or_warn(
+                ctx.warnings,
+                "clipboard set",
+                copy_verse_to_clipboard(ctx.passage, ctx.pos, *ctx.cursor_verse),
+            );
+        }
+        Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
+        Action::ToggleVerseLayout => {
+            state.verse_layout_two_line = !state.verse_layout_two_line;
+        }
+        Action::ToggleVisual => {
+            state.visual_anchor = if state.visual_anchor.is_some() {
+                None
+            } else {
+                Some(*ctx.cursor_verse)
+            };
+        }
+        Action::AddBookmark => {
+            let (s, e) = match state.visual_anchor {
+                Some(a) if a <= *ctx.cursor_verse => (a, *ctx.cursor_verse),
+                Some(a) => (*ctx.cursor_verse, a),
+                None => (*ctx.cursor_verse, *ctx.cursor_verse),
+            };
+            state.bookmarks.add(bookmark::Bookmark {
+                translation: ctx.db.translation().to_string(),
+                book: ctx.pos.book.clone(),
+                chapter: ctx.pos.chapter,
+                start_verse: s,
+                end_verse: e,
+                label: None,
+                created_at: bookmark::now_unix(),
+            });
+            save_or_warn(ctx.warnings, "bookmarks save (add)", state.bookmarks.save());
+            state.visual_anchor = None;
+        }
+        Action::OpenBookmarks => {
+            let mut d = crate::ui::bookmarks::BookmarksDialog::new(&state.bookmarks);
+            d.sort_canonical(&state.books);
+            state.dialog = Dialog::Bookmarks(d);
+        }
+        Action::OpenTranslations => {
+            state.dialog = Dialog::Translations(TranslationsDialog::new(
+                ctx.db.list_translations()?,
+                ctx.db.translation(),
+            ));
+        }
+        Action::Back => {
+            // In visual mode, Esc cancels the selection instead of
+            // returning to splash.
+            if state.visual_anchor.is_some() {
+                state.visual_anchor = None;
+            } else {
+                update_splash_label(
+                    &mut state.last_label_for_splash,
+                    &state.books,
+                    ctx.pos,
+                    *ctx.cursor_verse,
+                );
+                let qotd = quote::pick(ctx.db, ctx.db.translation()).unwrap_or(None);
+                state.bg = Bg::Splash(Box::new(SplashView::new(
+                    state.books.clone(),
+                    state.last_label_for_splash.clone(),
+                    state.translation_label.clone(),
+                    ctx.db.translation().to_string(),
+                    qotd,
+                )));
+            }
+        }
+        Action::Quit => return Ok(DispatchStep::Quit),
+        Action::SearchNext | Action::SearchPrev => {
+            if let Some(q) = state.last_query.as_deref()
+                && let Some(p) = repeat_search(
+                    ctx.db,
+                    &state.books,
+                    q,
+                    ctx.pos,
+                    *ctx.cursor_verse,
+                    matches!(action, Action::SearchNext),
+                )
+            {
+                jump_to(
+                    p,
+                    ctx.db,
+                    ctx.pos,
+                    ctx.passage,
+                    ctx.cursor_verse,
+                    &mut state.history,
+                )?;
+                update_splash_label(
+                    &mut state.last_label_for_splash,
+                    &state.books,
+                    ctx.pos,
+                    *ctx.cursor_verse,
+                );
+            }
+        }
+        _ => {
+            if apply_action(
+                action,
+                ctx.db,
+                &state.books,
+                ctx.pos,
+                ctx.passage,
+                ctx.cursor_verse,
+                &mut state.history,
+            )? {
+                return Ok(DispatchStep::Quit);
+            }
+        }
+    }
+    Ok(DispatchStep::Continue)
 }
 
 fn bookmarks_set(
@@ -853,8 +1081,7 @@ fn update_splash_label(
     let name = books
         .iter()
         .find(|b| b.code == pos.book)
-        .map(|b| b.name.clone())
-        .unwrap_or_else(|| pos.book.clone());
+        .map_or_else(|| pos.book.clone(), |b| b.name.clone());
     *target = Some((pos.clone(), format!("{} {}:{}", name, pos.chapter, verse)));
 }
 
@@ -872,7 +1099,7 @@ fn jump_to(
     *passage = db.load_passage(&pos.book, pos.chapter)?;
     // Find / Bookmarks / `:John 3:16` set p.verse so the cursor lands on the
     // match instead of always snapping to verse 1. Clamp to the passage size.
-    let max = passage.verses.last().map(|v| v.number).unwrap_or(1);
+    let max = passage.verses.last().map_or(1, |v| v.number);
     *cursor_verse = target_verse.unwrap_or(1).clamp(1, max);
     Ok(())
 }
@@ -894,7 +1121,7 @@ fn copy_verse_to_clipboard(passage: &Passage, pos: &Position, verse: i64) -> Res
 }
 
 fn max_verse(passage: &Passage) -> i64 {
-    passage.verses.last().map(|v| v.number).unwrap_or(1)
+    passage.verses.last().map_or(1, |v| v.number)
 }
 
 /// Returns true if the loop should exit.
@@ -914,11 +1141,11 @@ fn apply_action(
     match action {
         Action::Quit => Ok(true),
         Action::CursorDown(n) => {
-            *cursor_verse = (*cursor_verse + n as i64).min(last);
+            *cursor_verse = (*cursor_verse + i64::from(n)).min(last);
             Ok(false)
         }
         Action::CursorUp(n) => {
-            *cursor_verse = (*cursor_verse - n as i64).max(1);
+            *cursor_verse = (*cursor_verse - i64::from(n)).max(1);
             Ok(false)
         }
         Action::HalfPageDown => {
@@ -998,7 +1225,7 @@ fn repeat_search(
     cursor_verse: i64,
     forward: bool,
 ) -> Option<Position> {
-    let mut hits = search::search(db, query, 1000).ok()?;
+    let mut hits = search::search(db, db.translation(), query, 1000).ok()?;
     if hits.is_empty() {
         return None;
     }
@@ -1038,41 +1265,44 @@ fn switch_translation(
     passage: &mut Passage,
     cursor_verse: &mut i64,
 ) -> Result<()> {
-    db.translation = code.to_string();
-    *books = db.list_books()?;
-    *translation_label = db.translation_label()?;
-    *passage = db.load_passage(&pos.book, pos.chapter)?;
-    // Clamp the cursor — a different translation may have fewer verses for
-    // this chapter (rare in our three editions, but defensive).
-    let max = passage.verses.last().map(|v| v.number).unwrap_or(1);
-    if *cursor_verse > max {
-        *cursor_verse = max.max(1);
+    // Atomic swap: probe the new translation against `db` with its
+    // translation field temporarily set to `code`. If any inner call
+    // fails, restore the previous translation so the reader stays
+    // consistent with itself.
+    let prev = db.translation().to_string();
+    db.set_translation(code.to_string());
+    let probe = (|| -> Result<(Vec<Book>, String, Passage)> {
+        Ok((
+            db.list_books()?,
+            db.translation_label()?,
+            db.load_passage(&pos.book, pos.chapter)?,
+        ))
+    })();
+    match probe {
+        Ok((new_books, new_label, new_passage)) => {
+            *books = new_books;
+            *translation_label = new_label;
+            *passage = new_passage;
+            // Clamp the cursor — a different translation may have fewer
+            // verses for this chapter (rare in our three editions, but
+            // defensive).
+            let max = passage.verses.last().map_or(1, |v| v.number);
+            if *cursor_verse > max {
+                *cursor_verse = max.max(1);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            db.set_translation(prev);
+            Err(e)
+        }
     }
-    Ok(())
 }
 
 fn persist_default_translation(code: &str) -> Result<()> {
     let mut cfg = config::load();
     cfg.default_translation = Some(code.to_string());
     config::save(&cfg)
-}
-
-fn init_terminal() -> Result<Tty> {
-    enable_raw_mode()?;
-    let mut out = io::stdout();
-    execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
-    Ok(Terminal::new(CrosstermBackend::new(out))?)
-}
-
-fn restore_terminal(term: &mut Tty) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        term.backend_mut(),
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    )?;
-    term.show_cursor()?;
-    Ok(())
 }
 
 /// Translate a mouse event into a synthetic key event so clicks on the
@@ -1098,8 +1328,11 @@ fn mouse_to_key(me: MouseEvent, term_height: u16, status: &[Shortcut<'_>]) -> Op
 fn click_in_statusbar(x: u16, status: &[Shortcut<'_>]) -> Option<KeyEvent> {
     let mut col: u16 = 1;
     for s in status {
-        let key_len = s.key.chars().count() as u16;
-        let action_len = s.action.chars().count() as u16;
+        // Shortcut labels are short ASCII strings — fitting `usize` lengths
+        // into `u16` for screen column math is safe in practice; the
+        // try_from clamps in the unreachable case where it isn't.
+        let key_len = u16::try_from(s.key.chars().count()).unwrap_or(u16::MAX);
+        let action_len = u16::try_from(s.action.chars().count()).unwrap_or(u16::MAX);
         let block = key_len + 1 + action_len + 2;
         if x >= col && x < col + block {
             return shortcut_label_to_key(s.key);

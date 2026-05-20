@@ -37,10 +37,9 @@ impl ListNav {
             // Digit accumulation. A bare leading `0` is not a count (matches
             // vim's "0 = start of line" carve-out) — we let it fall through.
             KeyCode::Char(c) if c.is_ascii_digit() && !(self.count == 0 && c == '0') => {
-                self.count = self
-                    .count
-                    .saturating_mul(10)
-                    .saturating_add(c.to_digit(10).unwrap() as u16);
+                // Digit guard above ensures `to_digit(10)` is 0..=9 (always fits u16).
+                let digit = u16::try_from(c.to_digit(10).unwrap_or(0)).unwrap_or(0);
+                self.count = self.count.saturating_mul(10).saturating_add(digit);
                 Step::Pending
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -74,13 +73,13 @@ impl ListNav {
         }
     }
 
-    fn consume_count(&mut self) -> u16 {
+    const fn consume_count(&mut self) -> u16 {
         let n = if self.count == 0 { 1 } else { self.count };
         self.reset();
         n
     }
 
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.count = 0;
         self.pending_g = false;
     }

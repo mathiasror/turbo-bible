@@ -18,7 +18,7 @@ impl Position {
     /// Chapter-level equality: same book + chapter, regardless of verse hint.
     /// Used by the History stack to dedup consecutive entries that resolve to
     /// the same chapter even if the cursor verse differs.
-    pub fn same_chapter(&self, other: &Position) -> bool {
+    pub fn same_chapter(&self, other: &Self) -> bool {
         self.book == other.book && self.chapter == other.chapter
     }
 }
@@ -28,7 +28,7 @@ pub struct Navigator<'a> {
 }
 
 impl<'a> Navigator<'a> {
-    pub fn new(books: &'a [Book]) -> Self {
+    pub const fn new(books: &'a [Book]) -> Self {
         Self { books }
     }
 

@@ -29,7 +29,7 @@ pub enum GotoCommand {
 }
 
 impl GotoDialog {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             input: String::new(),
         }
@@ -40,13 +40,13 @@ impl GotoDialog {
             KeyCode::Esc => GotoOutcome::Cancel,
             KeyCode::Enter => {
                 // Vim-style commands take precedence over reference parsing.
-                match parse_command(&self.input) {
-                    Some(cmd) => GotoOutcome::Command(cmd),
-                    None => match parse_reference(&self.input, books) {
-                        Some(p) => GotoOutcome::Jump(p),
-                        None => GotoOutcome::Continue,
+                parse_command(&self.input).map_or_else(
+                    || {
+                        parse_reference(&self.input, books)
+                            .map_or(GotoOutcome::Continue, GotoOutcome::Jump)
                     },
-                }
+                    GotoOutcome::Command,
+                )
             }
             KeyCode::Backspace => {
                 self.input.pop();
@@ -66,16 +66,16 @@ impl GotoDialog {
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_dialog(area, "Goto reference", buf);
 
-        let preview = parse_reference(&self.input, books)
-            .map(|p| {
+        let preview = parse_reference(&self.input, books).map_or_else(
+            || "\u{2192} (type a book and chapter)".into(),
+            |p| {
                 let name = books
                     .iter()
                     .find(|b| b.code == p.book)
-                    .map(|b| b.name.clone())
-                    .unwrap_or(p.book.clone());
+                    .map_or_else(|| p.book.clone(), |b| b.name.clone());
                 format!("\u{2192} {} {}", name, p.chapter)
-            })
-            .unwrap_or_else(|| "\u{2192} (type a book and chapter)".into());
+            },
+        );
 
         let label = Span::styled(
             " Reference: ",
@@ -199,7 +199,7 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
             if s.starts_with(cand.as_str()) {
                 // Require word boundary after the candidate (digit or space or end).
                 let after = s[cand.len()..].chars().next();
-                let ok = matches!(after, None | Some(' ') | Some('\t'))
+                let ok = matches!(after, None | Some(' ' | '\t'))
                     || after.is_some_and(|c| c.is_ascii_digit());
                 if ok {
                     let len = cand.len();

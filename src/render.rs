@@ -5,6 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::db::Passage;
+use crate::text::word_wrap;
 use crate::theme;
 
 /// One line on screen, tagged with the verse it belongs to (if any).
@@ -165,7 +166,7 @@ pub fn render_passage(
             let glyph = format!(" {markers}");
             // Try to fit the marker on the last line; if not, push to a new
             // wrapped line.
-            let last_len = chunks.last().map(|s| s.chars().count()).unwrap_or(0);
+            let last_len = chunks.last().map_or(0, |s| s.chars().count());
             if last_len + glyph.chars().count() <= body_w {
                 if let Some(last) = chunks.last_mut() {
                     last.push_str(&glyph);
@@ -225,34 +226,8 @@ pub fn render_passage(
     out
 }
 
-fn is_marker_glyph(c: char) -> bool {
+const fn is_marker_glyph(c: char) -> bool {
     c == 'ᶠ' || c == 'ˣ' || c == ' '
-}
-
-/// Greedy word-wrap that splits on whitespace.
-fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        return vec![text.to_string()];
-    }
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            current = word.to_string();
-            continue;
-        }
-        if current.chars().count() + 1 + word.chars().count() <= max_width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            out.push(std::mem::take(&mut current));
-            current = word.to_string();
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
 }
 
 /// Find the first line index that belongs to a given verse, for scroll
@@ -297,7 +272,10 @@ pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
                 .map(|s| s.content.chars().count())
                 .sum();
             let mut spans = rl.line.spans.clone();
-            if (used as u16) < width {
+            // `used` is a char-count of styled spans; a single rendered line
+            // can't exceed `u16::MAX` columns in any sane terminal.
+            let used_u16 = u16::try_from(used).unwrap_or(u16::MAX);
+            if used_u16 < width {
                 let pad = (width as usize).saturating_sub(used);
                 let is_cursor_row =
                     rl.line.spans.last().and_then(|s| s.style.bg) == Some(cursor_bg);

@@ -34,7 +34,7 @@ pub fn build_query(input: &str) -> String {
         .join(" AND ")
 }
 
-pub fn search(db: &Db, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
+pub fn search(db: &Db, translation: &str, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
     let query = build_query(input);
     if query.is_empty() {
         return Ok(vec![]);
@@ -48,20 +48,23 @@ pub fn search(db: &Db, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
          ORDER BY bm25(verse_fts) LIMIT ?3",
     )?;
     let rows = stmt
-        .query_map(params![query, db.translation, limit as i64], |r| {
-            let book: String = r.get(0)?;
-            let chapter: i64 = r.get(1)?;
-            let verse: i64 = r.get(2)?;
-            let hilit: String = r.get(3)?;
-            let (text, hits) = parse_highlighted(&hilit);
-            Ok(SearchHit {
-                book,
-                chapter,
-                verse,
-                text,
-                hits,
-            })
-        })?
+        .query_map(
+            params![query, translation, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |r| {
+                let book: String = r.get(0)?;
+                let chapter: i64 = r.get(1)?;
+                let verse: i64 = r.get(2)?;
+                let hilit: String = r.get(3)?;
+                let (text, hits) = parse_highlighted(&hilit);
+                Ok(SearchHit {
+                    book,
+                    chapter,
+                    verse,
+                    text,
+                    hits,
+                })
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }

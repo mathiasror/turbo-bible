@@ -35,7 +35,7 @@ pub struct Frame<'a> {
     pub max_reading_width: u16,
 }
 
-impl<'a> Frame<'a> {
+impl Frame<'_> {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         let (menu_area, body_area, status_area) = split(area);
         menubar::render(self.menu_title, menu_area, buf);
@@ -64,7 +64,7 @@ impl<'a> Frame<'a> {
     }
 }
 
-fn split(area: Rect) -> (Rect, Rect, Rect) {
+const fn split(area: Rect) -> (Rect, Rect, Rect) {
     let menu = Rect::new(area.x, area.y, area.width, 1);
     let status = Rect::new(
         area.x,
@@ -81,7 +81,7 @@ fn split(area: Rect) -> (Rect, Rect, Rect) {
     (menu, body, status)
 }
 
-/// Returns (reading_rect, sidebar_rect). The sidebar is only shown if there's
+/// Returns (`reading_rect`, `sidebar_rect`). The sidebar is only shown if there's
 /// enough horizontal room AND the caller asked for it.
 fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Option<Rect>) {
     // Geometry per pane: 1 col outer margin + drop shadow (2 cols right).

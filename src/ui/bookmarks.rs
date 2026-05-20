@@ -75,20 +75,19 @@ impl BookmarksDialog {
             Step::Pass => {}
         }
         match key.code {
-            KeyCode::Esc => BookmarksOutcome::Cancel,
-            KeyCode::Char('q') => BookmarksOutcome::Cancel,
+            KeyCode::Esc | KeyCode::Char('q') => BookmarksOutcome::Cancel,
             KeyCode::Enter | KeyCode::Char('o') => {
-                if let Some(b) = self.items.get(self.cursor) {
-                    BookmarksOutcome::Jump(Position {
-                        book: b.book.clone(),
-                        chapter: b.chapter,
-                        verse: Some(b.start_verse),
+                self.items
+                    .get(self.cursor)
+                    .map_or(BookmarksOutcome::Continue, |b| {
+                        BookmarksOutcome::Jump(Position {
+                            book: b.book.clone(),
+                            chapter: b.chapter,
+                            verse: Some(b.start_verse),
+                        })
                     })
-                } else {
-                    BookmarksOutcome::Continue
-                }
             }
-            KeyCode::Char('d') | KeyCode::Char('x') | KeyCode::Delete => {
+            KeyCode::Char('d' | 'x') | KeyCode::Delete => {
                 if let Some(b) = self.items.get(self.cursor).cloned() {
                     let drop = self.cursor.min(self.items.len().saturating_sub(1));
                     self.items.remove(drop);
@@ -151,8 +150,7 @@ impl BookmarksDialog {
                 let book_name = books
                     .iter()
                     .find(|bk| bk.code == b.book)
-                    .map(|bk| bk.display_name())
-                    .unwrap_or(b.book.as_str());
+                    .map_or(b.book.as_str(), super::super::db::Book::display_name);
                 let on = i == self.cursor;
                 let mark = if on { "  \u{25B8} " } else { "    " };
                 let ref_str = b.reference_label(book_name);

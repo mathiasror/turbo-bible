@@ -27,7 +27,7 @@ pub enum FindOutcome {
 }
 
 impl FindDialog {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             input: String::new(),
             results: Vec::new(),
@@ -84,7 +84,7 @@ impl FindDialog {
             self.error = None;
             return;
         }
-        match search::search(db, &self.input, 50) {
+        match search::search(db, db.translation(), &self.input, 50) {
             Ok(rows) => {
                 self.results = rows;
                 self.error = None;
@@ -168,8 +168,7 @@ impl FindDialog {
             let book_label = books
                 .iter()
                 .find(|b| b.code == hit.book)
-                .map(|b| b.abbreviation.clone())
-                .unwrap_or_else(|| hit.book.clone());
+                .map_or_else(|| hit.book.clone(), |b| b.abbreviation.clone());
             let reference = format!(" {} {}:{} ", book_label, hit.chapter, hit.verse);
             let on = i == self.selected;
             let ref_line_style = if on { sel_bg } else { ref_style };

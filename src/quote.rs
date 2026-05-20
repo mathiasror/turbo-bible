@@ -52,14 +52,14 @@ pub struct DailyQuote {
 
 /// Pick today's quote and resolve its text against the DB. Walks forward
 /// through the curated list if the chosen reference isn't loaded yet.
-pub fn pick(db: &Db) -> Result<Option<DailyQuote>> {
+pub fn pick(db: &Db, translation: &str) -> Result<Option<DailyQuote>> {
     if CURATED.is_empty() {
         return Ok(None);
     }
     let start = day_index() % CURATED.len();
     for offset in 0..CURATED.len() {
         let (book, chapter, verse) = CURATED[(start + offset) % CURATED.len()];
-        if let Some(q) = lookup(db, book, chapter, verse)? {
+        if let Some(q) = lookup(db, translation, book, chapter, verse)? {
             return Ok(Some(q));
         }
     }
@@ -69,19 +69,24 @@ pub fn pick(db: &Db) -> Result<Option<DailyQuote>> {
 fn day_index() -> usize {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     (secs / 86_400) as usize
 }
 
-fn lookup(db: &Db, book: &str, chapter: i64, verse: i64) -> Result<Option<DailyQuote>> {
+fn lookup(
+    db: &Db,
+    translation: &str,
+    book: &str,
+    chapter: i64,
+    verse: i64,
+) -> Result<Option<DailyQuote>> {
     let mut stmt = db.conn().prepare_cached(
         "SELECT v.text, b.name FROM verse v
          JOIN book b ON b.code = v.book
          WHERE v.translation = ?1 AND v.book = ?2 AND v.chapter = ?3 AND v.verse = ?4",
     )?;
     let row = stmt
-        .query_row(params![db.translation, book, chapter, verse], |r| {
+        .query_row(params![translation, book, chapter, verse], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
         .ok();

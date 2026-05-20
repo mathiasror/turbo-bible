@@ -12,7 +12,7 @@ use crate::config::ThemeConfig;
 static THEME: OnceLock<ThemeConfig> = OnceLock::new();
 
 pub fn init(t: ThemeConfig) {
-    let _ = THEME.set(t);
+    THEME.set(t).expect("theme initialized twice");
 }
 
 fn theme() -> &'static ThemeConfig {

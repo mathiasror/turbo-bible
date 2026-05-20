@@ -153,10 +153,11 @@ impl KeyState {
             && c.is_ascii_digit()
             && !(self.count == 0 && c == '0')
         {
-            self.count = self
-                .count
-                .saturating_mul(10)
-                .saturating_add(c.to_digit(10).unwrap() as u16);
+            // `is_ascii_digit()` was just checked; `to_digit(10)` returns
+            // a value in 0..=9 which always fits in u16. Use `unwrap_or(0)`
+            // to make that infallibility loud without an unwrap.
+            let digit = u16::try_from(c.to_digit(10).unwrap_or(0)).unwrap_or(0);
+            self.count = self.count.saturating_mul(10).saturating_add(digit);
             self.last = Some(Instant::now());
             return None;
         }
@@ -175,12 +176,12 @@ impl KeyState {
         }
     }
 
-    fn count_or(&self, default: u16) -> u16 {
+    const fn count_or(&self, default: u16) -> u16 {
         if self.count == 0 { default } else { self.count }
     }
 
     #[cfg(test)]
-    pub fn extras_count(&self) -> usize {
+    pub const fn extras_count(&self) -> usize {
         self.extras.len()
     }
 
@@ -212,8 +213,7 @@ impl KeyState {
                 (KeyCode::Char('g'), KeyCode::Char('g')) => Resolve::Action(Action::GotoTop),
                 (KeyCode::Char('['), KeyCode::Char('b')) => Resolve::Action(Action::PrevBook),
                 (KeyCode::Char(']'), KeyCode::Char('b')) => Resolve::Action(Action::NextBook),
-                (KeyCode::Char('Z'), KeyCode::Char('Z')) => Resolve::Action(Action::Quit),
-                (KeyCode::Char('Z'), KeyCode::Char('Q')) => Resolve::Action(Action::Quit),
+                (KeyCode::Char('Z'), KeyCode::Char('Z' | 'Q')) => Resolve::Action(Action::Quit),
                 _ => Resolve::Unknown,
             };
         }
@@ -268,10 +268,8 @@ impl KeyState {
             (KeyCode::Char('k'), false, true) => {
                 Resolve::Action(Action::CursorUp(self.count_or(1)))
             }
-            (KeyCode::Char('h'), false, true) => Resolve::Action(Action::PrevChapter),
-            (KeyCode::Char('l'), false, true) => Resolve::Action(Action::NextChapter),
-            (KeyCode::Char('H'), false, true) => Resolve::Action(Action::PrevChapter),
-            (KeyCode::Char('L'), false, true) => Resolve::Action(Action::NextChapter),
+            (KeyCode::Char('h' | 'H'), false, true) => Resolve::Action(Action::PrevChapter),
+            (KeyCode::Char('l' | 'L'), false, true) => Resolve::Action(Action::NextChapter),
 
             (KeyCode::Char('d'), true, _) => Resolve::Action(Action::HalfPageDown),
             (KeyCode::Char('u'), true, _) => Resolve::Action(Action::HalfPageUp),
@@ -281,8 +279,7 @@ impl KeyState {
             (KeyCode::Char('G'), false, true) => Resolve::Action(Action::GotoBottom),
             (KeyCode::Char('K'), false, true) => Resolve::Action(Action::OpenFootnote),
             (KeyCode::Char('y'), false, true) => Resolve::Action(Action::CopyVerse),
-            (KeyCode::Char('v'), false, true) => Resolve::Action(Action::ToggleVisual),
-            (KeyCode::Char('V'), false, true) => Resolve::Action(Action::ToggleVisual),
+            (KeyCode::Char('v' | 'V'), false, true) => Resolve::Action(Action::ToggleVisual),
             (KeyCode::Char('b'), false, true) => Resolve::Action(Action::AddBookmark),
             (KeyCode::Char('T'), false, true) => Resolve::Action(Action::ToggleVerseLayout),
             (KeyCode::Char('M'), false, true) => Resolve::Action(Action::OpenBookmarks),
