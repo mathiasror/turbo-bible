@@ -98,20 +98,20 @@ impl FindDialog {
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_dialog(area, "Find", buf);
 
-        let bg = Style::new().bg(theme::BLUE);
-        let label = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
+        let bg = Style::new().bg(theme::blue());
+        let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
         let input_style = Style::new()
-            .fg(theme::BLACK)
-            .bg(theme::CYAN)
+            .fg(theme::black())
+            .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
         let hit_style = Style::new()
-            .fg(theme::YELLOW)
-            .bg(theme::BLUE)
+            .fg(theme::yellow())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
-        let ref_style = Style::new().fg(theme::CYAN).bg(theme::BLUE);
+        let ref_style = Style::new().fg(theme::cyan()).bg(theme::blue());
         let sel_bg = Style::new()
-            .fg(theme::BRIGHT_WHITE)
-            .bg(theme::CYAN)
+            .fg(theme::bright_white())
+            .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
 
         let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
@@ -121,7 +121,7 @@ impl FindDialog {
         lines.push(Line::from(vec![
             Span::styled("  Find: ", label),
             Span::styled(self.input.clone(), input_style),
-            Span::styled("\u{2588}", input_style.fg(theme::BRIGHT_WHITE)),
+            Span::styled("\u{2588}", input_style.fg(theme::bright_white())),
         ]));
         lines.push(blank());
 
@@ -131,8 +131,8 @@ impl FindDialog {
                 Span::styled(
                     err.clone(),
                     Style::new()
-                        .fg(theme::HOTKEY_RED)
-                        .bg(theme::BLUE)
+                        .fg(theme::hotkey_red())
+                        .bg(theme::blue())
                         .add_modifier(Modifier::BOLD),
                 ),
             ]));
@@ -192,8 +192,8 @@ impl FindDialog {
                 Span::styled(
                     "(no matches)",
                     Style::new()
-                        .fg(theme::LIGHT_GREY)
-                        .bg(theme::BLUE)
+                        .fg(theme::light_grey())
+                        .bg(theme::blue())
                         .add_modifier(Modifier::ITALIC),
                 ),
             ]));
@@ -207,35 +207,35 @@ impl FindDialog {
             Span::styled(
                 "  Enter ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "jump   ",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
             Span::styled(
                 "↑↓ ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "navigate   ",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
             Span::styled(
                 "Esc ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "cancel",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
         ]));
 

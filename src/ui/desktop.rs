@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use crate::theme;
 
 pub fn render(area: Rect, buf: &mut Buffer) {
-    let style = Style::new().fg(theme::CYAN).bg(theme::BLUE);
+    let style = Style::new().fg(theme::cyan()).bg(theme::blue());
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];

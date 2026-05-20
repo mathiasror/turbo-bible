@@ -77,15 +77,15 @@ impl GotoDialog {
 
         let label = Span::styled(
             " Reference: ",
-            Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE),
+            Style::new().fg(theme::bright_white()).bg(theme::blue()),
         );
         let input_style = Style::new()
-            .fg(theme::BLACK)
-            .bg(theme::CYAN)
+            .fg(theme::black())
+            .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
         let cursor_style = Style::new()
-            .fg(theme::BLACK)
-            .bg(theme::BRIGHT_WHITE)
+            .fg(theme::black())
+            .bg(theme::bright_white())
             .add_modifier(Modifier::BOLD);
 
         let mut input_spans = vec![Span::styled(format!(" {}", self.input), input_style)];
@@ -97,7 +97,7 @@ impl GotoDialog {
         }
         let blank = Span::styled(
             " ".repeat(inner.width as usize),
-            Style::new().bg(theme::BLUE),
+            Style::new().bg(theme::blue()),
         );
 
         let lines = vec![
@@ -106,19 +106,19 @@ impl GotoDialog {
             Line::from({
                 let mut v = vec![Span::styled(
                     "  ",
-                    Style::new().bg(theme::BLUE),
+                    Style::new().bg(theme::blue()),
                 )];
                 v.extend(input_spans);
                 v
             }),
             Line::from(blank.clone()),
             Line::from(vec![
-                Span::styled("  ", Style::new().bg(theme::BLUE)),
+                Span::styled("  ", Style::new().bg(theme::blue())),
                 Span::styled(
                     preview,
                     Style::new()
-                        .fg(theme::YELLOW)
-                        .bg(theme::BLUE)
+                        .fg(theme::yellow())
+                        .bg(theme::blue())
                         .add_modifier(Modifier::BOLD),
                 ),
             ]),
@@ -127,30 +127,30 @@ impl GotoDialog {
                 Span::styled(
                     "  Enter ",
                     Style::new()
-                        .fg(theme::BRIGHT_WHITE)
-                        .bg(theme::BLUE)
+                        .fg(theme::bright_white())
+                        .bg(theme::blue())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     "jump   ",
-                    Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                    Style::new().fg(theme::light_grey()).bg(theme::blue()),
                 ),
                 Span::styled(
                     "Esc ",
                     Style::new()
-                        .fg(theme::BRIGHT_WHITE)
-                        .bg(theme::BLUE)
+                        .fg(theme::bright_white())
+                        .bg(theme::blue())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     "cancel",
-                    Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                    Style::new().fg(theme::light_grey()).bg(theme::blue()),
                 ),
             ]),
         ];
 
         Paragraph::new(lines)
-            .style(Style::new().bg(theme::BLUE))
+            .style(Style::new().bg(theme::blue()))
             .render(inner, buf);
     }
 }

@@ -30,12 +30,12 @@ impl<'a> Widget for PassageView<'a> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .border_style(Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE))
+            .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
-                Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE),
+                Style::new().fg(theme::bright_white()).bg(theme::blue()),
             )))
-            .style(Style::new().bg(theme::BLUE));
+            .style(Style::new().bg(theme::blue()));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -44,7 +44,7 @@ impl<'a> Widget for PassageView<'a> {
             for x in inner.left()..inner.right() {
                 let cell = &mut buf[(x, y)];
                 cell.set_symbol(" ");
-                cell.set_style(Style::new().bg(theme::BLUE));
+                cell.set_style(Style::new().bg(theme::blue()));
             }
         }
 
@@ -64,7 +64,7 @@ impl<'a> Widget for PassageView<'a> {
 
         let lines: Vec<Line<'static>> = pad_to_width(&rendered, inner.width);
         Paragraph::new(lines)
-            .style(Style::new().bg(theme::BLUE))
+            .style(Style::new().bg(theme::blue()))
             .scroll((scroll, 0))
             .render(inner, buf);
     }

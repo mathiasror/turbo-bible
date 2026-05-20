@@ -86,20 +86,20 @@ impl FootnoteDialog {
         let title = format!("Notes for {}", self.verse_label);
         let inner = dialog::draw_dialog(area, &title, buf);
 
-        let bg = Style::new().bg(theme::BLUE);
-        let label = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
-        let body_style = Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE);
+        let bg = Style::new().bg(theme::blue());
+        let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
+        let body_style = Style::new().fg(theme::light_grey()).bg(theme::blue());
         let header_style = Style::new()
-            .fg(theme::YELLOW)
-            .bg(theme::BLUE)
+            .fg(theme::yellow())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let sel = Style::new()
-            .fg(theme::BRIGHT_WHITE)
-            .bg(theme::CYAN)
+            .fg(theme::bright_white())
+            .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
         let xref_color = Style::new()
-            .fg(theme::YELLOW)
-            .bg(theme::BLUE)
+            .fg(theme::yellow())
+            .bg(theme::blue())
             .add_modifier(Modifier::UNDERLINED);
 
         let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
@@ -135,8 +135,8 @@ impl FootnoteDialog {
                 Span::styled(
                     "(no footnotes on this verse)",
                     Style::new()
-                        .fg(theme::LIGHT_GREY)
-                        .bg(theme::BLUE)
+                        .fg(theme::light_grey())
+                        .bg(theme::blue())
                         .add_modifier(Modifier::ITALIC),
                 ),
             ]));
@@ -151,35 +151,35 @@ impl FootnoteDialog {
             Span::styled(
                 "Enter ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "follow xref   ",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
             Span::styled(
                 "↑↓ ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "navigate   ",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
             Span::styled(
                 "Esc ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "close",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
         ]));
 

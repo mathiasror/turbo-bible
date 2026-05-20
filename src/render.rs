@@ -32,26 +32,26 @@ pub fn render_passage(
     let mut out: Vec<RenderedLine> = Vec::new();
 
     let heading_style = Style::new()
-        .fg(theme::BRIGHT_WHITE)
-        .bg(theme::BLUE)
+        .fg(theme::bright_white())
+        .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    let cursor_bg = theme::CYAN;
+    let cursor_bg = theme::cyan();
     let verse_num_style = |on_cursor: bool| {
         let mut s = Style::new()
-            .fg(theme::YELLOW)
+            .fg(theme::yellow())
             .add_modifier(Modifier::BOLD);
-        s = if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::BLUE) };
+        s = if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) };
         s
     };
     let verse_text_style = |on_cursor: bool| {
-        let s = Style::new().fg(theme::BRIGHT_WHITE);
-        if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::BLUE) }
+        let s = Style::new().fg(theme::bright_white());
+        if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) }
     };
     let marker_style = |on_cursor: bool| {
         let s = Style::new()
-            .fg(theme::YELLOW)
+            .fg(theme::yellow())
             .add_modifier(Modifier::BOLD);
-        if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::BLUE) }
+        if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) }
     };
 
     // Pre-bucket headings by `before_verse`.
@@ -73,7 +73,7 @@ pub fn render_passage(
     out.push(RenderedLine {
         line: Line::from(Span::styled(
             "─".repeat(p.book_name.len() + p.chapter.to_string().len() + 1),
-            Style::new().fg(theme::CYAN).bg(theme::BLUE),
+            Style::new().fg(theme::cyan()).bg(theme::blue()),
         )),
         verse: 0,
     });
@@ -241,7 +241,7 @@ fn rl_blank() -> RenderedLine {
     RenderedLine {
         line: Line::from(Span::styled(
             String::new(),
-            Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+            Style::new().fg(theme::light_grey()).bg(theme::blue()),
         )),
         verse: 0,
     }
@@ -251,7 +251,7 @@ fn rl_blank() -> RenderedLine {
 /// blue background fills the window cleanly (no terminal default bg bleeding
 /// through). Returns a freshly owned Vec<Line>.
 pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
-    let bg = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
+    let bg = Style::new().fg(theme::bright_white()).bg(theme::blue());
     lines
         .iter()
         .map(|rl| {

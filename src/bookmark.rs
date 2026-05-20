@@ -1,4 +1,8 @@
-//! Bookmark persistence. Stored as JSON at `~/.config/turbo-bible/bookmarks.json`.
+//! Bookmark persistence. Stored as TOML at `~/.config/turbo-bible/bookmarks.toml`.
+//!
+//! v1 used JSON at `bookmarks.json`; this loader reads either and rewrites
+//! to TOML on the next save. Old bookmarks tagged `translation = "nb-2024"`
+//! are rewritten to `"nb-1930"` (same Protestant versification, safe rename).
 
 use std::fs;
 use std::path::PathBuf;
@@ -7,6 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use etcetera::{choose_base_strategy, BaseStrategy};
 use serde::{Deserialize, Serialize};
+
+use crate::state::{LEGACY_TRANSLATION, REPLACEMENT_TRANSLATION};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
@@ -54,17 +60,36 @@ pub struct BookmarkStore {
 
 impl BookmarkStore {
     pub fn load() -> Self {
-        let Ok(path) = bookmarks_path() else { return Self::default() };
-        let Ok(txt) = fs::read_to_string(path) else { return Self::default() };
-        serde_json::from_str(&txt).unwrap_or_default()
+        // Preferred: TOML.
+        if let Ok(path) = bookmarks_path() {
+            if let Ok(txt) = fs::read_to_string(&path) {
+                if let Ok(mut s) = toml::from_str::<BookmarkStore>(&txt) {
+                    s.rewrite_legacy_translation();
+                    return s;
+                }
+            }
+        }
+        // Fallback: legacy JSON file from v1.
+        if let Ok(legacy) = legacy_bookmarks_path() {
+            if let Ok(txt) = fs::read_to_string(&legacy) {
+                if let Ok(mut s) = serde_json::from_str::<BookmarkStore>(&txt) {
+                    s.rewrite_legacy_translation();
+                    return s;
+                }
+            }
+        }
+        Self::default()
     }
 
     pub fn save(&self) -> Result<()> {
         let dir = config_dir()?;
         fs::create_dir_all(&dir)?;
         let path = bookmarks_path()?;
-        let txt = serde_json::to_string_pretty(self)?;
+        let txt = toml::to_string_pretty(self)?;
         fs::write(path, txt)?;
+        if let Ok(legacy) = legacy_bookmarks_path() {
+            let _ = fs::remove_file(legacy);
+        }
         Ok(())
     }
 
@@ -76,6 +101,13 @@ impl BookmarkStore {
         self.bookmarks.push(bm);
     }
 
+    fn rewrite_legacy_translation(&mut self) {
+        for bm in &mut self.bookmarks {
+            if bm.translation == LEGACY_TRANSLATION {
+                bm.translation = REPLACEMENT_TRANSLATION.into();
+            }
+        }
+    }
 }
 
 pub fn now_unix() -> u64 {
@@ -93,6 +125,12 @@ fn config_dir() -> Result<PathBuf> {
 }
 
 fn bookmarks_path() -> Result<PathBuf> {
+    let mut p = config_dir()?;
+    p.push("bookmarks.toml");
+    Ok(p)
+}
+
+fn legacy_bookmarks_path() -> Result<PathBuf> {
     let mut p = config_dir()?;
     p.push("bookmarks.json");
     Ok(p)

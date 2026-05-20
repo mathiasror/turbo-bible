@@ -24,12 +24,12 @@ impl<'a> Widget for SidebarView<'a> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .border_style(Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE))
+            .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
-                Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE),
+                Style::new().fg(theme::bright_white()).bg(theme::blue()),
             )))
-            .style(Style::new().bg(theme::BLUE));
+            .style(Style::new().bg(theme::blue()));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -37,33 +37,33 @@ impl<'a> Widget for SidebarView<'a> {
             for x in inner.left()..inner.right() {
                 let cell = &mut buf[(x, y)];
                 cell.set_symbol(" ");
-                cell.set_style(Style::new().bg(theme::BLUE));
+                cell.set_style(Style::new().bg(theme::blue()));
             }
         }
 
         let lines = build_lines(self.passage, self.cursor_verse, inner.width);
         Paragraph::new(lines)
-            .style(Style::new().bg(theme::BLUE))
+            .style(Style::new().bg(theme::blue()))
             .wrap(Wrap { trim: false })
             .render(inner, buf);
     }
 }
 
 fn build_lines(p: &Passage, cursor_verse: i64, _width: u16) -> Vec<Line<'static>> {
-    let bg = Style::new().bg(theme::BLUE);
-    let body = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
-    let dim = Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE);
+    let bg = Style::new().bg(theme::blue());
+    let body = Style::new().fg(theme::bright_white()).bg(theme::blue());
+    let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
     let header = Style::new()
-        .fg(theme::CYAN)
-        .bg(theme::BLUE)
+        .fg(theme::cyan())
+        .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
     let accent = Style::new()
-        .fg(theme::YELLOW)
-        .bg(theme::BLUE)
+        .fg(theme::yellow())
+        .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
     let xref_style = Style::new()
-        .fg(theme::YELLOW)
-        .bg(theme::BLUE)
+        .fg(theme::yellow())
+        .bg(theme::blue())
         .add_modifier(Modifier::UNDERLINED);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -130,8 +130,8 @@ fn build_lines(p: &Passage, cursor_verse: i64, _width: u16) -> Vec<Line<'static>
         lines.push(Line::from(Span::styled(
             " (nothing for this verse)",
             Style::new()
-                .fg(theme::LIGHT_GREY)
-                .bg(theme::BLUE)
+                .fg(theme::light_grey())
+                .bg(theme::blue())
                 .add_modifier(Modifier::ITALIC),
         )));
     }

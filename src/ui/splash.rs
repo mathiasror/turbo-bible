@@ -68,6 +68,7 @@ pub enum SplashOutcome {
     OpenBook(Position),
     OpenGoto,
     OpenFind,
+    OpenTranslations,
     Quit,
 }
 
@@ -263,6 +264,8 @@ impl SplashView {
             KeyCode::Char('c') if ctrl => SplashOutcome::Quit,
             KeyCode::F(2) => SplashOutcome::OpenGoto,
             KeyCode::F(3) => SplashOutcome::OpenFind,
+            KeyCode::F(5) => SplashOutcome::OpenTranslations,
+            KeyCode::Char('t') => SplashOutcome::OpenTranslations,
             KeyCode::Char(':') => SplashOutcome::OpenGoto,
 
             KeyCode::Char('/') => {
@@ -382,47 +385,47 @@ impl SplashView {
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_dialog(area, "TURBO BIBLE", buf);
 
-        let bg = Style::new().bg(theme::BLUE);
+        let bg = Style::new().bg(theme::blue());
         let title_style = Style::new()
-            .fg(theme::YELLOW)
-            .bg(theme::BLUE)
+            .fg(theme::yellow())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let subtitle = Style::new()
-            .fg(theme::CYAN)
-            .bg(theme::BLUE)
+            .fg(theme::cyan())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
-        let dim = Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE);
-        let label = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
+        let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
         let key_style = Style::new()
-            .fg(theme::BRIGHT_WHITE)
-            .bg(theme::BLUE)
+            .fg(theme::bright_white())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let sel = Style::new()
-            .fg(theme::BRIGHT_WHITE)
-            .bg(theme::CYAN)
+            .fg(theme::bright_white())
+            .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
-        let dim_cursor = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::DARK_GREY);
+        let dim_cursor = Style::new().fg(theme::bright_white()).bg(theme::dark_grey());
         let filter_style = Style::new()
-            .fg(theme::BLACK)
-            .bg(theme::CYAN)
+            .fg(theme::black())
+            .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
         let mode_style = match self.mode {
             SplashMode::Filter => Style::new()
-                .fg(theme::BLACK)
-                .bg(theme::YELLOW)
+                .fg(theme::black())
+                .bg(theme::yellow())
                 .add_modifier(Modifier::BOLD),
             SplashMode::Normal => Style::new()
-                .fg(theme::BLACK)
-                .bg(theme::CYAN)
+                .fg(theme::black())
+                .bg(theme::cyan())
                 .add_modifier(Modifier::BOLD),
         };
         let column_header = Style::new()
-            .fg(theme::YELLOW)
-            .bg(theme::BLUE)
+            .fg(theme::yellow())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let column_header_focused = Style::new()
-            .fg(theme::BRIGHT_WHITE)
-            .bg(theme::BLUE)
+            .fg(theme::bright_white())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
 
         let inner_w = inner.width as usize;
@@ -505,7 +508,7 @@ impl SplashView {
         if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
                 "\u{2588}",
-                filter_style.fg(theme::BRIGHT_WHITE),
+                filter_style.fg(theme::bright_white()),
             ));
             cursor_extra = 1;
         }

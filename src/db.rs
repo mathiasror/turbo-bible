@@ -8,15 +8,6 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 /// Bump this when we change tokenizer settings or want to force a rebuild.
 const FTS_TARGET_VERSION: &str = "2";
 
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let sql = format!("PRAGMA table_info({table})");
-    let cols: rusqlite::Result<Vec<String>> = conn
-        .prepare(&sql)?
-        .query_map([], |r| r.get::<_, String>(1))?
-        .collect();
-    Ok(cols?.iter().any(|c| c == column))
-}
-
 /// Open the DB writable and, if `verse_fts` hasn't been rebuilt with our
 /// preferred tokenizer settings (`remove_diacritics 1` + prefix index),
 /// rebuild it. Idempotent: prints `false` and returns quickly when already
@@ -73,6 +64,15 @@ pub fn ensure_fts_optimized(path: &Path) -> Result<bool> {
         params![FTS_TARGET_VERSION],
     )?;
     Ok(true)
+}
+
+#[derive(Debug, Clone)]
+pub struct TranslationInfo {
+    pub code: String,
+    pub name: String,
+    pub language: String,
+    #[allow(dead_code)]
+    pub license: String,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +145,6 @@ pub struct Passage {
 pub struct Db {
     conn: Connection,
     pub translation: String,
-    has_full_name: bool,
 }
 
 impl Db {
@@ -160,23 +159,47 @@ impl Db {
         )
         .with_context(|| format!("opening {}", path.display()))?;
         conn.pragma_update(None, "query_only", "ON")?;
-        let has_full_name = column_exists(&conn, "book", "full_name")?;
         Ok(Self {
             conn,
             translation: translation.to_string(),
-            has_full_name,
         })
     }
 
-    pub fn list_books(&self) -> Result<Vec<Book>> {
-        let sql = if self.has_full_name {
-            "SELECT code, name, abbreviation, testament, ord, full_name FROM book ORDER BY ord"
-        } else {
-            "SELECT code, name, abbreviation, testament, ord, NULL FROM book ORDER BY ord"
-        };
-        let mut stmt = self.conn.prepare_cached(sql)?;
+    pub fn list_translations(&self) -> Result<Vec<TranslationInfo>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT code, name, language, license FROM translation ORDER BY code")?;
         let rows = stmt
             .query_map([], |r| {
+                Ok(TranslationInfo {
+                    code: r.get(0)?,
+                    name: r.get(1)?,
+                    language: r.get(2)?,
+                    license: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// "King James Version (1769)  ·  en-kjv" — the subtitle shown on splash.
+    pub fn translation_label(&self) -> Result<String> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT name FROM translation WHERE code=?1")?;
+        let name: String = stmt.query_row(params![self.translation], |r| r.get(0))?;
+        Ok(format!("{}  ·  {}", name, self.translation))
+    }
+
+    pub fn list_books(&self) -> Result<Vec<Book>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT b.code, bl.name, bl.abbreviation, b.testament, b.ord, bl.full_name
+             FROM book b
+             JOIN book_label bl ON bl.book = b.code AND bl.translation = ?1
+             ORDER BY b.ord",
+        )?;
+        let rows = stmt
+            .query_map(params![self.translation], |r| {
                 Ok(Book {
                     code: r.get(0)?,
                     name: r.get(1)?,
@@ -200,13 +223,11 @@ impl Db {
 
     pub fn load_passage(&self, book: &str, chapter: i64) -> Result<Passage> {
         let (book_name, book_abbrev) = {
-            let sql = if self.has_full_name {
-                "SELECT COALESCE(full_name, name), abbreviation FROM book WHERE code=?1"
-            } else {
-                "SELECT name, abbreviation FROM book WHERE code=?1"
-            };
-            let mut stmt = self.conn.prepare_cached(sql)?;
-            stmt.query_row(params![book], |r| {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT COALESCE(full_name, name), abbreviation FROM book_label
+                 WHERE translation=?1 AND book=?2",
+            )?;
+            stmt.query_row(params![self.translation, book], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })?
         };

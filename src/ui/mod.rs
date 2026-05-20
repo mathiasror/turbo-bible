@@ -12,6 +12,7 @@ pub mod passage;
 pub mod sidebar;
 pub mod splash;
 pub mod statusbar;
+pub mod translations;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -29,6 +30,8 @@ pub struct Frame<'a> {
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
     pub show_sidebar: bool,
     pub two_line_verses: bool,
+    /// Maximum width (cols) of the reading pane. Centered if terminal wider.
+    pub max_reading_width: u16,
 }
 
 impl<'a> Frame<'a> {
@@ -37,7 +40,7 @@ impl<'a> Frame<'a> {
         menubar::render(self.menu, menu_area, buf);
         desktop::render(body_area, buf);
         if let Some(p) = self.passage {
-            let (reading, sidebar_rect) = body_layout(body_area, self.show_sidebar);
+            let (reading, sidebar_rect) = body_layout(body_area, self.show_sidebar, self.max_reading_width);
             passage::PassageView {
                 passage: p,
                 cursor_verse: self.cursor_verse,
@@ -67,30 +70,29 @@ fn split(area: Rect) -> (Rect, Rect, Rect) {
 
 /// Returns (reading_rect, sidebar_rect). The sidebar is only shown if there's
 /// enough horizontal room AND the caller asked for it.
-fn body_layout(body: Rect, show_sidebar: bool) -> (Rect, Option<Rect>) {
+fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Option<Rect>) {
     // Geometry per pane: 1 col outer margin + drop shadow (2 cols right).
     const GAP: u16 = 2;
-    const MAX_READING_W: u16 = 80;
     const SIDEBAR_W: u16 = 34;
-    const MIN_TERMINAL_W_FOR_SIDEBAR: u16 = MAX_READING_W + GAP + SIDEBAR_W + 4;
+    let min_terminal_w_for_sidebar = max_reading_w + GAP + SIDEBAR_W + 4;
 
     let h = body.height.saturating_sub(2);
     let y = body.y + 1;
 
-    if !show_sidebar || body.width < MIN_TERMINAL_W_FOR_SIDEBAR {
+    if !show_sidebar || body.width < min_terminal_w_for_sidebar {
         // Centered single pane.
-        let w = body.width.min(MAX_READING_W).saturating_sub(2);
+        let w = body.width.min(max_reading_w).saturating_sub(2);
         let x = body.x + (body.width.saturating_sub(w)) / 2;
         return (Rect::new(x, y, w, h), None);
     }
 
     // Two-pane layout: reading flush-left of the centered group, sidebar to
     // its right.
-    let total = MAX_READING_W + GAP + SIDEBAR_W;
+    let total = max_reading_w + GAP + SIDEBAR_W;
     let left = body.x + (body.width.saturating_sub(total)) / 2;
-    let reading = Rect::new(left, y, MAX_READING_W.saturating_sub(2), h);
+    let reading = Rect::new(left, y, max_reading_w.saturating_sub(2), h);
     let sidebar = Rect::new(
-        left + MAX_READING_W + GAP,
+        left + max_reading_w + GAP,
         y,
         SIDEBAR_W.saturating_sub(2),
         h,

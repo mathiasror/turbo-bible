@@ -18,12 +18,12 @@ pub struct Shortcut<'a> {
 pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &str) {
     let base = theme::menubar_style();
     let key = Style::new()
-        .fg(theme::BRIGHT_WHITE)
-        .bg(theme::menubar_style().bg.unwrap_or(theme::LIGHT_GREY))
+        .fg(theme::bright_white())
+        .bg(theme::menubar_style().bg.unwrap_or(theme::light_grey()))
         .add_modifier(Modifier::BOLD);
     let mode_style = Style::new()
-        .fg(theme::BLACK)
-        .bg(theme::CYAN)
+        .fg(theme::black())
+        .bg(theme::cyan())
         .add_modifier(Modifier::BOLD);
 
     for x in area.left()..area.right() {

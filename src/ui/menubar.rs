@@ -33,8 +33,8 @@ pub fn render_title(text: &str, area: Rect, buf: &mut Buffer) {
     }
 
     let title_style = Style::new()
-        .fg(theme::BLACK)
-        .bg(base.bg.unwrap_or(theme::LIGHT_GREY))
+        .fg(theme::black())
+        .bg(base.bg.unwrap_or(theme::light_grey()))
         .add_modifier(Modifier::BOLD);
     let used = text.chars().count();
     let pad_left = (area.width as usize).saturating_sub(used) / 2;

@@ -1,32 +1,55 @@
 # turbo-bible
 
-## Populate full book titles
+Turbo Vision–styled terminal Bible reader written in Rust. Ships three
+public-domain translations:
 
-The crawler captures verse content but not the book title element (e.g.
-`Evangeliet etter Matteus`). Run this once after a fresh crawl to fetch each
-book's full title in parallel:
+| Code        | Title                       | Language |
+| ----------- | --------------------------- | -------- |
+| `en-kjv`    | King James Version (1769)   | English  |
+| `nb-1930`   | Bibelen 1930 (Bokmål)       | Norwegian |
+| `es-rv1909` | Reina-Valera 1909           | Spanish  |
+
+All three are imported from [`scrollmapper/bible_databases`][scrollmapper] at
+a pinned commit by `../scripts/import_translations.py`.
+
+[scrollmapper]: https://github.com/scrollmapper/bible_databases
+
+## Setup
+
+Run the importer once to populate `../bible.sqlite`:
 
 ```sh
-python3 ../crawl.py --update-titles --workers 8
+python3 ../scripts/import_translations.py
 ```
 
-This makes 66 HTTP requests (one per book), populates `book.full_name`, and is
-safe to re-run.
-
-
-Turbo Vision-styled terminal Bible reader written in Rust. Reads the
-`bible.sqlite` database produced by `../crawl.py` (Bibel 2024, bokmål).
+It backs up any pre-existing DB to `../backups/`, downloads from a pinned
+upstream commit, rewrites the schema, and rebuilds the FTS5 index. Pass
+`--only en-kjv` to import a subset.
 
 ## Run
 
 ```sh
 cargo run --release
-# or, with explicit options:
-cargo run --release -- --db ../bible.sqlite --translation nb-2024 --book MRK --chapter 1
+# Pick a translation explicitly:
+cargo run --release -- --translation nb-1930
+# Or jump straight into a passage:
+cargo run --release -- --book JHN --chapter 3
+```
+
+Translation resolution at startup:
+
+```
+--translation flag  >  config.default_translation  >  first translation in DB
 ```
 
 First launch rebuilds the FTS5 index with a diacritic-folding tokenizer and a
 prefix index — takes ~1 s and is cached.
+
+## Switching translations
+
+Press `t` (or `F5`) in either the splash or the reading view to open the
+**Translations** picker. `j`/`k`/`Enter`/`Esc` work as in any dialog. The
+selected translation becomes the default for the next launch.
 
 ## Keymap
 
@@ -50,12 +73,17 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 
 | Keys | Action |
 | --- | --- |
-| `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `1 Mos 1`) |
+| `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `Génesis 1`) |
 | `F3` / `/` | Find dialog (FTS5; BM25-ranked) |
 | `K` | Footnote / cross-reference popup for current verse |
+| `t` / `F5` | Translations picker |
+| `M` / `F4` | Bookmarks |
+| `b` | toggle bookmark on cursor verse (or visual selection) |
+| `v` / `V` | enter / exit visual selection mode |
+| `T` | toggle two-line / single-line verse layout |
 | `Tab` | toggle References sidebar |
 | `y` | copy current verse + reference to clipboard |
-| `F1` | this help |
+| `F1` | help |
 | `Esc` | back to splash (or close dialog) |
 | `q` / `ZZ` / `ZQ` / `:q` | quit |
 | `:h` / `:help` | open help |
@@ -63,41 +91,30 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 ### Splash screen
 
 The TURBO BIBLE splash is the home screen. It shows the title art, a daily
-verse, and a filterable book picker. It has two modes:
-
-The book list is split into two columns: **Det gamle testamentet** (GT, 39
-books) on the left and **Det nye testamentet** (NT, 27 books) on the right.
+verse, and a filterable book picker. The book list is split into two columns:
+**Old Testament** (39 books) on the left and **New Testament** (27 books) on
+the right.
 
 **NORMAL** (default):
 
-- `h` / `←`: focus GT column
-- `l` / `→`: focus NT column
-- `Tab`: toggle between columns
-- `j` / `k` (or `↓` / `↑`): move cursor within the focused column
+- `h` / `←` and `l` / `→`: focus OT / NT column (or `Tab` to toggle)
+- `j` / `k`: move cursor within the focused column
 - `gg` / `G`: top / bottom of the focused column (or Continue / last book)
-- `Ctrl-D` / `Ctrl-U`: half-page
-- `Ctrl-F` / `Ctrl-B`: full page
+- `Ctrl-D` / `Ctrl-U` / `Ctrl-F` / `Ctrl-B`: half-page / full-page
 - Count prefix works: `5j` / `10G`
 - `Enter` / `o`: open the selected book (or "Continue")
 - `/`: enter FILTER mode
-- `:`: opens Goto, `F2` / `F3` for Goto / Find dialogs
+- `:` / `F2` / `F3` / `t`: Goto / Goto / Find / Translations dialogs
 - `q` / `Esc`: quit
-
-Each column scrolls independently. The unfocused column's cursor is shown
-in dim grey so you can see where it'll land when you switch.
 
 **FILTER**:
 
-- Type to narrow the list
-- `Enter`: accept filter, back to NORMAL (j/k navigates filtered list)
-- `Esc`: clear filter, back to NORMAL
-- `Ctrl-U`: wipe the filter
+- Type to narrow the list; `Enter` accepts, `Esc` clears, `Ctrl-U` wipes.
 
 The **References sidebar** sits to the right of the reading pane and
-auto-follows the cursor verse. It shows the parallel-passage refs
-(`(Matt 3,1–12; ...)`), footnote bodies, and cross-references for the
-current verse — so you don't have to break your reading flow to consult
-them. It appears when the terminal is at least ~120 columns wide.
+auto-follows the cursor verse. It shows the parallel-passage refs, footnote
+bodies, and cross-references for the current verse — appears when the
+terminal is at least ~120 columns wide.
 
 ### Inside dialogs
 
@@ -105,36 +122,77 @@ them. It appears when the terminal is at least ~120 columns wide.
 In the Footnote popup, `↑`/`↓` selects a cross-reference and `Enter`
 follows it.
 
-## State
+## State and configuration
 
-Last position is persisted to `~/.config/turbo-bible/state.json` on quit
-and restored on next launch.
+All persisted under `~/.config/turbo-bible/`:
+
+| File             | Purpose |
+| ---------------- | ------- |
+| `state.toml`     | last-position bookkeeping (book/chapter/verse) — written on quit |
+| `bookmarks.toml` | saved bookmarks |
+| `config.toml`    | user preferences (theme, keybindings, reading layout) |
+
+Legacy `state.json` / `bookmarks.json` are migrated to TOML on first launch
+and removed.
+
+### `config.toml` layout
+
+```toml
+default_translation = "en-kjv"
+
+[reading]
+two_line_verses  = true   # initial layout (T to toggle)
+show_sidebar     = true   # initial (Tab to toggle)
+show_daily_quote = true   # splash "verse of the day" on/off
+max_width        = 80     # reading pane max width in cols
+
+[theme]
+# CGA palette by default. Any 24-bit hex color works.
+blue         = "#0000aa"
+cyan         = "#00aaaa"
+bright_white = "#ffffff"
+light_grey   = "#aaaaaa"
+dark_grey    = "#555555"
+yellow       = "#ffff55"
+hotkey_red   = "#aa0000"
+black        = "#000000"
+
+[keys]
+# Additive triggers — vim-style defaults always remain functional.
+# Key syntax: "q", "Ctrl-d", "Shift-Tab", "Alt-x", "F5", "Esc", "Enter",
+#             "Space", "Tab", "Up"/"Down"/"Left"/"Right",
+#             "Home"/"End", "PageUp"/"PageDown", "Backspace"/"Delete".
+open_translations = ["F5"]    # example: adds F5 as an alias for `t`
+quit              = ["Ctrl-q"]
+```
+
+Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
+remappable.
 
 ## Notes on terminals
 
-The Turbo Vision look uses 24-bit RGB and a `▒` dither. Recent
-terminals render it cleanly (iTerm2, Ghostty, Alacritty, WezTerm,
-Kitty, modern xterm). macOS `Terminal.app` has flaky Alt-key handling;
-prefer iTerm2 or Ghostty.
+The Turbo Vision look uses 24-bit RGB and a `▒` dither. Recent terminals
+render it cleanly (iTerm2, Ghostty, Alacritty, WezTerm, Kitty, modern xterm).
+macOS `Terminal.app` has flaky Alt-key handling; prefer iTerm2 or Ghostty.
 
 ## Layout
 
 - `src/main.rs` — arg parsing, terminal setup, main loop, mode dispatch
-- `src/app.rs` — (currently inlined in main)
-- `src/db.rs` — rusqlite + prepared statements + types + FTS5 rebuild
+- `src/db.rs` — rusqlite + prepared statements, schema, FTS5 rebuild
 - `src/render.rs` — chapter render pass (heading interleave, markers)
 - `src/nav.rs` — book/chapter walking
 - `src/search.rs` — FTS5 query, BM25 ranking, byte-offset highlights
-- `src/keys.rs` — vim sequence state machine with count prefix
-- `src/state.rs` — `state.json` load/save
-- `src/theme.rs` — CGA palette + drop-shadow primitive
-- `src/ui/` — desktop, menubar, statusbar, passage view, dialogs
+- `src/keys.rs` — vim sequence state machine with count prefix + user bindings
+- `src/state.rs` — `state.toml` load/save + JSON/legacy-translation migration
+- `src/config.rs` — `config.toml` schema (theme, keys, reading)
+- `src/bookmark.rs` — `bookmarks.toml` load/save
+- `src/theme.rs` — runtime-configurable CGA palette + drop-shadow primitive
+- `src/ui/translations.rs` — translation picker dialog
+- `src/ui/` — desktop, menubar, statusbar, passage view, sidebar, dialogs
 
 ## What's not in v1
 
 - Poetry indentation (Psalms render as prose)
-- Inline (mid-verse) footnote markers — all markers sit at end of verse
-- Bookmarks, highlights, notes
-- Multiple translations side-by-side
-- Theming (the palette is hardcoded for full retro)
-- Mouse support
+- Inline (mid-verse) footnote markers — markers sit at end of verse
+- Side-by-side translation diff
+- Mouse-driven verse selection (clicks on menu / status bar work)

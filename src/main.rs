@@ -1,4 +1,5 @@
 mod bookmark;
+mod config;
 mod db;
 mod keys;
 mod nav;
@@ -36,6 +37,7 @@ use crate::ui::help::{HelpDialog, HelpOutcome};
 use crate::ui::menubar::MenuItem;
 use crate::ui::splash::{SplashOutcome, SplashView};
 use crate::ui::statusbar::Shortcut;
+use crate::ui::translations::{TranslationsDialog, TranslationsOutcome};
 
 enum Bg {
     Splash(SplashView),
@@ -49,6 +51,7 @@ enum Dialog {
     Footnote(FootnoteDialog),
     Help(HelpDialog),
     Bookmarks(crate::ui::bookmarks::BookmarksDialog),
+    Translations(TranslationsDialog),
 }
 
 struct History {
@@ -94,9 +97,10 @@ struct Args {
     #[arg(long, default_value = "../bible.sqlite")]
     db: PathBuf,
 
-    /// Translation code (default: nb-2024)
-    #[arg(long, default_value = "nb-2024")]
-    translation: String,
+    /// Translation code. If omitted, falls back to the picker default
+    /// stored in state.toml, then to the first translation in the DB.
+    #[arg(long)]
+    translation: Option<String>,
 
     /// Book to open initially (OSIS code). When provided, skips the splash.
     #[arg(long)]
@@ -116,17 +120,22 @@ fn main() -> Result<()> {
         Ok(false) => {}
         Err(e) => eprintln!("warning: FTS optimize skipped: {e}"),
     }
-    let db = Db::open_ro(&args.db, &args.translation)?;
+    let (persisted, config) = state::load_with_migration();
+    theme::init(config.theme.clone());
+    let translation = resolve_translation(&args, &config)?;
+    // Save right away so the on-disk layout converges to the split form.
+    let _ = config::save(&config);
+    if let Some(ps) = &persisted {
+        let _ = state::save(ps);
+    }
+    let mut db = Db::open_ro(&args.db, &translation)?;
     let books = db.list_books()?;
-    let nav_ = Navigator::new(&books);
-
-    let translation_label = format!("Bibel 2024 (bokmål)  ·  {}", args.translation);
+    let translation_label = db.translation_label()?;
 
     // Resolve persisted state for the Continue option.
-    let persisted = state::load();
     let last_for_splash: Option<(Position, String)> = persisted
         .as_ref()
-        .filter(|ps| ps.translation == args.translation)
+        .filter(|ps| ps.translation == translation)
         .map(|ps| {
             let label = books
                 .iter()
@@ -149,26 +158,24 @@ fn main() -> Result<()> {
         let mut cursor_verse: i64 = 1;
         let r = run(
             &mut term,
-            &db,
-            &nav_,
-            &books,
-            translation_label.clone(),
+            &mut db,
+            books,
+            translation_label,
             &mut pos,
             &mut passage,
             &mut cursor_verse,
-            Bg::Reading,
+            None,
+            &config,
         );
         final_pos = Some(pos);
         final_cursor_verse = cursor_verse;
         r
     } else {
-        let qotd = quote::pick(&db).unwrap_or(None);
-        let splash = SplashView::new(
-            books.clone(),
-            last_for_splash.clone(),
-            translation_label.clone(),
-            qotd,
-        );
+        let qotd = if config.reading.show_daily_quote {
+            quote::pick(&db).unwrap_or(None)
+        } else {
+            None
+        };
         // We still need *some* initial passage state for the run loop; load
         // the persisted-or-default position lazily-ish.
         let mut pos = match &last_for_splash {
@@ -179,14 +186,14 @@ fn main() -> Result<()> {
         let mut cursor_verse: i64 = persisted.as_ref().map(|p| p.verse).unwrap_or(1).max(1);
         let r = run(
             &mut term,
-            &db,
-            &nav_,
-            &books,
-            translation_label.clone(),
+            &mut db,
+            books,
+            translation_label,
             &mut pos,
             &mut passage,
             &mut cursor_verse,
-            Bg::Splash(splash),
+            Some((last_for_splash, qotd)),
+            &config,
         );
         final_pos = Some(pos);
         final_cursor_verse = cursor_verse;
@@ -196,26 +203,52 @@ fn main() -> Result<()> {
 
     if let Some(p) = final_pos {
         let _ = state::save(&state::PersistedState {
-            translation: args.translation.clone(),
+            translation: db.translation.clone(),
             book: p.book,
             chapter: p.chapter,
             verse: final_cursor_verse,
         });
+        // The active translation at quit becomes the default for next launch.
+        // The picker already persisted on click, but a no-picker session also
+        // wants the current translation remembered.
+        let mut cfg = config::load();
+        cfg.default_translation = Some(db.translation.clone());
+        let _ = config::save(&cfg);
     }
     result
+}
+
+/// Startup translation resolution: `--translation` > config default > first DB row.
+fn resolve_translation(args: &Args, cfg: &config::Config) -> Result<String> {
+    if let Some(t) = args.translation.as_ref() {
+        return Ok(t.clone());
+    }
+    if let Some(t) = cfg.default_translation.clone() {
+        return Ok(t);
+    }
+    // Probe the DB for the first installed translation.
+    let probe = Db::open_ro(&args.db, "")?;
+    let mut list = probe.list_translations()?;
+    if list.is_empty() {
+        anyhow::bail!(
+            "No translations installed in {}. Run scripts/import_translations.py first.",
+            args.db.display()
+        );
+    }
+    Ok(list.remove(0).code)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run(
     term: &mut Tty,
-    db: &Db,
-    nav_: &Navigator<'_>,
-    books: &[Book],
-    translation_label: String,
+    db: &mut Db,
+    mut books: Vec<Book>,
+    mut translation_label: String,
     pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
-    initial_bg: Bg,
+    initial_splash: Option<(Option<(Position, String)>, Option<crate::quote::DailyQuote>)>,
+    config: &config::Config,
 ) -> Result<()> {
     let menu = [
         MenuItem { label: "File", hotkey_idx: 0 },
@@ -223,14 +256,27 @@ fn run(
         MenuItem { label: "Goto", hotkey_idx: 0 },
         MenuItem { label: "Help", hotkey_idx: 0 },
     ];
-    let mut keys = KeyState::new();
+    let mut keys = KeyState::with_user_bindings(&config.keys);
     let mut history = History::new(pos.clone());
-    let mut bg = initial_bg;
+    let mut bg = match initial_splash {
+        Some((last, qotd)) => Bg::Splash(SplashView::new(
+            books.clone(),
+            last,
+            translation_label.clone(),
+            qotd,
+        )),
+        None => Bg::Reading,
+    };
     let mut dialog: Dialog = Dialog::None;
-    let mut show_sidebar = true;
+    let mut show_sidebar = config.reading.show_sidebar;
+    let max_reading_width = config.reading.max_width;
     let mut visual_anchor: Option<i64> = None;
     let mut bookmarks = bookmark::BookmarkStore::load();
-    let mut verse_layout_two_line = true;
+    // Persist the migrated bookmarks immediately so the file on disk is in the
+    // new TOML format with translation rewritten — survives a crash before any
+    // user action triggers another save.
+    let _ = bookmarks.save();
+    let mut verse_layout_two_line = config.reading.two_line_verses;
     let mut last_label_for_splash: Option<(Position, String)> = books
         .iter()
         .find(|b| b.code == pos.book)
@@ -290,17 +336,19 @@ fn run(
                         bookmarked: &bookmarked_in_chapter,
                         show_sidebar,
                         two_line_verses: verse_layout_two_line,
+                        max_reading_width,
                     }
                     .render(area, buf);
                 }
             }
             match &dialog {
                 Dialog::None => {}
-                Dialog::Goto(d) => d.render(area, buf, books),
-                Dialog::Find(d) => d.render(area, buf, books),
-                Dialog::Footnote(d) => d.render(area, buf, books),
+                Dialog::Goto(d) => d.render(area, buf, &books),
+                Dialog::Find(d) => d.render(area, buf, &books),
+                Dialog::Footnote(d) => d.render(area, buf, &books),
                 Dialog::Help(d) => d.render(area, buf),
-                Dialog::Bookmarks(d) => d.render(area, buf, books),
+                Dialog::Bookmarks(d) => d.render(area, buf, &books),
+                Dialog::Translations(d) => d.render(area, buf),
             }
         })?;
 
@@ -317,12 +365,12 @@ fn run(
                 match &mut dialog {
                     Dialog::None => {}
                     Dialog::Goto(d) => {
-                        match d.handle(key, books) {
+                        match d.handle(key, &books) {
                             GotoOutcome::Continue => {}
                             GotoOutcome::Cancel => dialog = Dialog::None,
                             GotoOutcome::Jump(p) => {
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(&mut last_label_for_splash, books, pos, *cursor_verse);
+                                update_splash_label(&mut last_label_for_splash, &books, pos, *cursor_verse);
                                 bg = Bg::Reading;
                                 dialog = Dialog::None;
                             }
@@ -339,7 +387,7 @@ fn run(
                             FindOutcome::Cancel => dialog = Dialog::None,
                             FindOutcome::Jump(p, _q) => {
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(&mut last_label_for_splash, books, pos, *cursor_verse);
+                                update_splash_label(&mut last_label_for_splash, &books, pos, *cursor_verse);
                                 bg = Bg::Reading;
                                 dialog = Dialog::None;
                             }
@@ -352,7 +400,7 @@ fn run(
                             FootnoteOutcome::Cancel => dialog = Dialog::None,
                             FootnoteOutcome::Jump(p) => {
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(&mut last_label_for_splash, books, pos, *cursor_verse);
+                                update_splash_label(&mut last_label_for_splash, &books, pos, *cursor_verse);
                                 bg = Bg::Reading;
                                 dialog = Dialog::None;
                             }
@@ -375,7 +423,7 @@ fn run(
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
                                 update_splash_label(
                                     &mut last_label_for_splash,
-                                    books,
+                                    &books,
                                     pos,
                                     *cursor_verse,
                                 );
@@ -387,6 +435,32 @@ fn run(
                                     .bookmarks
                                     .retain(|b| !b.same_range(&bm));
                                 let _ = bookmarks.save();
+                            }
+                        }
+                        continue;
+                    }
+                    Dialog::Translations(d) => {
+                        match d.handle(key) {
+                            TranslationsOutcome::Continue => {}
+                            TranslationsOutcome::Cancel => dialog = Dialog::None,
+                            TranslationsOutcome::Select(code) => {
+                                switch_translation(
+                                    db,
+                                    &mut books,
+                                    &mut translation_label,
+                                    &code,
+                                    pos,
+                                    passage,
+                                    cursor_verse,
+                                )?;
+                                let _ = persist_default_translation(&code);
+                                update_splash_label(
+                                    &mut last_label_for_splash,
+                                    &books,
+                                    pos,
+                                    *cursor_verse,
+                                );
+                                dialog = Dialog::None;
                             }
                         }
                         continue;
@@ -404,11 +478,17 @@ fn run(
                             jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
                             update_splash_label(
                                 &mut last_label_for_splash,
-                                books,
+                                &books,
                                 pos,
                                 *cursor_verse,
                             );
                             bg = Bg::Reading;
+                        }
+                        SplashOutcome::OpenTranslations => {
+                            dialog = Dialog::Translations(TranslationsDialog::new(
+                                db.list_translations()?,
+                                &db.translation,
+                            ));
                         }
                     },
                     Bg::Reading => {
@@ -481,8 +561,14 @@ fn run(
                                 Action::OpenBookmarks => {
                                     let mut d =
                                         crate::ui::bookmarks::BookmarksDialog::new(&bookmarks);
-                                    d.sort_canonical(books);
+                                    d.sort_canonical(&books);
                                     dialog = Dialog::Bookmarks(d);
+                                }
+                                Action::OpenTranslations => {
+                                    dialog = Dialog::Translations(TranslationsDialog::new(
+                                        db.list_translations()?,
+                                        &db.translation,
+                                    ));
                                 }
                                 Action::Back => {
                                     // In visual mode, Esc cancels the selection
@@ -492,13 +578,13 @@ fn run(
                                     } else {
                                         update_splash_label(
                                             &mut last_label_for_splash,
-                                            books,
+                                            &books,
                                             pos,
                                             *cursor_verse,
                                         );
                                         let qotd = quote::pick(db).unwrap_or(None);
                                         bg = Bg::Splash(SplashView::new(
-                                            books.to_vec(),
+                                            books.clone(),
                                             last_label_for_splash.clone(),
                                             translation_label.clone(),
                                             qotd,
@@ -508,7 +594,7 @@ fn run(
                                 Action::Quit => return Ok(()),
                                 _ => {
                                     if apply_action(
-                                        action, db, nav_, pos, passage, cursor_verse,
+                                        action, db, &books, pos, passage, cursor_verse,
                                         &mut history,
                                     )? {
                                         return Ok(());
@@ -548,6 +634,7 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> &'static str {
         Dialog::Footnote(_) => "-- NOTES --",
         Dialog::Help(_) => "-- HELP --",
         Dialog::Bookmarks(_) => "-- BOOKMARKS --",
+        Dialog::Translations(_) => "-- TRANSLATIONS --",
         Dialog::None => match bg {
             Bg::Splash(s) => match s.mode {
                 crate::ui::splash::SplashMode::Normal => "-- NORMAL --",
@@ -630,12 +717,13 @@ fn max_verse(passage: &Passage) -> i64 {
 fn apply_action(
     action: Action,
     db: &Db,
-    nav_: &Navigator<'_>,
+    books: &[Book],
     pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
     history: &mut History,
 ) -> Result<bool> {
+    let nav_ = Navigator::new(books);
     let last = max_verse(passage);
     let half: i64 = 10;
     let page: i64 = 20;
@@ -706,8 +794,37 @@ fn apply_action(
         | Action::ToggleVisual
         | Action::AddBookmark
         | Action::OpenBookmarks
+        | Action::OpenTranslations
         | Action::ToggleVerseLayout => Ok(false),
     }
+}
+
+fn switch_translation(
+    db: &mut Db,
+    books: &mut Vec<Book>,
+    translation_label: &mut String,
+    code: &str,
+    pos: &mut Position,
+    passage: &mut Passage,
+    cursor_verse: &mut i64,
+) -> Result<()> {
+    db.translation = code.to_string();
+    *books = db.list_books()?;
+    *translation_label = db.translation_label()?;
+    *passage = db.load_passage(&pos.book, pos.chapter)?;
+    // Clamp the cursor — a different translation may have fewer verses for
+    // this chapter (rare in our three editions, but defensive).
+    let max = passage.verses.last().map(|v| v.number).unwrap_or(1);
+    if *cursor_verse > max {
+        *cursor_verse = max.max(1);
+    }
+    Ok(())
+}
+
+fn persist_default_translation(code: &str) -> Result<()> {
+    let mut cfg = config::load();
+    cfg.default_translation = Some(code.to_string());
+    config::save(&cfg)
 }
 
 fn init_terminal() -> Result<Tty> {

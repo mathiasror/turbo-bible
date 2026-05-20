@@ -37,15 +37,15 @@ impl HelpDialog {
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_dialog(area, "Help — Bible TUI", buf);
 
-        let bg = Style::new().bg(theme::BLUE);
-        let label = Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE);
+        let bg = Style::new().bg(theme::blue());
+        let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
         let key = Style::new()
-            .fg(theme::YELLOW)
-            .bg(theme::BLUE)
+            .fg(theme::yellow())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let header = Style::new()
-            .fg(theme::CYAN)
-            .bg(theme::BLUE)
+            .fg(theme::cyan())
+            .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
 
         let entries: &[(&str, &str)] = &[
@@ -91,13 +91,13 @@ impl HelpDialog {
             Span::styled(
                 "Esc / Enter ",
                 Style::new()
-                    .fg(theme::BRIGHT_WHITE)
-                    .bg(theme::BLUE)
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "close",
-                Style::new().fg(theme::LIGHT_GREY).bg(theme::BLUE),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             ),
         ]));
 

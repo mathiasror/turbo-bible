@@ -18,19 +18,19 @@ pub fn draw_dialog(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
             cell.set_symbol(" ");
-            cell.set_style(Style::new().bg(theme::BLUE));
+            cell.set_style(Style::new().bg(theme::blue()));
         }
     }
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE))
+        .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
         .title(Line::from(Span::styled(
             format!(" {title} "),
-            Style::new().fg(theme::BRIGHT_WHITE).bg(theme::BLUE),
+            Style::new().fg(theme::bright_white()).bg(theme::blue()),
         )))
-        .style(Style::new().bg(theme::BLUE));
+        .style(Style::new().bg(theme::blue()));
     let inner = block.inner(area);
     block.render(area, buf);
     inner
