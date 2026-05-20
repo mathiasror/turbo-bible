@@ -121,9 +121,11 @@ terminal is at least ~120 columns wide.
 
 ### Inside dialogs
 
-`Enter` confirms, `Esc` cancels. In Find, `↑`/`↓` navigate results.
-In the Footnote popup, `↑`/`↓` selects a cross-reference and `Enter`
-follows it.
+`Enter` confirms, `Esc` cancels. In Find, `↑`/`↓` navigate results and
+`Enter` jumps the cursor to the matched verse (not just the chapter).
+Goto with a verse component — `John 3:16`, `Sal 23,4` — likewise lands
+the cursor on the verse. In the Footnote popup, `↑`/`↓` selects a
+cross-reference and `Enter` follows it.
 
 ## State and configuration
 
