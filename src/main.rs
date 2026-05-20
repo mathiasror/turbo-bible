@@ -40,7 +40,11 @@ use crate::ui::statusbar::Shortcut;
 use crate::ui::translations::{TranslationsDialog, TranslationsOutcome};
 
 enum Bg {
-    Splash(SplashView),
+    // SplashView carries three Vec<Book>-derived fields, the QOTD, two
+    // translation strings, and chord/count state — ~280 bytes. Box the variant
+    // so `Bg::Reading` (which is 95% of the loop's lifetime) doesn't pay for
+    // it. Triggers clippy::large_enum_variant otherwise.
+    Splash(Box<SplashView>),
     Reading,
 }
 
@@ -278,13 +282,13 @@ fn run(
     let mut keys = KeyState::with_user_bindings(&config.keys);
     let mut history = History::new(pos.clone());
     let mut bg = match initial_splash {
-        Some((last, qotd)) => Bg::Splash(SplashView::new(
+        Some((last, qotd)) => Bg::Splash(Box::new(SplashView::new(
             books.clone(),
             last,
             translation_label.clone(),
             db.translation.clone(),
             qotd,
-        )),
+        ))),
         None => Bg::Reading,
     };
     let mut dialog: Dialog = Dialog::None;
@@ -606,13 +610,13 @@ fn run(
                                             *cursor_verse,
                                         );
                                         let qotd = quote::pick(db).unwrap_or(None);
-                                        bg = Bg::Splash(SplashView::new(
+                                        bg = Bg::Splash(Box::new(SplashView::new(
                                             books.clone(),
                                             last_label_for_splash.clone(),
                                             translation_label.clone(),
                                             db.translation.clone(),
                                             qotd,
-                                        ));
+                                        )));
                                     }
                                 }
                                 Action::Quit => return Ok(()),
