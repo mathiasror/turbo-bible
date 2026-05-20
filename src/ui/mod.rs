@@ -40,7 +40,8 @@ impl<'a> Frame<'a> {
         menubar::render(self.menu_title, menu_area, buf);
         desktop::render(body_area, buf);
         if let Some(p) = self.passage {
-            let (reading, sidebar_rect) = body_layout(body_area, self.show_sidebar, self.max_reading_width);
+            let (reading, sidebar_rect) =
+                body_layout(body_area, self.show_sidebar, self.max_reading_width);
             passage::PassageView {
                 passage: p,
                 cursor_verse: self.cursor_verse,
@@ -64,8 +65,18 @@ impl<'a> Frame<'a> {
 
 fn split(area: Rect) -> (Rect, Rect, Rect) {
     let menu = Rect::new(area.x, area.y, area.width, 1);
-    let status = Rect::new(area.x, area.y + area.height.saturating_sub(1), area.width, 1);
-    let body = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(2));
+    let status = Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(1),
+        area.width,
+        1,
+    );
+    let body = Rect::new(
+        area.x,
+        area.y + 1,
+        area.width,
+        area.height.saturating_sub(2),
+    );
     (menu, body, status)
 }
 

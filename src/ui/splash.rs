@@ -345,7 +345,11 @@ impl SplashView {
                 self.on_continue = false;
                 let max = self.current_max_idx();
                 let n = self.count;
-                let target = if n == 0 { max } else { (n as usize).saturating_sub(1).min(max) };
+                let target = if n == 0 {
+                    max
+                } else {
+                    (n as usize).saturating_sub(1).min(max)
+                };
                 self.set_current_cursor(target);
                 SplashOutcome::Continue
             }
@@ -409,7 +413,9 @@ impl SplashView {
             .fg(theme::bright_white())
             .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
-        let dim_cursor = Style::new().fg(theme::bright_white()).bg(theme::dark_grey());
+        let dim_cursor = Style::new()
+            .fg(theme::bright_white())
+            .bg(theme::dark_grey());
         let filter_style = Style::new()
             .fg(theme::black())
             .bg(theme::cyan())
@@ -466,7 +472,10 @@ impl SplashView {
             lines.push(center_padded(TITLE_COMPACT, title_style));
         }
         lines.push(blank());
-        lines.push(center_padded(&format!("· {} ·", self.translation_name), subtitle));
+        lines.push(center_padded(
+            &format!("· {} ·", self.translation_name),
+            subtitle,
+        ));
 
         // Daily verse — word-wrapped to fit the column, then a reference
         // line. Not truncated; uses as many lines as it needs.
@@ -508,7 +517,8 @@ impl SplashView {
             Span::styled("  ", bg),
             Span::styled(filter_display.clone(), filter_style),
         ];
-        let used_filter: usize = 2 + mode_label.chars().count() + 2 + filter_display.chars().count();
+        let used_filter: usize =
+            2 + mode_label.chars().count() + 2 + filter_display.chars().count();
         let mut cursor_extra = 0;
         if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
@@ -761,7 +771,11 @@ fn render_entry_cell(
     let mark = if is_cursor { "\u{25B8} " } else { "  " };
     let mark_w = mark.chars().count();
     let abbr_w = 8usize.min(width.saturating_sub(mark_w));
-    let abbr_padded = format!("{:<w$}", truncate(&b.abbreviation, abbr_w.saturating_sub(1)), w = abbr_w);
+    let abbr_padded = format!(
+        "{:<w$}",
+        truncate(&b.abbreviation, abbr_w.saturating_sub(1)),
+        w = abbr_w
+    );
 
     let name_w = width
         .saturating_sub(mark_w)
@@ -856,7 +870,8 @@ mod tests {
 
     #[test]
     fn cursor_visible_in_ot_column() {
-        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         for target in [0usize, 5, 20, 38] {
             splash.focus = SplashColumn::OT;
             splash.cursor_ot = target;
@@ -873,7 +888,8 @@ mod tests {
 
     #[test]
     fn cursor_visible_in_nt_column() {
-        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         for target in [0usize, 5, 15, 26] {
             splash.focus = SplashColumn::NT;
             splash.cursor_nt = target;
@@ -908,8 +924,7 @@ mod tests {
             // signature "██╗██████╗ ██╗     ███████╗" which only appears in
             // BIBLE's first row, and verify the row ALSO contains TURBO's
             // "╗██╗   ██╗" signature.
-            if row_text.contains("██╗     ███████╗")
-                && row_text.contains("██████╗  ██████╗ ")
+            if row_text.contains("██╗     ███████╗") && row_text.contains("██████╗  ██████╗ ")
             {
                 found_combined = true;
                 break;
@@ -923,7 +938,8 @@ mod tests {
 
     #[test]
     fn switch_focus_clamps_cursor() {
-        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         splash.cursor_ot = 35; // valid in OT
         splash.switch_focus(SplashColumn::NT);
         assert!(splash.cursor_nt <= 26);
@@ -931,8 +947,16 @@ mod tests {
 
     #[test]
     fn move_up_from_top_lands_on_continue() {
-        let last = Some((Position { book: "MRK".into(), chapter: 1, verse: None }, "Markus 1:1".into()));
-        let mut splash = SplashView::new(fake_books(39, 27), last, "t".into(), "en-kjv".into(), None);
+        let last = Some((
+            Position {
+                book: "MRK".into(),
+                chapter: 1,
+                verse: None,
+            },
+            "Markus 1:1".into(),
+        ));
+        let mut splash =
+            SplashView::new(fake_books(39, 27), last, "t".into(), "en-kjv".into(), None);
         splash.on_continue = false;
         splash.cursor_ot = 0;
         splash.move_up(1);

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 /// Bump this when we change tokenizer settings or want to force a rebuild.
 const FTS_TARGET_VERSION: &str = "2";
@@ -21,11 +21,9 @@ pub fn ensure_fts_optimized(path: &Path) -> Result<bool> {
         "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     )?;
     let current: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key='fts_version'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
+        .query_row("SELECT value FROM meta WHERE key='fts_version'", [], |r| {
+            r.get::<_, String>(0)
+        })
         .optional()?;
     if current.as_deref() == Some(FTS_TARGET_VERSION) {
         return Ok(false);
@@ -166,9 +164,9 @@ impl Db {
     }
 
     pub fn list_translations(&self) -> Result<Vec<TranslationInfo>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT code, name, language, license FROM translation ORDER BY code")?;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT code, name, language, license FROM translation ORDER BY code",
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(TranslationInfo {

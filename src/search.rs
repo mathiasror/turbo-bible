@@ -57,7 +57,14 @@ pub fn search(db: &Db, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
             let verse: i64 = r.get(3)?;
             let hilit: String = r.get(4)?;
             let (text, hits) = parse_highlighted(&hilit);
-            Ok(SearchHit { osis_id, book, chapter, verse, text, hits })
+            Ok(SearchHit {
+                osis_id,
+                book,
+                chapter,
+                verse,
+                text,
+                hits,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
@@ -114,17 +121,14 @@ mod tests {
 
     #[test]
     fn parses_simple_highlight() {
-        let (text, hits) =
-            parse_highlighted("\u{1}Jesaja\u{2} sa: dette er sant");
+        let (text, hits) = parse_highlighted("\u{1}Jesaja\u{2} sa: dette er sant");
         assert_eq!(text, "Jesaja sa: dette er sant");
         assert_eq!(hits, vec![(0, 6)]);
     }
 
     #[test]
     fn parses_two_separated_matches() {
-        let (text, hits) = parse_highlighted(
-            "Hos \u{1}profeten\u{2} \u{1}Jesaja\u{2}",
-        );
+        let (text, hits) = parse_highlighted("Hos \u{1}profeten\u{2} \u{1}Jesaja\u{2}");
         assert_eq!(text, "Hos profeten Jesaja");
         // "profeten" = bytes 4..12, "Jesaja" = bytes 13..19; the space in
         // between keeps them as two distinct ranges.

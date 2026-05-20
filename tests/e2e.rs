@@ -18,7 +18,7 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
-use rexpect::session::{spawn_command, PtySession};
+use rexpect::session::{PtySession, spawn_command};
 use tempfile::TempDir;
 
 /// Real installed DB. Tests skip if missing.
@@ -83,10 +83,14 @@ fn picker_swap_persists_default_translation() {
     let mut p = launch(
         &tmp,
         &[
-            "--db", db.to_str().unwrap(),
-            "--translation", "en-kjv",
-            "--book", "JHN",
-            "--chapter", "3",
+            "--db",
+            db.to_str().unwrap(),
+            "--translation",
+            "en-kjv",
+            "--book",
+            "JHN",
+            "--chapter",
+            "3",
         ],
     );
     // Wait for the TUI to initialise before sending keys.
@@ -120,10 +124,14 @@ fn quit_persists_state_book_chapter() {
     let mut p = launch(
         &tmp,
         &[
-            "--db", db.to_str().unwrap(),
-            "--translation", "es-rv1909",
-            "--book", "ROM",
-            "--chapter", "8",
+            "--db",
+            db.to_str().unwrap(),
+            "--translation",
+            "es-rv1909",
+            "--book",
+            "ROM",
+            "--chapter",
+            "8",
         ],
     );
     sleep(Duration::from_millis(500));
@@ -167,10 +175,14 @@ fn bookmark_json_is_migrated_to_toml_with_nb1930_rename() {
     let mut p = launch(
         &tmp,
         &[
-            "--db", db.to_str().unwrap(),
-            "--translation", "en-kjv",
-            "--book", "JHN",
-            "--chapter", "3",
+            "--db",
+            db.to_str().unwrap(),
+            "--translation",
+            "en-kjv",
+            "--book",
+            "JHN",
+            "--chapter",
+            "3",
         ],
     );
     sleep(Duration::from_millis(500));
@@ -219,10 +231,14 @@ fn goto_with_verse_lands_on_typed_verse() {
     let mut p = launch(
         &tmp,
         &[
-            "--db", db.to_str().unwrap(),
-            "--translation", "en-kjv",
-            "--book", "GEN",
-            "--chapter", "1",
+            "--db",
+            db.to_str().unwrap(),
+            "--translation",
+            "en-kjv",
+            "--book",
+            "GEN",
+            "--chapter",
+            "1",
         ],
     );
     sleep(Duration::from_millis(500));
@@ -258,10 +274,14 @@ fn find_jump_lands_on_matched_verse_not_one() {
     let mut p = launch(
         &tmp,
         &[
-            "--db", db.to_str().unwrap(),
-            "--translation", "en-kjv",
-            "--book", "GEN",
-            "--chapter", "1",
+            "--db",
+            db.to_str().unwrap(),
+            "--translation",
+            "en-kjv",
+            "--book",
+            "GEN",
+            "--chapter",
+            "1",
         ],
     );
     sleep(Duration::from_millis(500));

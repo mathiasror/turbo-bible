@@ -120,7 +120,11 @@ impl FootnoteDialog {
 
         // Footnote bodies.
         for (fi, fn_) in self.footnotes.iter().enumerate() {
-            let kind = if fn_.kind == "x" { "Cross-ref" } else { "Footnote" };
+            let kind = if fn_.kind == "x" {
+                "Cross-ref"
+            } else {
+                "Footnote"
+            };
             lines.push(Line::from(vec![
                 Span::styled("  ", bg),
                 Span::styled(format!("{kind}:"), header_style),
@@ -130,7 +134,12 @@ impl FootnoteDialog {
                 Span::styled(fn_.body.clone(), body_style),
             ]));
             // Cross-refs inside this note as selectable items.
-            for (xi, xref) in self.xrefs.iter().enumerate().filter(|(_, x)| x.footnote_idx == fi) {
+            for (xi, xref) in self
+                .xrefs
+                .iter()
+                .enumerate()
+                .filter(|(_, x)| x.footnote_idx == fi)
+            {
                 let style = if xi == self.selected { sel } else { xref_color };
                 lines.push(Line::from(vec![
                     Span::styled("      \u{2192} ", label),

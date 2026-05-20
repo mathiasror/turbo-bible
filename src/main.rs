@@ -16,17 +16,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use etcetera::{choose_base_strategy, BaseStrategy};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
+use etcetera::{BaseStrategy, choose_base_strategy};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::db::{Book, Db, Passage};
 use crate::keys::{Action, KeyState};
@@ -75,7 +75,10 @@ struct History {
 
 impl History {
     fn new(initial: Position) -> Self {
-        Self { stack: vec![initial], cur: 0 }
+        Self {
+            stack: vec![initial],
+            cur: 0,
+        }
     }
     fn push(&mut self, p: Position) {
         self.stack.truncate(self.cur + 1);
@@ -159,7 +162,11 @@ fn main() -> Result<()> {
                 .map(|b| format!("{} {}:{}", b.name, ps.chapter, ps.verse))
                 .unwrap_or_else(|| format!("{} {}:{}", ps.book, ps.chapter, ps.verse));
             (
-                Position { book: ps.book.clone(), chapter: ps.chapter, verse: None },
+                Position {
+                    book: ps.book.clone(),
+                    chapter: ps.chapter,
+                    verse: None,
+                },
                 label,
             )
         });
@@ -169,7 +176,11 @@ fn main() -> Result<()> {
     let final_pos: Option<Position>;
     let final_cursor_verse: i64;
     let result = if let Some(book_code) = args.book.clone() {
-        let mut pos = Position { book: book_code, chapter: args.chapter, verse: None };
+        let mut pos = Position {
+            book: book_code,
+            chapter: args.chapter,
+            verse: None,
+        };
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = 1;
         let r = run(
@@ -196,7 +207,11 @@ fn main() -> Result<()> {
         // the persisted-or-default position lazily-ish.
         let mut pos = match &last_for_splash {
             Some((p, _)) => p.clone(),
-            None => Position { book: "GEN".into(), chapter: 1, verse: None },
+            None => Position {
+                book: "GEN".into(),
+                chapter: 1,
+                verse: None,
+            },
         };
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = persisted.as_ref().map(|p| p.verse).unwrap_or(1).max(1);
@@ -208,7 +223,10 @@ fn main() -> Result<()> {
             &mut pos,
             &mut passage,
             &mut cursor_verse,
-            Some(SplashSeed { last: last_for_splash, qotd }),
+            Some(SplashSeed {
+                last: last_for_splash,
+                qotd,
+            }),
             &config,
         );
         final_pos = Some(pos);
@@ -248,11 +266,7 @@ fn resolve_db_path(args: &Args) -> Result<PathBuf> {
 }
 
 /// Startup translation resolution: `--translation` > config default > first DB row.
-fn resolve_translation(
-    args: &Args,
-    db_path: &Path,
-    cfg: &config::Config,
-) -> Result<String> {
+fn resolve_translation(args: &Args, db_path: &Path, cfg: &config::Config) -> Result<String> {
     if let Some(t) = args.translation.as_ref() {
         return Ok(t.clone());
     }
@@ -311,10 +325,8 @@ fn run(
     // user action triggers another save.
     let _ = bookmarks.save();
     let mut verse_layout_two_line = config.reading.two_line_verses;
-    let mut last_label_for_splash: Option<(Position, String)> = books
-        .iter()
-        .find(|b| b.code == pos.book)
-        .map(|b| {
+    let mut last_label_for_splash: Option<(Position, String)> =
+        books.iter().find(|b| b.code == pos.book).map(|b| {
             (
                 pos.clone(),
                 format!("{} {}:{}", b.name, pos.chapter, *cursor_verse),
@@ -332,7 +344,12 @@ fn run(
                 Bg::Splash(s) => {
                     // Plain blue desktop behind the splash window.
                     crate::ui::desktop::render(
-                        ratatui::layout::Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(2)),
+                        ratatui::layout::Rect::new(
+                            area.x,
+                            area.y + 1,
+                            area.width,
+                            area.height.saturating_sub(2),
+                        ),
                         buf,
                     );
                     crate::ui::menubar::render(
@@ -407,7 +424,12 @@ fn run(
                             GotoOutcome::Cancel => dialog = Dialog::None,
                             GotoOutcome::Jump(p) => {
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(&mut last_label_for_splash, &books, pos, *cursor_verse);
+                                update_splash_label(
+                                    &mut last_label_for_splash,
+                                    &books,
+                                    pos,
+                                    *cursor_verse,
+                                );
                                 bg = Bg::Reading;
                                 dialog = Dialog::None;
                             }
@@ -424,7 +446,12 @@ fn run(
                             FindOutcome::Cancel => dialog = Dialog::None,
                             FindOutcome::Jump(p, _q) => {
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(&mut last_label_for_splash, &books, pos, *cursor_verse);
+                                update_splash_label(
+                                    &mut last_label_for_splash,
+                                    &books,
+                                    pos,
+                                    *cursor_verse,
+                                );
                                 bg = Bg::Reading;
                                 dialog = Dialog::None;
                             }
@@ -437,7 +464,12 @@ fn run(
                             FootnoteOutcome::Cancel => dialog = Dialog::None,
                             FootnoteOutcome::Jump(p) => {
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
-                                update_splash_label(&mut last_label_for_splash, &books, pos, *cursor_verse);
+                                update_splash_label(
+                                    &mut last_label_for_splash,
+                                    &books,
+                                    pos,
+                                    *cursor_verse,
+                                );
                                 bg = Bg::Reading;
                                 dialog = Dialog::None;
                             }
@@ -468,9 +500,7 @@ fn run(
                                 dialog = Dialog::None;
                             }
                             BookmarksOutcome::Delete(bm) => {
-                                bookmarks
-                                    .bookmarks
-                                    .retain(|b| !b.same_range(&bm));
+                                bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
                                 let _ = bookmarks.save();
                             }
                         }
@@ -535,10 +565,8 @@ fn run(
                                 Action::OpenFind => dialog = Dialog::Find(FindDialog::new()),
                                 Action::OpenHelp => dialog = Dialog::Help(HelpDialog::new()),
                                 Action::OpenFootnote => {
-                                    let target = format!(
-                                        "{}.{}.{}",
-                                        pos.book, pos.chapter, *cursor_verse
-                                    );
+                                    let target =
+                                        format!("{}.{}.{}", pos.book, pos.chapter, *cursor_verse);
                                     let notes: Vec<_> = passage
                                         .footnotes
                                         .iter()
@@ -569,7 +597,9 @@ fn run(
                                     let _ = copy_verse_to_clipboard(passage, pos, *cursor_verse);
                                 }
                                 Action::ToggleSidebar => show_sidebar = !show_sidebar,
-                                Action::ToggleVerseLayout => verse_layout_two_line = !verse_layout_two_line,
+                                Action::ToggleVerseLayout => {
+                                    verse_layout_two_line = !verse_layout_two_line
+                                }
                                 Action::ToggleVisual => {
                                     visual_anchor = if visual_anchor.is_some() {
                                         None
@@ -632,7 +662,12 @@ fn run(
                                 Action::Quit => return Ok(()),
                                 _ => {
                                     if apply_action(
-                                        action, db, &books, pos, passage, cursor_verse,
+                                        action,
+                                        db,
+                                        &books,
+                                        pos,
+                                        passage,
+                                        cursor_verse,
                                         &mut history,
                                     )? {
                                         return Ok(());
@@ -695,24 +730,60 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, two_line: bool) -> Strin
 fn make_status(bg: &Bg, show_sidebar: bool) -> Vec<Shortcut<'static>> {
     match bg {
         Bg::Splash(_) => vec![
-            Shortcut { key: "Enter", action: "Open" },
-            Shortcut { key: "F2", action: "Goto" },
-            Shortcut { key: "F3", action: "Find" },
-            Shortcut { key: "Esc", action: "Quit" },
+            Shortcut {
+                key: "Enter",
+                action: "Open",
+            },
+            Shortcut {
+                key: "F2",
+                action: "Goto",
+            },
+            Shortcut {
+                key: "F3",
+                action: "Find",
+            },
+            Shortcut {
+                key: "Esc",
+                action: "Quit",
+            },
         ],
         Bg::Reading => vec![
-            Shortcut { key: "F1", action: "Help" },
-            Shortcut { key: "F2", action: "Goto" },
-            Shortcut { key: "F3", action: "Find" },
-            Shortcut { key: "K", action: "Notes" },
-            Shortcut { key: "v", action: "Select" },
-            Shortcut { key: "T", action: "Layout" },
+            Shortcut {
+                key: "F1",
+                action: "Help",
+            },
+            Shortcut {
+                key: "F2",
+                action: "Goto",
+            },
+            Shortcut {
+                key: "F3",
+                action: "Find",
+            },
+            Shortcut {
+                key: "K",
+                action: "Notes",
+            },
+            Shortcut {
+                key: "v",
+                action: "Select",
+            },
+            Shortcut {
+                key: "T",
+                action: "Layout",
+            },
             Shortcut {
                 key: "Tab",
                 action: if show_sidebar { "Hide" } else { "Refs" },
             },
-            Shortcut { key: "Esc", action: "Home" },
-            Shortcut { key: "Q", action: "Quit" },
+            Shortcut {
+                key: "Esc",
+                action: "Home",
+            },
+            Shortcut {
+                key: "Q",
+                action: "Quit",
+            },
         ],
     }
 }
@@ -893,7 +964,11 @@ fn init_terminal() -> Result<Tty> {
 
 fn restore_terminal(term: &mut Tty) -> Result<()> {
     disable_raw_mode()?;
-    execute!(term.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
+    execute!(
+        term.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     term.show_cursor()?;
     Ok(())
 }
@@ -901,11 +976,7 @@ fn restore_terminal(term: &mut Tty) -> Result<()> {
 /// Translate a mouse event into a synthetic key event so clicks on the
 /// menubar / statusbar reuse the existing keyboard dispatch path. Scroll wheel
 /// turns into ↑/↓.
-fn mouse_to_key(
-    me: MouseEvent,
-    term_height: u16,
-    status: &[Shortcut<'_>],
-) -> Option<KeyEvent> {
+fn mouse_to_key(me: MouseEvent, term_height: u16, status: &[Shortcut<'_>]) -> Option<KeyEvent> {
     match me.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // The top row is now an informational title strip — no clicks.
@@ -914,9 +985,7 @@ fn mouse_to_key(
             }
             None
         }
-        MouseEventKind::ScrollDown => {
-            Some(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()))
-        }
+        MouseEventKind::ScrollDown => Some(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())),
         MouseEventKind::ScrollUp => Some(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         _ => None,
     }

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use etcetera::{choose_base_strategy, BaseStrategy};
+use etcetera::{BaseStrategy, choose_base_strategy};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{self, Config};
@@ -78,8 +78,12 @@ pub fn load_with_migration() -> (Option<PersistedState>, Config) {
                 .ok()
                 .and_then(|p| fs::read_to_string(p).ok())
         });
-    let Some(txt) = raw else { return (None, config) };
-    let Some(legacy) = parse_any(&txt) else { return (None, config) };
+    let Some(txt) = raw else {
+        return (None, config);
+    };
+    let Some(legacy) = parse_any(&txt) else {
+        return (None, config);
+    };
 
     // Hoist default_translation out of state. Don't clobber an existing config
     // value — config wins, because the user may have edited it deliberately.

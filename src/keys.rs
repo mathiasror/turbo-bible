@@ -64,7 +64,6 @@ impl Default for KeyState {
     }
 }
 
-
 impl KeyState {
     pub fn new() -> Self {
         Self {
@@ -160,11 +159,7 @@ impl KeyState {
     }
 
     fn count_or(&self, default: u16) -> u16 {
-        if self.count == 0 {
-            default
-        } else {
-            self.count
-        }
+        if self.count == 0 { default } else { self.count }
     }
 
     #[cfg(test)]
@@ -272,8 +267,12 @@ mod tests {
     use super::*;
     use crate::config::{KeyBind, KeysConfig};
 
-    fn ev(code: KeyCode) -> KeyEvent { KeyEvent::new(code, KeyModifiers::empty()) }
-    fn evm(code: KeyCode, m: KeyModifiers) -> KeyEvent { KeyEvent::new(code, m) }
+    fn ev(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
+    fn evm(code: KeyCode, m: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, m)
+    }
 
     #[test]
     fn user_binding_overrides_default_lookup() {
@@ -286,20 +285,29 @@ mod tests {
         };
         let mut ks = KeyState::with_user_bindings(&cfg);
         assert!(ks.extras_count() > 0);
-        assert_eq!(ks.handle(ev(KeyCode::Char('x'))), Some(Action::OpenTranslations));
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('x'))),
+            Some(Action::OpenTranslations)
+        );
     }
 
     #[test]
     fn defaults_still_work_with_extras_present() {
         let cfg = KeysConfig {
-            quit: vec![KeyBind { code: KeyCode::Char('Q'), modifiers: KeyModifiers::empty() }],
+            quit: vec![KeyBind {
+                code: KeyCode::Char('Q'),
+                modifiers: KeyModifiers::empty(),
+            }],
             ..KeysConfig::default()
         };
         let mut ks = KeyState::with_user_bindings(&cfg);
         // Hardcoded 'q' still quits.
         assert_eq!(ks.handle(ev(KeyCode::Char('q'))), Some(Action::Quit));
         // And the user-added 'Q' also quits.
-        assert_eq!(ks.handle(evm(KeyCode::Char('Q'), KeyModifiers::SHIFT)), Some(Action::Quit));
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('Q'), KeyModifiers::SHIFT)),
+            Some(Action::Quit)
+        );
     }
 
     #[test]

@@ -40,7 +40,11 @@ pub fn render_passage(
         let mut s = Style::new()
             .fg(theme::yellow())
             .add_modifier(Modifier::BOLD);
-        s = if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) };
+        s = if on_cursor {
+            s.bg(cursor_bg)
+        } else {
+            s.bg(theme::blue())
+        };
         s
     };
     // Non-cursor body text uses a softer fg so the cursor line is the only
@@ -57,14 +61,21 @@ pub fn render_passage(
         let s = Style::new()
             .fg(theme::yellow())
             .add_modifier(Modifier::BOLD);
-        if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) }
+        if on_cursor {
+            s.bg(cursor_bg)
+        } else {
+            s.bg(theme::blue())
+        }
     };
 
     // Pre-bucket headings by `before_verse`.
     let mut headings_by_anchor: std::collections::BTreeMap<i64, Vec<&crate::db::Heading>> =
         std::collections::BTreeMap::new();
     for h in &p.headings {
-        headings_by_anchor.entry(h.before_verse).or_default().push(h);
+        headings_by_anchor
+            .entry(h.before_verse)
+            .or_default()
+            .push(h);
     }
 
     // Chapter banner. The rule underneath the heading anchors verse 1 to it
@@ -127,7 +138,12 @@ pub fn render_passage(
         } else {
             " "
         };
-        let num_str = format!("{}{:>width$}", gutter, v.number, width = VERSE_NUM_WIDTH - 1);
+        let num_str = format!(
+            "{}{:>width$}",
+            gutter,
+            v.number,
+            width = VERSE_NUM_WIDTH - 1
+        );
 
         let mut markers = String::new();
         if v.footnote_count > 0 {
@@ -275,15 +291,17 @@ pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
     lines
         .iter()
         .map(|rl| {
-            let used: usize = rl.line.spans.iter().map(|s| s.content.chars().count()).sum();
+            let used: usize = rl
+                .line
+                .spans
+                .iter()
+                .map(|s| s.content.chars().count())
+                .sum();
             let mut spans = rl.line.spans.clone();
             if (used as u16) < width {
                 let pad = (width as usize).saturating_sub(used);
-                let is_cursor_row = rl
-                    .line
-                    .spans
-                    .last()
-                    .and_then(|s| s.style.bg) == Some(cursor_bg);
+                let is_cursor_row =
+                    rl.line.spans.last().and_then(|s| s.style.bg) == Some(cursor_bg);
                 let pad_style = if is_cursor_row { cursor_pad } else { blue_bg };
                 spans.push(Span::styled(" ".repeat(pad), pad_style));
             }

@@ -30,5 +30,7 @@ pub fn render(title: &str, area: Rect, buf: &mut Buffer) {
         Span::styled(" ".repeat(pad_left), base),
         Span::styled(title.to_string(), title_style),
     ];
-    Paragraph::new(Line::from(spans)).style(base).render(area, buf);
+    Paragraph::new(Line::from(spans))
+        .style(base)
+        .render(area, buf);
 }

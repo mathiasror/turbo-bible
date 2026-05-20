@@ -180,10 +180,7 @@ impl FindDialog {
             ref_spans.push(Span::styled(reference.clone(), ref_line_style));
             let used = 1 + reference.chars().count();
             let pad = (inner.width as usize).saturating_sub(used);
-            ref_spans.push(Span::styled(
-                " ".repeat(pad),
-                if on { sel_bg } else { bg },
-            ));
+            ref_spans.push(Span::styled(" ".repeat(pad), if on { sel_bg } else { bg }));
             lines.push(Line::from(ref_spans));
 
             // Row 2: indented snippet with highlighted match ranges.

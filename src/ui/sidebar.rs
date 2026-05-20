@@ -158,5 +158,6 @@ fn build_lines(
 
 fn current_parallel(p: &Passage, cursor_verse: i64) -> Option<&Heading> {
     p.headings
-        .iter().rfind(|h| h.style == "r" && h.before_verse <= cursor_verse)
+        .iter()
+        .rfind(|h| h.style == "r" && h.before_verse <= cursor_verse)
 }

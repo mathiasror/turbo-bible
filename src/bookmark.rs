@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use etcetera::{choose_base_strategy, BaseStrategy};
+use etcetera::{BaseStrategy, choose_base_strategy};
 use serde::{Deserialize, Serialize};
 
 use crate::state::{LEGACY_TRANSLATION, REPLACEMENT_TRANSLATION};

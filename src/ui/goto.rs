@@ -30,7 +30,9 @@ pub enum GotoCommand {
 
 impl GotoDialog {
     pub fn new() -> Self {
-        Self { input: String::new() }
+        Self {
+            input: String::new(),
+        }
     }
 
     pub fn handle(&mut self, key: KeyEvent, books: &[Book]) -> GotoOutcome {
@@ -90,9 +92,7 @@ impl GotoDialog {
 
         // Empty-state placeholder shown inside the field — disappears the
         // moment the user starts typing. Faster to read than the hint below.
-        let placeholder_style = Style::new()
-            .fg(theme::dark_grey())
-            .bg(theme::cyan());
+        let placeholder_style = Style::new().fg(theme::dark_grey()).bg(theme::cyan());
         let typed_len = self.input.chars().count();
         let mut input_spans: Vec<Span<'static>> = Vec::new();
         if self.input.is_empty() {
@@ -104,8 +104,7 @@ impl GotoDialog {
             input_spans.push(Span::styled("\u{2588}", cursor_style));
         }
         let placeholder_len = if self.input.is_empty() { 9 } else { 0 };
-        let pad = (inner.width as usize)
-            .saturating_sub(typed_len + 2 + 12 + placeholder_len);
+        let pad = (inner.width as usize).saturating_sub(typed_len + 2 + 12 + placeholder_len);
         if pad > 0 {
             input_spans.push(Span::styled(" ".repeat(pad), input_style));
         }
@@ -118,10 +117,7 @@ impl GotoDialog {
             Line::from(blank.clone()),
             Line::from(vec![label, Span::raw("")]),
             Line::from({
-                let mut v = vec![Span::styled(
-                    "  ",
-                    Style::new().bg(theme::blue()),
-                )];
+                let mut v = vec![Span::styled("  ", Style::new().bg(theme::blue()))];
                 v.extend(input_spans);
                 v
             }),
@@ -191,7 +187,11 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
 
     let mut best: Option<(usize, String)> = None;
     for b in books {
-        let candidates = [b.name.to_lowercase(), b.abbreviation.to_lowercase(), b.code.to_lowercase()];
+        let candidates = [
+            b.name.to_lowercase(),
+            b.abbreviation.to_lowercase(),
+            b.code.to_lowercase(),
+        ];
         for cand in &candidates {
             if cand.is_empty() {
                 continue;
@@ -214,7 +214,11 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
     let (n, code) = best?;
     let rest = s[n..].trim();
     if rest.is_empty() {
-        return Some(Position { book: code, chapter: 1, verse: None });
+        return Some(Position {
+            book: code,
+            chapter: 1,
+            verse: None,
+        });
     }
     let (chap_str, verse_str) = match rest.find([':', ',', '.']) {
         Some(i) => (rest[..i].trim(), rest[i + 1..].trim()),
@@ -229,7 +233,11 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
     } else {
         verse_str.parse().ok().filter(|v: &i64| *v >= 1)
     };
-    Some(Position { book: code, chapter, verse })
+    Some(Position {
+        book: code,
+        chapter,
+        verse,
+    })
 }
 
 #[cfg(test)]
@@ -238,10 +246,38 @@ mod tests {
 
     fn books() -> Vec<Book> {
         vec![
-            Book { code: "GEN".into(), name: "Første Mosebok".into(), abbreviation: "1 Mos".into(), testament: "OT".into(), ord: 1, full_name: None },
-            Book { code: "MRK".into(), name: "Markus".into(), abbreviation: "Mark".into(), testament: "NT".into(), ord: 41, full_name: None },
-            Book { code: "MAT".into(), name: "Matteus".into(), abbreviation: "Matt".into(), testament: "NT".into(), ord: 40, full_name: None },
-            Book { code: "JHN".into(), name: "Johannes".into(), abbreviation: "Joh".into(), testament: "NT".into(), ord: 43, full_name: None },
+            Book {
+                code: "GEN".into(),
+                name: "Første Mosebok".into(),
+                abbreviation: "1 Mos".into(),
+                testament: "OT".into(),
+                ord: 1,
+                full_name: None,
+            },
+            Book {
+                code: "MRK".into(),
+                name: "Markus".into(),
+                abbreviation: "Mark".into(),
+                testament: "NT".into(),
+                ord: 41,
+                full_name: None,
+            },
+            Book {
+                code: "MAT".into(),
+                name: "Matteus".into(),
+                abbreviation: "Matt".into(),
+                testament: "NT".into(),
+                ord: 40,
+                full_name: None,
+            },
+            Book {
+                code: "JHN".into(),
+                name: "Johannes".into(),
+                abbreviation: "Joh".into(),
+                testament: "NT".into(),
+                ord: 43,
+                full_name: None,
+            },
         ]
     }
 

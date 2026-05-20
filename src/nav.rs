@@ -1,6 +1,6 @@
 //! Navigation helpers: walk the book/chapter graph in canonical order.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::db::{Book, Db};
 

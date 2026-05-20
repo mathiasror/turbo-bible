@@ -19,16 +19,32 @@ fn theme() -> &'static ThemeConfig {
     THEME.get_or_init(ThemeConfig::default)
 }
 
-pub fn blue() -> Color { theme().blue.to_color() }
-pub fn cyan() -> Color { theme().cyan.to_color() }
-pub fn bright_white() -> Color { theme().bright_white.to_color() }
-pub fn light_grey() -> Color { theme().light_grey.to_color() }
+pub fn blue() -> Color {
+    theme().blue.to_color()
+}
+pub fn cyan() -> Color {
+    theme().cyan.to_color()
+}
+pub fn bright_white() -> Color {
+    theme().bright_white.to_color()
+}
+pub fn light_grey() -> Color {
+    theme().light_grey.to_color()
+}
 #[allow(dead_code)]
-pub fn dark_grey() -> Color { theme().dark_grey.to_color() }
-pub fn yellow() -> Color { theme().yellow.to_color() }
+pub fn dark_grey() -> Color {
+    theme().dark_grey.to_color()
+}
+pub fn yellow() -> Color {
+    theme().yellow.to_color()
+}
 #[allow(dead_code)]
-pub fn hotkey_red() -> Color { theme().hotkey_red.to_color() }
-pub fn black() -> Color { theme().black.to_color() }
+pub fn hotkey_red() -> Color {
+    theme().hotkey_red.to_color()
+}
+pub fn black() -> Color {
+    theme().black.to_color()
+}
 
 #[allow(dead_code)]
 pub fn window_bg() -> Style {

@@ -27,10 +27,7 @@ pub enum TranslationsOutcome {
 
 impl TranslationsDialog {
     pub fn new(items: Vec<TranslationInfo>, current: &str) -> Self {
-        let cursor = items
-            .iter()
-            .position(|t| t.code == current)
-            .unwrap_or(0);
+        let cursor = items.iter().position(|t| t.code == current).unwrap_or(0);
         Self { items, cursor }
     }
 
@@ -93,7 +90,10 @@ impl TranslationsDialog {
         if self.items.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled("  ", bg),
-                Span::styled("(no translations installed)", dim.add_modifier(Modifier::ITALIC)),
+                Span::styled(
+                    "(no translations installed)",
+                    dim.add_modifier(Modifier::ITALIC),
+                ),
             ]));
         } else {
             let visible = (inner.height as usize)

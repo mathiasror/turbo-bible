@@ -34,7 +34,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use etcetera::{choose_base_strategy, BaseStrategy};
+use etcetera::{BaseStrategy, choose_base_strategy};
 use ratatui::style::Color;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -289,9 +289,7 @@ fn parse_key(raw: &str) -> Result<KeyBind, String> {
         }
         s => {
             let mut chars = s.chars();
-            let first = chars
-                .next()
-                .ok_or_else(|| format!("invalid key {raw:?}"))?;
+            let first = chars.next().ok_or_else(|| format!("invalid key {raw:?}"))?;
             if chars.next().is_some() {
                 return Err(format!("unknown key name {s:?}"));
             }
@@ -317,8 +315,12 @@ fn config_path() -> Result<PathBuf> {
 }
 
 pub fn load() -> Config {
-    let Ok(path) = config_path() else { return Config::default() };
-    let Ok(txt) = fs::read_to_string(path) else { return Config::default() };
+    let Ok(path) = config_path() else {
+        return Config::default();
+    };
+    let Ok(txt) = fs::read_to_string(path) else {
+        return Config::default();
+    };
     toml::from_str(&txt).unwrap_or_else(|e| {
         eprintln!("config.toml: {e}; using defaults");
         Config::default()
@@ -350,11 +352,17 @@ mod tests {
     fn parses_keybind_strings() {
         assert_eq!(
             parse_key("q").unwrap(),
-            KeyBind { code: KeyCode::Char('q'), modifiers: KeyModifiers::empty() }
+            KeyBind {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::empty()
+            }
         );
         assert_eq!(
             parse_key("Ctrl-d").unwrap(),
-            KeyBind { code: KeyCode::Char('d'), modifiers: KeyModifiers::CONTROL }
+            KeyBind {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::CONTROL
+            }
         );
         assert_eq!(parse_key("F5").unwrap().code, KeyCode::F(5));
         assert_eq!(parse_key("Esc").unwrap().code, KeyCode::Esc);
