@@ -4,6 +4,12 @@
 //! ```toml
 //! default_translation = "en-kjv"
 //!
+//! [input]
+//! # "vim"   — hjkl, gg/G, n/N, counts (5j), chords (gg, [b, ZZ), :/ex-style commands.
+//! # "turbo" — subtractive: arrows / PgUp / PgDn / Home / End / F-keys / Esc /
+//! #           Tab / Space / q-quits / `/`-search. Vim-only letter keys are off.
+//! keymap = "vim"
+//!
 //! [reading]
 //! two_line_verses    = true
 //! show_sidebar       = true
@@ -43,9 +49,35 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub default_translation: Option<String>,
+    pub input: InputConfig,
     pub reading: ReadingConfig,
     pub theme: ThemeConfig,
     pub keys: KeysConfig,
+}
+
+// --------------------------- Input ---------------------------
+
+/// Selects which keymap profile is active in the reading view. Splash and the
+/// list dialogs always accept basic vim motions (j/k/g/G) — those are list
+/// pickers where the muscle memory feels universal. This profile gates the
+/// reading view's letter-key, chord, and count handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Keymap {
+    /// Full vim layer: hjkl, gg/G, n/N, counts (5j), chords (gg, [b, ZZ),
+    /// `:` and `/` ex-commands, ZZ/ZQ, single-letter shortcuts (y, v, b, K, T).
+    #[default]
+    Vim,
+    /// Subtractive profile. Drops vim-only letter keys, chords, and counts.
+    /// Keeps arrows, PgUp/PgDn, Home/End, F-keys, Tab, Esc, Enter, Space,
+    /// `q`-quits, and `/`-opens-find — the set every pager-style TUI shares.
+    Turbo,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InputConfig {
+    pub keymap: Keymap,
 }
 
 // --------------------------- Reading ---------------------------

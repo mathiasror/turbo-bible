@@ -12,10 +12,12 @@ use ratatui::widgets::{Paragraph, Widget};
 use crate::db::TranslationInfo;
 use crate::theme;
 use crate::ui::dialog;
+use crate::ui::listnav::{self, ListNav, Step};
 
 pub struct TranslationsDialog {
     items: Vec<TranslationInfo>,
     cursor: usize,
+    nav: ListNav,
 }
 
 pub enum TranslationsOutcome {
@@ -28,10 +30,38 @@ pub enum TranslationsOutcome {
 impl TranslationsDialog {
     pub fn new(items: Vec<TranslationInfo>, current: &str) -> Self {
         let cursor = items.iter().position(|t| t.code == current).unwrap_or(0);
-        Self { items, cursor }
+        Self {
+            items,
+            cursor,
+            nav: ListNav::default(),
+        }
     }
 
     pub fn handle(&mut self, key: KeyEvent) -> TranslationsOutcome {
+        match self.nav.handle(key) {
+            Step::Down(n) => {
+                if !self.items.is_empty() {
+                    self.cursor = (self.cursor + n as usize).min(self.items.len() - 1);
+                }
+                return TranslationsOutcome::Continue;
+            }
+            Step::Up(n) => {
+                self.cursor = self.cursor.saturating_sub(n as usize);
+                return TranslationsOutcome::Continue;
+            }
+            Step::Top => {
+                self.cursor = 0;
+                return TranslationsOutcome::Continue;
+            }
+            Step::BottomOrAt(n) => {
+                if let Some(idx) = listnav::bottom_or_at(n, self.items.len()) {
+                    self.cursor = idx;
+                }
+                return TranslationsOutcome::Continue;
+            }
+            Step::Pending => return TranslationsOutcome::Continue,
+            Step::Pass => {}
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => TranslationsOutcome::Cancel,
             KeyCode::Enter | KeyCode::Char('o') => self
@@ -39,26 +69,6 @@ impl TranslationsDialog {
                 .get(self.cursor)
                 .map(|t| TranslationsOutcome::Select(t.code.clone()))
                 .unwrap_or(TranslationsOutcome::Continue),
-            KeyCode::Char('j') | KeyCode::Down => {
-                if !self.items.is_empty() {
-                    self.cursor = (self.cursor + 1).min(self.items.len() - 1);
-                }
-                TranslationsOutcome::Continue
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.cursor = self.cursor.saturating_sub(1);
-                TranslationsOutcome::Continue
-            }
-            KeyCode::Char('g') => {
-                self.cursor = 0;
-                TranslationsOutcome::Continue
-            }
-            KeyCode::Char('G') => {
-                if !self.items.is_empty() {
-                    self.cursor = self.items.len() - 1;
-                }
-                TranslationsOutcome::Continue
-            }
             _ => TranslationsOutcome::Continue,
         }
     }

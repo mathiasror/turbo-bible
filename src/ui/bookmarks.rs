@@ -13,10 +13,12 @@ use crate::db::Book;
 use crate::nav::Position;
 use crate::theme;
 use crate::ui::dialog;
+use crate::ui::listnav::{self, ListNav, Step};
 
 pub struct BookmarksDialog {
     items: Vec<Bookmark>,
     cursor: usize,
+    nav: ListNav,
 }
 
 pub enum BookmarksOutcome {
@@ -33,6 +35,7 @@ impl BookmarksDialog {
         Self {
             items: store.bookmarks.clone(),
             cursor: 0,
+            nav: ListNav::default(),
         }
     }
 
@@ -47,6 +50,30 @@ impl BookmarksDialog {
     }
 
     pub fn handle(&mut self, key: KeyEvent) -> BookmarksOutcome {
+        match self.nav.handle(key) {
+            Step::Down(n) => {
+                if !self.items.is_empty() {
+                    self.cursor = (self.cursor + n as usize).min(self.items.len() - 1);
+                }
+                return BookmarksOutcome::Continue;
+            }
+            Step::Up(n) => {
+                self.cursor = self.cursor.saturating_sub(n as usize);
+                return BookmarksOutcome::Continue;
+            }
+            Step::Top => {
+                self.cursor = 0;
+                return BookmarksOutcome::Continue;
+            }
+            Step::BottomOrAt(n) => {
+                if let Some(idx) = listnav::bottom_or_at(n, self.items.len()) {
+                    self.cursor = idx;
+                }
+                return BookmarksOutcome::Continue;
+            }
+            Step::Pending => return BookmarksOutcome::Continue,
+            Step::Pass => {}
+        }
         match key.code {
             KeyCode::Esc => BookmarksOutcome::Cancel,
             KeyCode::Char('q') => BookmarksOutcome::Cancel,
@@ -72,26 +99,6 @@ impl BookmarksDialog {
                 } else {
                     BookmarksOutcome::Continue
                 }
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                if !self.items.is_empty() {
-                    self.cursor = (self.cursor + 1).min(self.items.len() - 1);
-                }
-                BookmarksOutcome::Continue
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.cursor = self.cursor.saturating_sub(1);
-                BookmarksOutcome::Continue
-            }
-            KeyCode::Char('g') => {
-                self.cursor = 0;
-                BookmarksOutcome::Continue
-            }
-            KeyCode::Char('G') => {
-                if !self.items.is_empty() {
-                    self.cursor = self.items.len() - 1;
-                }
-                BookmarksOutcome::Continue
             }
             _ => BookmarksOutcome::Continue,
         }

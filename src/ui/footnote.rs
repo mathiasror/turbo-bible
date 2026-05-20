@@ -12,6 +12,7 @@ use crate::db::{Book, Footnote};
 use crate::nav::Position;
 use crate::theme;
 use crate::ui::dialog;
+use crate::ui::listnav::{self, ListNav, Step};
 
 #[derive(Clone)]
 pub struct XrefItem {
@@ -25,6 +26,7 @@ pub struct FootnoteDialog {
     pub footnotes: Vec<Footnote>,
     pub xrefs: Vec<XrefItem>,
     pub selected: usize,
+    nav: ListNav,
 }
 
 pub enum FootnoteOutcome {
@@ -52,10 +54,35 @@ impl FootnoteDialog {
             footnotes,
             xrefs,
             selected: 0,
+            nav: ListNav::default(),
         }
     }
 
     pub fn handle(&mut self, key: KeyEvent) -> FootnoteOutcome {
+        match self.nav.handle(key) {
+            Step::Down(n) => {
+                if !self.xrefs.is_empty() {
+                    self.selected = (self.selected + n as usize).min(self.xrefs.len() - 1);
+                }
+                return FootnoteOutcome::Continue;
+            }
+            Step::Up(n) => {
+                self.selected = self.selected.saturating_sub(n as usize);
+                return FootnoteOutcome::Continue;
+            }
+            Step::Top => {
+                self.selected = 0;
+                return FootnoteOutcome::Continue;
+            }
+            Step::BottomOrAt(n) => {
+                if let Some(idx) = listnav::bottom_or_at(n, self.xrefs.len()) {
+                    self.selected = idx;
+                }
+                return FootnoteOutcome::Continue;
+            }
+            Step::Pending => return FootnoteOutcome::Continue,
+            Step::Pass => {}
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => FootnoteOutcome::Cancel,
             KeyCode::Enter => {
@@ -64,16 +91,6 @@ impl FootnoteDialog {
                 } else {
                     FootnoteOutcome::Continue
                 }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.xrefs.is_empty() {
-                    self.selected = (self.selected + 1).min(self.xrefs.len() - 1);
-                }
-                FootnoteOutcome::Continue
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
-                FootnoteOutcome::Continue
             }
             _ => FootnoteOutcome::Continue,
         }

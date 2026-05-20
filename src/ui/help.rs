@@ -75,6 +75,7 @@ impl HelpDialog {
             Entry("F1", "this help"),
             Entry("F2  :", "Goto reference  (e.g. John 3:16)"),
             Entry("F3  /", "Find  (FTS5 search)"),
+            Entry("n  N", "repeat last find forward / backward"),
             Entry("F4  M", "Bookmarks"),
             Entry("F5  t", "Translations"),
             Section("Quit"),

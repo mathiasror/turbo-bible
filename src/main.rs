@@ -323,7 +323,10 @@ fn run(
     config: &config::Config,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
-    let mut keys = KeyState::with_user_bindings(&config.keys);
+    let mut keys = KeyState::with_user_bindings(&config.keys, config.input.keymap);
+    // Last `/`-search query — populated whenever the Find dialog produces a
+    // jump, consumed by `n` / `N` to step canonically through the hits.
+    let mut last_query: Option<String> = None;
     let mut history = History::new(pos.clone());
     let mut bg = match initial_splash {
         Some(seed) => Bg::Splash(Box::new(SplashView::new(
@@ -468,7 +471,8 @@ fn run(
                         match d.handle(key, db) {
                             FindOutcome::Continue => {}
                             FindOutcome::Cancel => dialog = Dialog::None,
-                            FindOutcome::Jump(p, _q) => {
+                            FindOutcome::Jump(p, q) => {
+                                last_query = Some(q);
                                 jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
                                 update_splash_label(
                                     &mut last_label_for_splash,
@@ -692,6 +696,26 @@ fn run(
                                     }
                                 }
                                 Action::Quit => return Ok(()),
+                                Action::SearchNext | Action::SearchPrev => {
+                                    if let Some(q) = last_query.as_deref()
+                                        && let Some(p) = repeat_search(
+                                            db,
+                                            &books,
+                                            q,
+                                            pos,
+                                            *cursor_verse,
+                                            matches!(action, Action::SearchNext),
+                                        )
+                                    {
+                                        jump_to(p, db, pos, passage, cursor_verse, &mut history)?;
+                                        update_splash_label(
+                                            &mut last_label_for_splash,
+                                            &books,
+                                            pos,
+                                            *cursor_verse,
+                                        );
+                                    }
+                                }
                                 _ => {
                                     if apply_action(
                                         action,
@@ -955,8 +979,54 @@ fn apply_action(
         | Action::AddBookmark
         | Action::OpenBookmarks
         | Action::OpenTranslations
-        | Action::ToggleVerseLayout => Ok(false),
+        | Action::ToggleVerseLayout
+        | Action::SearchNext
+        | Action::SearchPrev => Ok(false),
     }
+}
+
+/// Repeat the last `/`-search. Runs the query, sorts hits canonically
+/// (book canon, chapter, verse), and returns the next or previous hit
+/// relative to `(pos, cursor_verse)`. Wraps around when the end is reached,
+/// matching vim's default `wrapscan` behavior. `None` when the query yields
+/// no hits at all (or only the hit at the current verse).
+fn repeat_search(
+    db: &Db,
+    books: &[Book],
+    query: &str,
+    pos: &Position,
+    cursor_verse: i64,
+    forward: bool,
+) -> Option<Position> {
+    let mut hits = search::search(db, query, 1000).ok()?;
+    if hits.is_empty() {
+        return None;
+    }
+    let canon: std::collections::HashMap<&str, usize> = books
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.code.as_str(), i))
+        .collect();
+    let key = |book: &str, ch: i64, v: i64| -> (usize, i64, i64) {
+        (canon.get(book).copied().unwrap_or(usize::MAX), ch, v)
+    };
+    hits.sort_by_key(|h| key(&h.book, h.chapter, h.verse));
+    let here = key(&pos.book, pos.chapter, cursor_verse);
+    let pick = if forward {
+        hits.iter()
+            .find(|h| key(&h.book, h.chapter, h.verse) > here)
+            .or_else(|| hits.first())
+    } else {
+        hits.iter()
+            .rev()
+            .find(|h| key(&h.book, h.chapter, h.verse) < here)
+            .or_else(|| hits.last())
+    };
+    pick.map(|h| Position {
+        book: h.book.clone(),
+        chapter: h.chapter,
+        verse: Some(h.verse),
+    })
 }
 
 fn switch_translation(

@@ -2,16 +2,24 @@
 //! `10G`) and multi-key motions (`gg`, `[b`, `]b`). A 500 ms timeout clears
 //! an ambiguous buffer (matches Vim's `timeoutlen`).
 //!
+//! Two layers feed `try_resolve`:
+//!   * **Base** — always active. Arrows, PgUp/PgDn, Home/End, F-keys, Esc,
+//!     Tab, Enter, Space, `/` (find), `q` (quit). The pager-style baseline
+//!     that every reader-shaped TUI shares.
+//!   * **Vim** — gated by [`Keymap::Vim`]. Letter keys (hjkl, gg/G, n/N, K,
+//!     y, v/V, b, T, M, t, ZZ/ZQ), `:` ex-commands, counts, and chord
+//!     starters (`g`, `[`, `]`, `Z`).
+//!
 //! User-configured single-key triggers from `config.toml` are checked first
-//! (additive — defaults always remain functional). Chord and count handling
-//! are not configurable.
+//! and apply in both profiles (additive — defaults always remain functional).
+//! Chord and count handling are not configurable.
 
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use smallvec::SmallVec;
 
-use crate::config::{KeyBind, KeysConfig};
+use crate::config::{KeyBind, Keymap, KeysConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -43,6 +51,11 @@ pub enum Action {
     OpenBookmarks,
     OpenTranslations,
     ToggleVerseLayout,
+    /// Repeat the last `/`-search forward (canonical order). No-op when no
+    /// query has been entered yet. Vim-layer only.
+    SearchNext,
+    /// Repeat the last `/`-search backward. Vim-layer only.
+    SearchPrev,
 }
 
 pub struct KeyState {
@@ -50,6 +63,7 @@ pub struct KeyState {
     count: u16,
     last: Option<Instant>,
     extras: Vec<(KeyBind, Action)>,
+    keymap: Keymap,
 }
 
 enum Resolve {
@@ -71,11 +85,13 @@ impl KeyState {
             count: 0,
             last: None,
             extras: Vec::new(),
+            keymap: Keymap::Vim,
         }
     }
 
-    pub fn with_user_bindings(keys: &KeysConfig) -> Self {
+    pub fn with_user_bindings(keys: &KeysConfig, keymap: Keymap) -> Self {
         let mut s = Self::new();
+        s.keymap = keymap;
         let mut push = |binds: &[KeyBind], action: Action| {
             for &b in binds {
                 s.extras.push((b, action));
@@ -128,9 +144,10 @@ impl KeyState {
 
     pub fn handle(&mut self, key: KeyEvent) -> Option<Action> {
         self.tick();
-        // Count prefix: digits while no pending operator. '0' is line-start,
-        // not a count, when it's the first digit.
-        if self.pending.is_empty()
+        // Count prefix is a vim-layer feature. In turbo mode digits are inert
+        // — they just fall through to the resolver which returns Unknown.
+        if self.keymap == Keymap::Vim
+            && self.pending.is_empty()
             && key.modifiers.is_empty()
             && let KeyCode::Char(c) = key.code
             && c.is_ascii_digit()
@@ -171,82 +188,24 @@ impl KeyState {
         let n = self.pending.len();
         let first = self.pending[0];
         if n == 1 {
-            // User-configured triggers win over the hardcoded vim defaults.
+            // User-configured triggers win over the hardcoded defaults and
+            // apply in both keymap profiles — the additive contract.
             for (binding, action) in &self.extras {
                 if binding.matches(&first) {
                     return Resolve::Action(*action);
                 }
             }
-
-            let c = first.code;
-            let m = first.modifiers;
-            let ctrl = m.contains(KeyModifiers::CONTROL);
-            let plain = m.is_empty() || m == KeyModifiers::SHIFT;
-
-            // Single-shot bindings.
-            return match (c, ctrl, plain) {
-                (KeyCode::Char('q'), false, true) => Resolve::Action(Action::Quit),
-                (KeyCode::Esc, _, _) => Resolve::Action(Action::Back),
-
-                (KeyCode::Char('j'), false, true) | (KeyCode::Down, _, _) => {
-                    Resolve::Action(Action::CursorDown(self.count_or(1)))
-                }
-                (KeyCode::Char('k'), false, true) | (KeyCode::Up, _, _) => {
-                    Resolve::Action(Action::CursorUp(self.count_or(1)))
-                }
-                (KeyCode::Char('h'), false, true) | (KeyCode::Left, _, _) => {
-                    Resolve::Action(Action::PrevChapter)
-                }
-                (KeyCode::Char('l'), false, true) | (KeyCode::Right, _, _) => {
-                    Resolve::Action(Action::NextChapter)
-                }
-                (KeyCode::Char('H'), false, true) => Resolve::Action(Action::PrevChapter),
-                (KeyCode::Char('L'), false, true) => Resolve::Action(Action::NextChapter),
-
-                (KeyCode::Char('d'), true, _) => Resolve::Action(Action::HalfPageDown),
-                (KeyCode::Char('u'), true, _) => Resolve::Action(Action::HalfPageUp),
-                (KeyCode::Char('f'), true, _) | (KeyCode::PageDown, _, _) => {
-                    Resolve::Action(Action::PageDown)
-                }
-                (KeyCode::Char('b'), true, _) | (KeyCode::PageUp, _, _) => {
-                    Resolve::Action(Action::PageUp)
-                }
-                (KeyCode::Char(' '), false, true) => Resolve::Action(Action::PageDown),
-
-                (KeyCode::Char('G'), false, true) => Resolve::Action(Action::GotoBottom),
-                (KeyCode::Char('K'), false, true) => Resolve::Action(Action::OpenFootnote),
-                (KeyCode::Char('y'), false, true) => Resolve::Action(Action::CopyVerse),
-                (KeyCode::Char('v'), false, true) => Resolve::Action(Action::ToggleVisual),
-                (KeyCode::Char('V'), false, true) => Resolve::Action(Action::ToggleVisual),
-                (KeyCode::Char('b'), false, true) => Resolve::Action(Action::AddBookmark),
-                (KeyCode::Char('T'), false, true) => Resolve::Action(Action::ToggleVerseLayout),
-                (KeyCode::Char('M'), false, true) => Resolve::Action(Action::OpenBookmarks),
-                (KeyCode::F(4), _, _) => Resolve::Action(Action::OpenBookmarks),
-                (KeyCode::Char('t'), false, true) => Resolve::Action(Action::OpenTranslations),
-                (KeyCode::F(5), _, _) => Resolve::Action(Action::OpenTranslations),
-                (KeyCode::Char('o'), true, _) => Resolve::Action(Action::JumpBack),
-                (KeyCode::Char('i'), true, _) => Resolve::Action(Action::JumpForward),
-                (KeyCode::Tab, _, _) => Resolve::Action(Action::ToggleSidebar),
-                (KeyCode::Char('Z'), false, true) => Resolve::Partial,
-                (KeyCode::Char(':'), false, true) | (KeyCode::Char(':'), false, false) => {
-                    Resolve::Action(Action::OpenGoto)
-                }
-                (KeyCode::Char('/'), false, true) => Resolve::Action(Action::OpenFind),
-
-                (KeyCode::F(1), _, _) => Resolve::Action(Action::OpenHelp),
-                (KeyCode::F(2), _, _) => Resolve::Action(Action::OpenGoto),
-                (KeyCode::F(3), _, _) => Resolve::Action(Action::OpenFind),
-                (KeyCode::F(10), _, _) => Resolve::Action(Action::OpenMenu),
-
-                // Multi-key starters.
-                (KeyCode::Char('g'), false, true) => Resolve::Partial,
-                (KeyCode::Char('['), false, true) => Resolve::Partial,
-                (KeyCode::Char(']'), false, true) => Resolve::Partial,
-
-                _ => Resolve::Unknown,
-            };
+            if let Some(r) = self.resolve_base(first) {
+                return r;
+            }
+            if self.keymap == Keymap::Vim {
+                return self.resolve_vim_single(first);
+            }
+            return Resolve::Unknown;
         }
-        if n == 2 {
+        // Multi-key chords are vim-only. Turbo mode never reaches `n > 1`
+        // because no base-layer key returns `Partial`.
+        if n == 2 && self.keymap == Keymap::Vim {
             let a = self.pending[0].code;
             let b = self.pending[1].code;
             return match (a, b) {
@@ -259,6 +218,89 @@ impl KeyState {
             };
         }
         Resolve::Unknown
+    }
+
+    /// Base layer — keys every reader-shaped TUI shares. Active in both vim
+    /// and turbo profiles. Returns `None` when the key isn't ours so the
+    /// caller can fall through to the vim layer (or to `Unknown`).
+    fn resolve_base(&self, ev: KeyEvent) -> Option<Resolve> {
+        let c = ev.code;
+        let m = ev.modifiers;
+        let plain = m.is_empty() || m == KeyModifiers::SHIFT;
+        // Arrows / page-keys / function-keys / Tab / Esc — modifier-tolerant
+        // because terminals report them inconsistently with SHIFT.
+        Some(match c {
+            KeyCode::Esc => Resolve::Action(Action::Back),
+            KeyCode::Down => Resolve::Action(Action::CursorDown(self.count_or(1))),
+            KeyCode::Up => Resolve::Action(Action::CursorUp(self.count_or(1))),
+            KeyCode::Left => Resolve::Action(Action::PrevChapter),
+            KeyCode::Right => Resolve::Action(Action::NextChapter),
+            KeyCode::Home => Resolve::Action(Action::GotoTop),
+            KeyCode::End => Resolve::Action(Action::GotoBottom),
+            KeyCode::PageDown => Resolve::Action(Action::PageDown),
+            KeyCode::PageUp => Resolve::Action(Action::PageUp),
+            KeyCode::Tab => Resolve::Action(Action::ToggleSidebar),
+            KeyCode::F(1) => Resolve::Action(Action::OpenHelp),
+            KeyCode::F(2) => Resolve::Action(Action::OpenGoto),
+            KeyCode::F(3) => Resolve::Action(Action::OpenFind),
+            KeyCode::F(4) => Resolve::Action(Action::OpenBookmarks),
+            KeyCode::F(5) => Resolve::Action(Action::OpenTranslations),
+            KeyCode::F(10) => Resolve::Action(Action::OpenMenu),
+            KeyCode::Char(' ') if plain => Resolve::Action(Action::PageDown),
+            KeyCode::Char('q') if plain => Resolve::Action(Action::Quit),
+            KeyCode::Char('/') if plain => Resolve::Action(Action::OpenFind),
+            _ => return None,
+        })
+    }
+
+    /// Vim layer — gated by [`Keymap::Vim`]. Letter keys, Ctrl-modified
+    /// vim motions, `:` ex-command, chord starters, n/N repeat-search.
+    fn resolve_vim_single(&self, ev: KeyEvent) -> Resolve {
+        let c = ev.code;
+        let m = ev.modifiers;
+        let ctrl = m.contains(KeyModifiers::CONTROL);
+        let plain = m.is_empty() || m == KeyModifiers::SHIFT;
+
+        match (c, ctrl, plain) {
+            (KeyCode::Char('j'), false, true) => {
+                Resolve::Action(Action::CursorDown(self.count_or(1)))
+            }
+            (KeyCode::Char('k'), false, true) => {
+                Resolve::Action(Action::CursorUp(self.count_or(1)))
+            }
+            (KeyCode::Char('h'), false, true) => Resolve::Action(Action::PrevChapter),
+            (KeyCode::Char('l'), false, true) => Resolve::Action(Action::NextChapter),
+            (KeyCode::Char('H'), false, true) => Resolve::Action(Action::PrevChapter),
+            (KeyCode::Char('L'), false, true) => Resolve::Action(Action::NextChapter),
+
+            (KeyCode::Char('d'), true, _) => Resolve::Action(Action::HalfPageDown),
+            (KeyCode::Char('u'), true, _) => Resolve::Action(Action::HalfPageUp),
+            (KeyCode::Char('f'), true, _) => Resolve::Action(Action::PageDown),
+            (KeyCode::Char('b'), true, _) => Resolve::Action(Action::PageUp),
+
+            (KeyCode::Char('G'), false, true) => Resolve::Action(Action::GotoBottom),
+            (KeyCode::Char('K'), false, true) => Resolve::Action(Action::OpenFootnote),
+            (KeyCode::Char('y'), false, true) => Resolve::Action(Action::CopyVerse),
+            (KeyCode::Char('v'), false, true) => Resolve::Action(Action::ToggleVisual),
+            (KeyCode::Char('V'), false, true) => Resolve::Action(Action::ToggleVisual),
+            (KeyCode::Char('b'), false, true) => Resolve::Action(Action::AddBookmark),
+            (KeyCode::Char('T'), false, true) => Resolve::Action(Action::ToggleVerseLayout),
+            (KeyCode::Char('M'), false, true) => Resolve::Action(Action::OpenBookmarks),
+            (KeyCode::Char('t'), false, true) => Resolve::Action(Action::OpenTranslations),
+            (KeyCode::Char('n'), false, true) => Resolve::Action(Action::SearchNext),
+            (KeyCode::Char('N'), false, true) => Resolve::Action(Action::SearchPrev),
+            (KeyCode::Char('o'), true, _) => Resolve::Action(Action::JumpBack),
+            (KeyCode::Char('i'), true, _) => Resolve::Action(Action::JumpForward),
+            (KeyCode::Char(':'), false, _) => Resolve::Action(Action::OpenGoto),
+
+            // Multi-key starters.
+            (KeyCode::Char('Z'), false, true) => Resolve::Partial,
+            (KeyCode::Char('g'), false, true) => Resolve::Partial,
+            (KeyCode::Char('['), false, true) => Resolve::Partial,
+            (KeyCode::Char(']'), false, true) => Resolve::Partial,
+
+            _ => Resolve::Unknown,
+        }
     }
 }
 
@@ -283,7 +325,7 @@ mod tests {
             }],
             ..KeysConfig::default()
         };
-        let mut ks = KeyState::with_user_bindings(&cfg);
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
         assert!(ks.extras_count() > 0);
         assert_eq!(
             ks.handle(ev(KeyCode::Char('x'))),
@@ -300,7 +342,7 @@ mod tests {
             }],
             ..KeysConfig::default()
         };
-        let mut ks = KeyState::with_user_bindings(&cfg);
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
         // Hardcoded 'q' still quits.
         assert_eq!(ks.handle(ev(KeyCode::Char('q'))), Some(Action::Quit));
         // And the user-added 'Q' also quits.
@@ -313,9 +355,64 @@ mod tests {
     #[test]
     fn chord_unaffected_by_user_bindings() {
         let cfg = KeysConfig::default();
-        let mut ks = KeyState::with_user_bindings(&cfg);
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
         // gg → top
         ks.handle(ev(KeyCode::Char('g')));
         assert_eq!(ks.handle(ev(KeyCode::Char('g'))), Some(Action::GotoTop));
+    }
+
+    #[test]
+    fn n_and_shift_n_repeat_search_in_vim_mode() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        assert_eq!(ks.handle(ev(KeyCode::Char('n'))), Some(Action::SearchNext));
+        assert_eq!(ks.handle(ev(KeyCode::Char('N'))), Some(Action::SearchPrev));
+    }
+
+    #[test]
+    fn turbo_mode_drops_vim_letters_keeps_base() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Turbo);
+        // Vim letters are inert.
+        assert_eq!(ks.handle(ev(KeyCode::Char('j'))), None);
+        assert_eq!(ks.handle(ev(KeyCode::Char('h'))), None);
+        assert_eq!(ks.handle(ev(KeyCode::Char('n'))), None);
+        // No chord state — second `g` would not produce GotoTop either.
+        assert_eq!(ks.handle(ev(KeyCode::Char('g'))), None);
+        assert_eq!(ks.handle(ev(KeyCode::Char('g'))), None);
+        // Base layer survives.
+        assert_eq!(ks.handle(ev(KeyCode::Down)), Some(Action::CursorDown(1)));
+        assert_eq!(ks.handle(ev(KeyCode::Left)), Some(Action::PrevChapter));
+        assert_eq!(ks.handle(ev(KeyCode::Home)), Some(Action::GotoTop));
+        assert_eq!(ks.handle(ev(KeyCode::PageDown)), Some(Action::PageDown));
+        assert_eq!(ks.handle(ev(KeyCode::F(3))), Some(Action::OpenFind));
+        assert_eq!(ks.handle(ev(KeyCode::Char('q'))), Some(Action::Quit));
+        assert_eq!(ks.handle(ev(KeyCode::Char('/'))), Some(Action::OpenFind));
+    }
+
+    #[test]
+    fn turbo_mode_ignores_count_prefix() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Turbo);
+        // `5` in turbo mode goes straight to the resolver and falls through
+        // as Unknown — no count accumulation.
+        assert_eq!(ks.handle(ev(KeyCode::Char('5'))), None);
+        assert_eq!(ks.handle(ev(KeyCode::Down)), Some(Action::CursorDown(1)));
+    }
+
+    #[test]
+    fn turbo_mode_still_honors_user_extras() {
+        let cfg = KeysConfig {
+            open_translations: vec![KeyBind {
+                code: KeyCode::Char('x'),
+                modifiers: KeyModifiers::empty(),
+            }],
+            ..KeysConfig::default()
+        };
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Turbo);
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('x'))),
+            Some(Action::OpenTranslations)
+        );
     }
 }

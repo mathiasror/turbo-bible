@@ -7,6 +7,7 @@ pub mod find;
 pub mod footnote;
 pub mod goto;
 pub mod help;
+pub mod listnav;
 pub mod menubar;
 pub mod passage;
 pub mod sidebar;
