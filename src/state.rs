@@ -68,8 +68,7 @@ fn parse_any(txt: &str) -> Option<LegacyState> {
 /// present, and return both. Callers should `save()` both after handling so
 /// the on-disk format converges.
 pub fn load_with_migration() -> (Option<PersistedState>, Config) {
-    let mut config = config::load();
-
+    let config = config::load();
     let raw = state_path()
         .ok()
         .and_then(|p| fs::read_to_string(p).ok())
@@ -78,10 +77,19 @@ pub fn load_with_migration() -> (Option<PersistedState>, Config) {
                 .ok()
                 .and_then(|p| fs::read_to_string(p).ok())
         });
+    migrate(raw.as_deref(), config)
+}
+
+/// Pure migration step: takes the raw state text (TOML or legacy JSON, or
+/// `None` if no file existed) and an already-loaded `Config`, applies the
+/// legacy-translation rename, and hoists `default_translation` out of the
+/// state file if config didn't carry one. Split out for unit-testing without
+/// touching the filesystem.
+fn migrate(raw: Option<&str>, mut config: Config) -> (Option<PersistedState>, Config) {
     let Some(txt) = raw else {
         return (None, config);
     };
-    let Some(legacy) = parse_any(&txt) else {
+    let Some(legacy) = parse_any(txt) else {
         return (None, config);
     };
 
@@ -133,4 +141,145 @@ pub fn save(state: &PersistedState) -> Result<()> {
         let _ = fs::remove_file(legacy);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_config() -> Config {
+        Config::default()
+    }
+
+    #[test]
+    fn parse_any_handles_toml() {
+        let s = parse_any(
+            r#"
+translation = "en-kjv"
+book = "JHN"
+chapter = 3
+verse = 16
+"#,
+        )
+        .expect("toml should parse");
+        assert_eq!(s.translation, "en-kjv");
+        assert_eq!(s.book, "JHN");
+        assert_eq!(s.chapter, 3);
+        assert_eq!(s.verse, 16);
+        assert_eq!(s.default_translation, None);
+    }
+
+    #[test]
+    fn parse_any_handles_json_with_legacy_default_translation() {
+        // The Slice-C interim format put default_translation in state.json.
+        let s = parse_any(
+            r#"{
+                "translation": "nb-2024",
+                "book": "MRK",
+                "chapter": 1,
+                "verse": 1,
+                "default_translation": "nb-2024"
+            }"#,
+        )
+        .expect("json should parse");
+        assert_eq!(s.translation, "nb-2024");
+        assert_eq!(s.default_translation.as_deref(), Some("nb-2024"));
+    }
+
+    #[test]
+    fn parse_any_returns_none_on_garbage() {
+        assert!(parse_any("totally not a state file").is_none());
+        assert!(parse_any("{ unbalanced").is_none());
+    }
+
+    #[test]
+    fn parse_any_returns_none_on_missing_fields() {
+        // Missing required `verse` field — neither TOML nor JSON parser accepts.
+        assert!(
+            parse_any(
+                r#"translation = "en-kjv"
+book = "JHN"
+chapter = 3
+"#
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn rename_legacy_str_rewrites_nb2024() {
+        assert_eq!(rename_legacy_str("nb-2024".into()), "nb-1930");
+    }
+
+    #[test]
+    fn rename_legacy_str_passes_through_other_translations() {
+        assert_eq!(rename_legacy_str("en-kjv".into()), "en-kjv");
+        assert_eq!(rename_legacy_str("es-rv1909".into()), "es-rv1909");
+    }
+
+    #[test]
+    fn migrate_returns_none_when_no_file_present() {
+        let (state, cfg) = migrate(None, empty_config());
+        assert!(state.is_none());
+        assert_eq!(cfg.default_translation, None);
+    }
+
+    #[test]
+    fn migrate_silently_drops_garbage_state() {
+        // A malformed state.toml should not poison the loaded config —
+        // load_with_migration returns (None, config) so the binary launches.
+        let (state, _) = migrate(Some("not valid state"), empty_config());
+        assert!(state.is_none());
+    }
+
+    #[test]
+    fn migrate_renames_nb2024_in_state_and_default() {
+        let raw = r#"{
+            "translation": "nb-2024",
+            "book": "MRK",
+            "chapter": 1,
+            "verse": 1,
+            "default_translation": "nb-2024"
+        }"#;
+        let (state, cfg) = migrate(Some(raw), empty_config());
+        let s = state.expect("state should parse");
+        assert_eq!(s.translation, "nb-1930");
+        assert_eq!(cfg.default_translation.as_deref(), Some("nb-1930"));
+    }
+
+    #[test]
+    fn migrate_does_not_clobber_existing_config_default_translation() {
+        // If the user has set default_translation in config.toml, the legacy
+        // value from state.json must NOT win — user intent in config wins.
+        let cfg = Config {
+            default_translation: Some("es-rv1909".into()),
+            ..Config::default()
+        };
+        let raw = r#"{
+            "translation": "en-kjv",
+            "book": "GEN",
+            "chapter": 1,
+            "verse": 1,
+            "default_translation": "nb-2024"
+        }"#;
+        let (_, cfg_after) = migrate(Some(raw), cfg);
+        assert_eq!(cfg_after.default_translation.as_deref(), Some("es-rv1909"));
+    }
+
+    #[test]
+    fn migrate_rewrites_pre_existing_nb2024_in_config() {
+        // If config carries the legacy default already, migration rewrites it.
+        let cfg = Config {
+            default_translation: Some("nb-2024".into()),
+            ..Config::default()
+        };
+        let raw = r#"
+translation = "en-kjv"
+book = "GEN"
+chapter = 1
+verse = 1
+"#;
+        let (_, cfg_after) = migrate(Some(raw), cfg);
+        assert_eq!(cfg_after.default_translation.as_deref(), Some("nb-1930"));
+    }
 }

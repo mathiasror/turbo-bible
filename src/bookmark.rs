@@ -133,3 +133,107 @@ fn legacy_bookmarks_path() -> Result<PathBuf> {
     p.push("bookmarks.json");
     Ok(p)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bm(start: i64, end: i64) -> Bookmark {
+        Bookmark {
+            translation: "en-kjv".into(),
+            book: "JHN".into(),
+            chapter: 3,
+            start_verse: start,
+            end_verse: end,
+            label: None,
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn same_range_compares_position_only() {
+        let mut a = bm(1, 5);
+        let mut b = bm(1, 5);
+        assert!(a.same_range(&b));
+        // label and created_at don't affect same_range...
+        a.label = Some("foo".into());
+        b.created_at = 42;
+        assert!(a.same_range(&b));
+        // ...but verse range does.
+        b.end_verse = 6;
+        assert!(!a.same_range(&b));
+    }
+
+    #[test]
+    fn add_dedupes_via_same_range() {
+        let mut store = BookmarkStore::default();
+        store.add(bm(1, 1));
+        store.add(bm(1, 1)); // identical
+        store.add(bm(2, 2)); // different
+        assert_eq!(store.bookmarks.len(), 2);
+    }
+
+    #[test]
+    fn rewrite_legacy_translation_migrates_only_nb2024() {
+        let mut store = BookmarkStore::default();
+        let mut legacy = bm(1, 1);
+        legacy.translation = "nb-2024".into();
+        let kept = bm(2, 2); // en-kjv, should stay
+        store.bookmarks = vec![legacy, kept];
+        store.rewrite_legacy_translation();
+        assert_eq!(store.bookmarks[0].translation, "nb-1930");
+        assert_eq!(store.bookmarks[1].translation, "en-kjv");
+    }
+
+    #[test]
+    fn loads_v1_json_shape() {
+        // The v1 JSON file omits `label` and `created_at`; serde defaults
+        // must fill them in.
+        let txt = r#"{
+            "bookmarks": [
+                {
+                    "translation": "en-kjv",
+                    "book": "JHN",
+                    "chapter": 3,
+                    "start_verse": 16,
+                    "end_verse": 16
+                }
+            ]
+        }"#;
+        let s: BookmarkStore = serde_json::from_str(txt).expect("legacy json should parse");
+        assert_eq!(s.bookmarks.len(), 1);
+        assert_eq!(s.bookmarks[0].label, None);
+        assert_eq!(s.bookmarks[0].created_at, 0);
+    }
+
+    #[test]
+    fn round_trips_through_toml() {
+        let store = BookmarkStore {
+            bookmarks: vec![bm(1, 3), {
+                let mut b = bm(7, 7);
+                b.label = Some("favourite".into());
+                b.created_at = 1_700_000_000;
+                b
+            }],
+        };
+        let txt = toml::to_string_pretty(&store).unwrap();
+        let back: BookmarkStore = toml::from_str(&txt).unwrap();
+        assert_eq!(store.bookmarks, back.bookmarks);
+    }
+
+    #[test]
+    fn reference_label_formats_single_and_range() {
+        let single = bm(7, 7);
+        assert_eq!(single.reference_label("John"), "John 3:7");
+        let range = bm(1, 3);
+        assert_eq!(range.reference_label("John"), "John 3:1-3");
+    }
+
+    #[test]
+    fn malformed_json_returns_none_via_serde() {
+        // BookmarkStore::load's JSON branch uses serde_json::from_str; verify
+        // it fails (returning None) on malformed input rather than panicking.
+        let bad = r#"{ "bookmarks": "not-an-array" }"#;
+        assert!(serde_json::from_str::<BookmarkStore>(bad).is_err());
+    }
+}

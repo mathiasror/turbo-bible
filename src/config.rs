@@ -391,6 +391,75 @@ mod tests {
     }
 
     #[test]
+    fn empty_string_parses_as_default_config() {
+        // load() falls back to Config::default() when read fails; here we
+        // exercise the parse half — an empty doc should still yield defaults
+        // for every section because of #[serde(default)].
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.default_translation, None);
+        assert_eq!(cfg.reading.max_width, 80);
+        assert_eq!(cfg.theme.blue.b, 0xaa);
+    }
+
+    #[test]
+    fn partial_overrides_keep_other_defaults() {
+        // Only [reading] is provided; theme + keys should still be default.
+        let cfg: Config = toml::from_str(
+            r#"
+default_translation = "nb-1930"
+[reading]
+max_width = 100
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.default_translation.as_deref(), Some("nb-1930"));
+        assert_eq!(cfg.reading.max_width, 100);
+        assert!(cfg.reading.two_line_verses); // default kept
+        assert_eq!(cfg.theme.blue.b, 0xaa); // default kept
+    }
+
+    #[test]
+    fn rejects_unknown_top_level_field() {
+        // deny_unknown_fields surfaces typos in user-edited config.toml
+        // rather than silently dropping them.
+        let err = toml::from_str::<Config>("unknown_field = 1").unwrap_err();
+        assert!(
+            err.to_string().contains("unknown_field"),
+            "wanted unknown-field error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_hex_color() {
+        let err = toml::from_str::<Config>(
+            r#"
+[theme]
+blue = "not-a-color"
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("hex"),
+            "wanted hex-color error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_keybind() {
+        let err = toml::from_str::<Config>(
+            r#"
+[keys]
+quit = ["NotAKey"]
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            !err.to_string().is_empty(),
+            "expected an error for invalid key name"
+        );
+    }
+
+    #[test]
     fn dump_default_config() {
         let cfg = Config::default();
         let txt = toml::to_string_pretty(&cfg).unwrap();
