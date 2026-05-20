@@ -48,6 +48,16 @@ enum Bg {
     Reading,
 }
 
+/// What to seed the splash screen with on startup: the optional "Continue"
+/// target (most recently read position + its label) plus the optional verse
+/// of the day. None of these are required, but their tuple-of-options shape
+/// was complex enough to trip clippy::type_complexity; the named struct also
+/// reads better at the call site.
+struct SplashSeed {
+    last: Option<(Position, String)>,
+    qotd: Option<crate::quote::DailyQuote>,
+}
+
 enum Dialog {
     None,
     Goto(GotoDialog),
@@ -198,7 +208,7 @@ fn main() -> Result<()> {
             &mut pos,
             &mut passage,
             &mut cursor_verse,
-            Some((last_for_splash, qotd)),
+            Some(SplashSeed { last: last_for_splash, qotd }),
             &config,
         );
         final_pos = Some(pos);
@@ -276,18 +286,18 @@ fn run(
     pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
-    initial_splash: Option<(Option<(Position, String)>, Option<crate::quote::DailyQuote>)>,
+    initial_splash: Option<SplashSeed>,
     config: &config::Config,
 ) -> Result<()> {
     let mut keys = KeyState::with_user_bindings(&config.keys);
     let mut history = History::new(pos.clone());
     let mut bg = match initial_splash {
-        Some((last, qotd)) => Bg::Splash(Box::new(SplashView::new(
+        Some(seed) => Bg::Splash(Box::new(SplashView::new(
             books.clone(),
-            last,
+            seed.last,
             translation_label.clone(),
             db.translation.clone(),
-            qotd,
+            seed.qotd,
         ))),
         None => Bg::Reading,
     };
