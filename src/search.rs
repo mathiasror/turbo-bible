@@ -15,8 +15,6 @@ const MATCH_END: char = '\u{0002}';
 
 #[derive(Debug, Clone)]
 pub struct SearchHit {
-    #[allow(dead_code)]
-    pub osis_id: String,
     pub book: String,
     pub chapter: i64,
     pub verse: i64,
@@ -42,7 +40,7 @@ pub fn search(db: &Db, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
         return Ok(vec![]);
     }
     let mut stmt = db.conn().prepare_cached(
-        "SELECT v.osis_id, v.book, v.chapter, v.verse,
+        "SELECT v.book, v.chapter, v.verse,
                 highlight(verse_fts, 0, char(1), char(2)) AS hilit
          FROM verse_fts
          JOIN verse v ON v.rowid = verse_fts.rowid
@@ -51,14 +49,12 @@ pub fn search(db: &Db, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
     )?;
     let rows = stmt
         .query_map(params![query, db.translation, limit as i64], |r| {
-            let osis_id: String = r.get(0)?;
-            let book: String = r.get(1)?;
-            let chapter: i64 = r.get(2)?;
-            let verse: i64 = r.get(3)?;
-            let hilit: String = r.get(4)?;
+            let book: String = r.get(0)?;
+            let chapter: i64 = r.get(1)?;
+            let verse: i64 = r.get(2)?;
+            let hilit: String = r.get(3)?;
             let (text, hits) = parse_highlighted(&hilit);
             Ok(SearchHit {
-                osis_id,
                 book,
                 chapter,
                 verse,

@@ -12,7 +12,6 @@ use crate::theme;
 pub struct RenderedLine {
     pub line: Line<'static>,
     /// Verse number this line belongs to (0 if it's a heading or blank).
-    #[allow(dead_code)]
     pub verse: i64,
 }
 

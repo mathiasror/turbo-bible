@@ -69,7 +69,7 @@ pub struct TranslationInfo {
     pub code: String,
     pub name: String,
     pub language: String,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "roadmap: shown by the Translations picker's details panel")]
     pub license: String,
 }
 
@@ -78,9 +78,11 @@ pub struct Book {
     pub code: String,
     pub name: String,
     pub abbreviation: String,
-    #[allow(dead_code)]
     pub testament: String,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "roadmap: canonical ordinal exposed to consumers; iteration order is already enforced by the SELECT's `ORDER BY b.ord` server-side"
+    )]
     pub ord: i64,
     /// Full title from the source page (e.g. "Evangeliet etter Matteus").
     /// Falls back to `name` when not populated.
@@ -96,8 +98,6 @@ impl Book {
 #[derive(Debug, Clone)]
 pub struct Verse {
     pub number: i64,
-    #[allow(dead_code)]
-    pub osis_id: String,
     pub text: String,
     pub footnote_count: i64,
     pub xref_note_count: i64,
@@ -123,14 +123,11 @@ pub struct Footnote {
 pub struct Xref {
     pub target_osis: String,
     pub label: String,
-    #[allow(dead_code)]
-    pub position: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct Passage {
     pub translation: String,
-    #[allow(dead_code)]
     pub book_code: String,
     pub book_name: String,
     pub book_abbrev: String,
@@ -231,8 +228,10 @@ impl Db {
         };
 
         let verses = {
+            // v.osis_id is used by the correlated subqueries server-side but
+            // not projected into the Rust struct.
             let mut stmt = self.conn.prepare_cached(
-                "SELECT v.verse, v.osis_id, v.text,
+                "SELECT v.verse, v.text,
                         COALESCE((SELECT COUNT(*) FROM footnote f
                                    WHERE f.translation=v.translation
                                      AND f.verse_osis=v.osis_id
@@ -248,10 +247,9 @@ impl Db {
             stmt.query_map(params![self.translation, book, chapter], |r| {
                 Ok(Verse {
                     number: r.get(0)?,
-                    osis_id: r.get(1)?,
-                    text: r.get(2)?,
-                    footnote_count: r.get(3)?,
-                    xref_note_count: r.get(4)?,
+                    text: r.get(1)?,
+                    footnote_count: r.get(2)?,
+                    xref_note_count: r.get(3)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?
@@ -310,8 +308,10 @@ impl Db {
             return Ok(footnotes);
         }
 
+        // `position` is used only for the server-side ORDER BY; the Rust
+        // struct doesn't need it.
         let mut xref_stmt = self.conn.prepare_cached(
-            "SELECT footnote_id, position, target_osis, label FROM xref
+            "SELECT footnote_id, target_osis, label FROM xref
              WHERE translation=?1 AND footnote_id IN (
                  SELECT id FROM footnote
                  WHERE translation=?1 AND verse_osis LIKE ?2 || '%'
@@ -323,9 +323,8 @@ impl Db {
                 Ok((
                     r.get::<_, String>(0)?,
                     Xref {
-                        position: r.get(1)?,
-                        target_osis: r.get(2)?,
-                        label: r.get(3)?,
+                        target_osis: r.get(1)?,
+                        label: r.get(2)?,
                     },
                 ))
             })?

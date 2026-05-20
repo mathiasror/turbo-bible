@@ -31,14 +31,12 @@ pub fn bright_white() -> Color {
 pub fn light_grey() -> Color {
     theme().light_grey.to_color()
 }
-#[allow(dead_code)]
 pub fn dark_grey() -> Color {
     theme().dark_grey.to_color()
 }
 pub fn yellow() -> Color {
     theme().yellow.to_color()
 }
-#[allow(dead_code)]
 pub fn hotkey_red() -> Color {
     theme().hotkey_red.to_color()
 }
@@ -46,34 +44,12 @@ pub fn black() -> Color {
     theme().black.to_color()
 }
 
-#[allow(dead_code)]
-pub fn window_bg() -> Style {
-    Style::new().fg(light_grey()).bg(blue())
-}
-
-#[allow(dead_code)]
-pub fn window_title() -> Style {
-    Style::new().fg(bright_white()).bg(blue())
-}
-
-#[allow(dead_code)]
 pub fn menubar_style() -> Style {
     Style::new().fg(black()).bg(light_grey())
 }
 
-#[allow(dead_code)]
-pub fn hotkey_style() -> Style {
-    Style::new().fg(hotkey_red()).bg(light_grey())
-}
-
-#[allow(dead_code)]
-pub fn selected_style() -> Style {
-    Style::new().fg(bright_white()).bg(Color::Rgb(0, 170, 0))
-}
-
 /// Paint a drop shadow on the cells immediately to the right and below `rect`.
 /// Uses solid dark cells so the shadow reads cleanly at modern font weights.
-#[allow(dead_code)]
 pub fn draw_shadow(buf: &mut Buffer, rect: Rect) {
     let buf_area = buf.area;
     let shadow = Style::new().bg(black());
