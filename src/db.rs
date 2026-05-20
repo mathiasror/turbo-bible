@@ -69,7 +69,10 @@ pub struct TranslationInfo {
     pub code: String,
     pub name: String,
     pub language: String,
-    #[expect(dead_code, reason = "roadmap: shown by the Translations picker's details panel")]
+    #[expect(
+        dead_code,
+        reason = "roadmap: shown by the Translations picker's details panel"
+    )]
     pub license: String,
 }
 

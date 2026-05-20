@@ -343,7 +343,11 @@ fn run(
     // Persist the migrated bookmarks immediately so the file on disk is in the
     // new TOML format with translation rewritten — survives a crash before any
     // user action triggers another save.
-    save_or_warn(warnings, "bookmarks save (post-migration)", bookmarks.save());
+    save_or_warn(
+        warnings,
+        "bookmarks save (post-migration)",
+        bookmarks.save(),
+    );
     let mut verse_layout_two_line = config.reading.two_line_verses;
     let mut last_label_for_splash: Option<(Position, String)> =
         books.iter().find(|b| b.code == pos.book).map(|b| {
@@ -521,11 +525,7 @@ fn run(
                             }
                             BookmarksOutcome::Delete(bm) => {
                                 bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
-                                save_or_warn(
-                                    warnings,
-                                    "bookmarks save (delete)",
-                                    bookmarks.save(),
-                                );
+                                save_or_warn(warnings, "bookmarks save (delete)", bookmarks.save());
                             }
                         }
                         continue;
