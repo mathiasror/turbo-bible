@@ -52,3 +52,8 @@ baseline:
 # Launch the TUI with the project's default DB resolution.
 run *args:
     cargo run --release -- {{args}}
+
+# Re-record the README demo GIF. Requires `vhs` (https://github.com/charmbracelet/vhs).
+demo:
+    cargo build --release
+    vhs demo/demo.tape

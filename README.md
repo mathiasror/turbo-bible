@@ -9,6 +9,8 @@ public-domain translations:
 | `nb-1930`   | Bibelen 1930 (Bokmål)       | Norwegian |
 | `es-rv1909` | Reina-Valera 1909           | Spanish  |
 
+![turbo-bible demo](demo/demo.gif)
+
 All three are imported from [`scrollmapper/bible_databases`][scrollmapper] at
 a pinned commit by `../scripts/import_translations.py`.
 
