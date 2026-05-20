@@ -21,7 +21,7 @@ use ratatui::widgets::Widget;
 use crate::db::Passage;
 
 pub struct Frame<'a> {
-    pub menu: &'a [menubar::MenuItem<'a>],
+    pub menu_title: &'a str,
     pub status: &'a [statusbar::Shortcut<'a>],
     pub status_mode: &'a str,
     pub passage: Option<&'a Passage>,
@@ -37,7 +37,7 @@ pub struct Frame<'a> {
 impl<'a> Frame<'a> {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         let (menu_area, body_area, status_area) = split(area);
-        menubar::render(self.menu, menu_area, buf);
+        menubar::render(self.menu_title, menu_area, buf);
         desktop::render(body_area, buf);
         if let Some(p) = self.passage {
             let (reading, sidebar_rect) = body_layout(body_area, self.show_sidebar, self.max_reading_width);
@@ -53,6 +53,7 @@ impl<'a> Frame<'a> {
                 sidebar::SidebarView {
                     passage: p,
                     cursor_verse: self.cursor_verse,
+                    selection: self.selection,
                 }
                 .render(sb, buf);
             }

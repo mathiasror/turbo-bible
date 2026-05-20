@@ -8,6 +8,10 @@ use crate::db::{Book, Db};
 pub struct Position {
     pub book: String,
     pub chapter: i64,
+    /// When `Some(v)`, callers that *jump* to this position should land the
+    /// cursor on verse `v` (e.g. find-results, bookmarks, `:John 3:16`).
+    /// `None` means "no preference" — the receiver lands on verse 1.
+    pub verse: Option<i64>,
 }
 
 pub struct Navigator<'a> {
@@ -31,6 +35,7 @@ impl<'a> Navigator<'a> {
             return Ok(Position {
                 book: pos.book.clone(),
                 chapter: pos.chapter - 1,
+                verse: None,
             });
         }
         let idx = self.book_index(&pos.book)?;
@@ -42,6 +47,7 @@ impl<'a> Navigator<'a> {
         Ok(Position {
             book: prev.code.clone(),
             chapter: last,
+            verse: None,
         })
     }
 
@@ -51,6 +57,7 @@ impl<'a> Navigator<'a> {
             return Ok(Position {
                 book: pos.book.clone(),
                 chapter: pos.chapter + 1,
+                verse: None,
             });
         }
         let idx = self.book_index(&pos.book)?;
@@ -60,6 +67,7 @@ impl<'a> Navigator<'a> {
         Ok(Position {
             book: self.books[idx + 1].code.clone(),
             chapter: 1,
+            verse: None,
         })
     }
 
@@ -71,6 +79,7 @@ impl<'a> Navigator<'a> {
         Ok(Position {
             book: self.books[idx - 1].code.clone(),
             chapter: 1,
+            verse: None,
         })
     }
 
@@ -82,6 +91,7 @@ impl<'a> Navigator<'a> {
         Ok(Position {
             book: self.books[idx + 1].code.clone(),
             chapter: 1,
+            verse: None,
         })
     }
 }

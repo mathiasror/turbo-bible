@@ -88,10 +88,24 @@ impl GotoDialog {
             .bg(theme::bright_white())
             .add_modifier(Modifier::BOLD);
 
-        let mut input_spans = vec![Span::styled(format!(" {}", self.input), input_style)];
-        input_spans.push(Span::styled("\u{2588}", cursor_style));
+        // Empty-state placeholder shown inside the field — disappears the
+        // moment the user starts typing. Faster to read than the hint below.
+        let placeholder_style = Style::new()
+            .fg(theme::dark_grey())
+            .bg(theme::cyan());
+        let typed_len = self.input.chars().count();
+        let mut input_spans: Vec<Span<'static>> = Vec::new();
+        if self.input.is_empty() {
+            input_spans.push(Span::styled(" ".to_string(), input_style));
+            input_spans.push(Span::styled("\u{2588}", cursor_style));
+            input_spans.push(Span::styled("John 3:16".to_string(), placeholder_style));
+        } else {
+            input_spans.push(Span::styled(format!(" {}", self.input), input_style));
+            input_spans.push(Span::styled("\u{2588}", cursor_style));
+        }
+        let placeholder_len = if self.input.is_empty() { 9 } else { 0 };
         let pad = (inner.width as usize)
-            .saturating_sub(self.input.chars().count() + 2 + 12);
+            .saturating_sub(typed_len + 2 + 12 + placeholder_len);
         if pad > 0 {
             input_spans.push(Span::styled(" ".repeat(pad), input_style));
         }
@@ -200,9 +214,9 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
     let (n, code) = best?;
     let rest = s[n..].trim();
     if rest.is_empty() {
-        return Some(Position { book: code, chapter: 1 });
+        return Some(Position { book: code, chapter: 1, verse: None });
     }
-    let (chap_str, _verse_str) = match rest.find(|c: char| c == ':' || c == ',' || c == '.') {
+    let (chap_str, verse_str) = match rest.find(|c: char| c == ':' || c == ',' || c == '.') {
         Some(i) => (rest[..i].trim(), rest[i + 1..].trim()),
         None => (rest, ""),
     };
@@ -210,7 +224,12 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
     if chapter < 1 {
         return None;
     }
-    Some(Position { book: code, chapter })
+    let verse: Option<i64> = if verse_str.is_empty() {
+        None
+    } else {
+        verse_str.parse().ok().filter(|v: &i64| *v >= 1)
+    };
+    Some(Position { book: code, chapter, verse })
 }
 
 #[cfg(test)]

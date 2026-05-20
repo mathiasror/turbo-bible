@@ -55,6 +55,7 @@ impl BookmarksDialog {
                     BookmarksOutcome::Jump(Position {
                         book: b.book.clone(),
                         chapter: b.chapter,
+                        verse: Some(b.start_verse),
                     })
                 } else {
                     BookmarksOutcome::Continue

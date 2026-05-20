@@ -1,5 +1,6 @@
 //! Startup splash: title art, daily verse, and a two-column book picker
-//! (Det gamle testamentet | Det nye testamentet). Vim-style navigation.
+//! with testament headings localised off the active translation's language
+//! prefix. Vim-style navigation.
 
 use std::time::{Duration, Instant};
 
@@ -57,6 +58,7 @@ pub struct SplashView {
     /// True when the cursor is on the "Continue" row above the columns.
     pub on_continue: bool,
     pub translation_name: String,
+    pub translation_code: String,
     pub mode: SplashMode,
     pub quote: Option<DailyQuote>,
     pending_g: Option<Instant>,
@@ -77,6 +79,7 @@ impl SplashView {
         books: Vec<Book>,
         last: Option<(Position, String)>,
         translation_name: String,
+        translation_code: String,
         quote: Option<DailyQuote>,
     ) -> Self {
         let (books_ot, books_nt): (Vec<Book>, Vec<Book>) =
@@ -92,6 +95,7 @@ impl SplashView {
             cursor_nt: 0,
             on_continue,
             translation_name,
+            translation_code,
             mode: SplashMode::Normal,
             quote,
             pending_g: None,
@@ -210,6 +214,7 @@ impl SplashView {
         entries.get(self.current_cursor()).map(|b| Position {
             book: b.code.clone(),
             chapter: 1,
+            verse: None,
         })
     }
 
@@ -383,7 +388,7 @@ impl SplashView {
         let w = outer.width.saturating_sub(6).min(110);
         let h = outer.height.saturating_sub(2);
         let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_dialog(area, "TURBO BIBLE", buf);
+        let inner = dialog::draw_dialog(area, "Turbo Bible", buf);
 
         let bg = Style::new().bg(theme::blue());
         let title_style = Style::new()
@@ -543,14 +548,9 @@ impl SplashView {
         let total_count = entries_ot.len() + entries_nt.len();
 
         let (col_left, col_right, gap) = split_columns(inner_w);
-        let ot_header = format!(
-            " Det gamle testamentet  ({}) ",
-            entries_ot.len()
-        );
-        let nt_header = format!(
-            " Det nye testamentet  ({}) ",
-            entries_nt.len()
-        );
+        let (ot_label, nt_label) = testament_labels(&self.translation_code);
+        let ot_header = format!(" {}  ({}) ", ot_label, entries_ot.len());
+        let nt_header = format!(" {}  ({}) ", nt_label, entries_nt.len());
         let ot_header_style = if self.focus == SplashColumn::OT && !self.on_continue {
             column_header_focused
         } else {
@@ -635,23 +635,23 @@ impl SplashView {
                 )
             }
         };
+        // The in-dialog footer carries only what's unique to this dialog —
+        // splash-local motions and the live cursor/total readout. Global
+        // shortcuts (Enter / F2 / F3 / Esc) live in the bottom status bar so
+        // we don't show them twice.
         let footer = match self.mode {
             SplashMode::Normal => vec![
                 Span::styled("  ", bg),
                 Span::styled("j k ", key_style),
                 Span::styled("move  ", dim),
-                Span::styled("h l ", key_style),
-                Span::styled("col  ", dim),
+                Span::styled("h l Tab ", key_style),
+                Span::styled("column  ", dim),
                 Span::styled("gg G ", key_style),
                 Span::styled("ends  ", dim),
                 Span::styled("/ ", key_style),
                 Span::styled("filter  ", dim),
-                Span::styled("Enter ", key_style),
-                Span::styled("open  ", dim),
-                Span::styled("F2 F3 ", key_style),
-                Span::styled("Goto/Find  ", dim),
-                Span::styled("q ", key_style),
-                Span::styled("quit   ", dim),
+                Span::styled("t ", key_style),
+                Span::styled("translation   ", dim),
                 Span::styled(count_text, key_style),
             ],
             SplashMode::Filter => vec![
@@ -785,6 +785,21 @@ fn render_entry_cell(
     spans
 }
 
+/// Localise the splash testament headings off the active translation's
+/// language prefix (`en-kjv` → English, `nb-1930` → Norwegian Bokmål, ...).
+/// Unknown languages fall back to English so the labels are always intelligible
+/// alongside the (also-English) Book names which serve as a baseline.
+fn testament_labels(code: &str) -> (&'static str, &'static str) {
+    let lang = code.split('-').next().unwrap_or("");
+    match lang {
+        "es" => ("Antiguo Testamento", "Nuevo Testamento"),
+        "nb" | "nn" | "no" | "da" | "sv" => ("Det gamle testamentet", "Det nye testamentet"),
+        "de" => ("Altes Testament", "Neues Testament"),
+        "fr" => ("Ancien Testament", "Nouveau Testament"),
+        _ => ("Old Testament", "New Testament"),
+    }
+}
+
 fn truncate(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count <= max {
@@ -841,7 +856,7 @@ mod tests {
 
     #[test]
     fn cursor_visible_in_ot_column() {
-        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         for target in [0usize, 5, 20, 38] {
             splash.focus = SplashColumn::OT;
             splash.cursor_ot = target;
@@ -858,7 +873,7 @@ mod tests {
 
     #[test]
     fn cursor_visible_in_nt_column() {
-        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         for target in [0usize, 5, 15, 26] {
             splash.focus = SplashColumn::NT;
             splash.cursor_nt = target;
@@ -875,7 +890,7 @@ mod tests {
 
     #[test]
     fn title_renders_side_by_side_when_wide_enough() {
-        let splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        let splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         let area = Rect::new(0, 0, 110, 30);
         let mut buf = Buffer::empty(area);
         splash.render(area, &mut buf);
@@ -908,7 +923,7 @@ mod tests {
 
     #[test]
     fn switch_focus_clamps_cursor() {
-        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), None);
+        let mut splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
         splash.cursor_ot = 35; // valid in OT
         splash.switch_focus(SplashColumn::NT);
         assert!(splash.cursor_nt <= 26);
@@ -916,8 +931,8 @@ mod tests {
 
     #[test]
     fn move_up_from_top_lands_on_continue() {
-        let last = Some((Position { book: "MRK".into(), chapter: 1 }, "Markus 1:1".into()));
-        let mut splash = SplashView::new(fake_books(39, 27), last, "t".into(), None);
+        let last = Some((Position { book: "MRK".into(), chapter: 1, verse: None }, "Markus 1:1".into()));
+        let mut splash = SplashView::new(fake_books(39, 27), last, "t".into(), "en-kjv".into(), None);
         splash.on_continue = false;
         splash.cursor_ot = 0;
         splash.move_up(1);

@@ -11,19 +11,7 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use crate::theme;
 
-/// Kept for source compatibility with the rest of the code. The fields are
-/// ignored — render() always draws the same centered title.
-#[allow(dead_code)]
-pub struct MenuItem<'a> {
-    pub label: &'a str,
-    pub hotkey_idx: usize,
-}
-
-pub fn render(_items: &[MenuItem<'_>], area: Rect, buf: &mut Buffer) {
-    render_title(" Turbo Bible \u{00B7} Bibel 2024 (bokm\u{00E5}l) ", area, buf);
-}
-
-pub fn render_title(text: &str, area: Rect, buf: &mut Buffer) {
+pub fn render(title: &str, area: Rect, buf: &mut Buffer) {
     let base = theme::menubar_style();
 
     for x in area.left()..area.right() {
@@ -36,11 +24,11 @@ pub fn render_title(text: &str, area: Rect, buf: &mut Buffer) {
         .fg(theme::black())
         .bg(base.bg.unwrap_or(theme::light_grey()))
         .add_modifier(Modifier::BOLD);
-    let used = text.chars().count();
+    let used = title.chars().count();
     let pad_left = (area.width as usize).saturating_sub(used) / 2;
     let spans = vec![
         Span::styled(" ".repeat(pad_left), base),
-        Span::styled(text.to_string(), title_style),
+        Span::styled(title.to_string(), title_style),
     ];
     Paragraph::new(Line::from(spans)).style(base).render(area, buf);
 }

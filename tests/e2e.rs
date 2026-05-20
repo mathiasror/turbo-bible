@@ -192,3 +192,94 @@ fn bookmark_json_is_migrated_to_toml_with_nb1930_rename() {
         "nb-2024 should not survive migration, got:\n{toml}"
     );
 }
+
+/// Parse `verse = N` out of state.toml.
+fn parsed_verse(toml: &str) -> i64 {
+    for line in toml.lines() {
+        if let Some(rest) = line.trim().strip_prefix("verse = ") {
+            return rest.trim().parse().unwrap_or_else(|_| {
+                panic!("could not parse verse from line {line:?} in:\n{toml}")
+            });
+        }
+    }
+    panic!("no verse= line in state.toml:\n{toml}");
+}
+
+/// Regression test for the Goto-with-verse path. `:John 3:16` used to land
+/// the cursor on verse 1 of John 3 because `parse_reference` discarded the
+/// verse component and `jump_to` always reset `cursor_verse` to 1. With
+/// `Position.verse` plumbed end-to-end, the cursor should land on verse 16.
+#[test]
+fn goto_with_verse_lands_on_typed_verse() {
+    let Some(db) = project_db() else {
+        eprintln!("skip: ~/.local/share/turbo-bible/bible.sqlite required");
+        return;
+    };
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &[
+            "--db", db.to_str().unwrap(),
+            "--translation", "en-kjv",
+            "--book", "GEN",
+            "--chapter", "1",
+        ],
+    );
+    sleep(Duration::from_millis(500));
+    // `:` opens the Goto dialog from Reading.
+    key(&mut p, ":");
+    p.send("John 3:16").unwrap();
+    p.flush().unwrap();
+    sleep(Duration::from_millis(300));
+    key(&mut p, "\r"); // Enter — jump.
+    key(&mut p, "q"); // Quit.
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"JHN\""), "expected JHN, got:\n{st}");
+    assert!(st.contains("chapter = 3"), "expected chapter 3, got:\n{st}");
+    assert_eq!(parsed_verse(&st), 16, "expected verse 16, got:\n{st}");
+}
+
+/// Regression test for the Find-result jump path. Hitting Enter on a match
+/// used to drop `hit.verse` and land on verse 1 of the result's chapter. The
+/// fix carries the verse through `FindOutcome::Jump`'s Position. We assert
+/// the cursor moved to a verse other than 1 — which proves the verse wasn't
+/// silently reset (the old bug's signature). A specific verse would couple
+/// the test to FTS5 BM25 ranking; "verse != 1" is the minimum that
+/// distinguishes "fixed" from "broken".
+#[test]
+fn find_jump_lands_on_matched_verse_not_one() {
+    let Some(db) = project_db() else {
+        eprintln!("skip: ~/.local/share/turbo-bible/bible.sqlite required");
+        return;
+    };
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &[
+            "--db", db.to_str().unwrap(),
+            "--translation", "en-kjv",
+            "--book", "GEN",
+            "--chapter", "1",
+        ],
+    );
+    sleep(Duration::from_millis(500));
+    // `/` opens Find from Reading.
+    key(&mut p, "/");
+    // Use a phrase that's well-attested mid-chapter so the top BM25 hit is
+    // very unlikely to be verse 1 of anything.
+    p.send("everlasting life").unwrap();
+    p.flush().unwrap();
+    sleep(Duration::from_millis(700)); // let FTS5 populate results
+    key(&mut p, "\r"); // Enter — jump to the top hit.
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    let verse = parsed_verse(&st);
+    assert!(
+        verse > 1,
+        "expected find-jump to preserve hit verse (>1), got verse={verse} in:\n{st}"
+    );
+}

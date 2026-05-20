@@ -21,10 +21,20 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
         .fg(theme::bright_white())
         .bg(theme::menubar_style().bg.unwrap_or(theme::light_grey()))
         .add_modifier(Modifier::BOLD);
-    let mode_style = Style::new()
-        .fg(theme::black())
-        .bg(theme::cyan())
-        .add_modifier(Modifier::BOLD);
+    // VISUAL gets a high-contrast yellow pill so the eye doesn't have to read
+    // the four letters — the colour shift alone signals mode change. Other
+    // modes share the standard cyan pill.
+    let mode_style = if mode_tag.contains("VISUAL") {
+        Style::new()
+            .fg(theme::black())
+            .bg(theme::yellow())
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+            .fg(theme::black())
+            .bg(theme::cyan())
+            .add_modifier(Modifier::BOLD)
+    };
 
     for x in area.left()..area.right() {
         let cell = &mut buf[(x, area.y)];

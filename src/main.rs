@@ -35,7 +35,6 @@ use crate::ui::find::{FindDialog, FindOutcome};
 use crate::ui::footnote::{FootnoteDialog, FootnoteOutcome};
 use crate::ui::goto::{GotoCommand, GotoDialog, GotoOutcome};
 use crate::ui::help::{HelpDialog, HelpOutcome};
-use crate::ui::menubar::MenuItem;
 use crate::ui::splash::{SplashOutcome, SplashView};
 use crate::ui::statusbar::Shortcut;
 use crate::ui::translations::{TranslationsDialog, TranslationsOutcome};
@@ -146,7 +145,7 @@ fn main() -> Result<()> {
                 .map(|b| format!("{} {}:{}", b.name, ps.chapter, ps.verse))
                 .unwrap_or_else(|| format!("{} {}:{}", ps.book, ps.chapter, ps.verse));
             (
-                Position { book: ps.book.clone(), chapter: ps.chapter },
+                Position { book: ps.book.clone(), chapter: ps.chapter, verse: None },
                 label,
             )
         });
@@ -156,7 +155,7 @@ fn main() -> Result<()> {
     let final_pos: Option<Position>;
     let final_cursor_verse: i64;
     let result = if let Some(book_code) = args.book.clone() {
-        let mut pos = Position { book: book_code, chapter: args.chapter };
+        let mut pos = Position { book: book_code, chapter: args.chapter, verse: None };
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = 1;
         let r = run(
@@ -183,7 +182,7 @@ fn main() -> Result<()> {
         // the persisted-or-default position lazily-ish.
         let mut pos = match &last_for_splash {
             Some((p, _)) => p.clone(),
-            None => Position { book: "GEN".into(), chapter: 1 },
+            None => Position { book: "GEN".into(), chapter: 1, verse: None },
         };
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = persisted.as_ref().map(|p| p.verse).unwrap_or(1).max(1);
@@ -276,12 +275,6 @@ fn run(
     initial_splash: Option<(Option<(Position, String)>, Option<crate::quote::DailyQuote>)>,
     config: &config::Config,
 ) -> Result<()> {
-    let menu = [
-        MenuItem { label: "File", hotkey_idx: 0 },
-        MenuItem { label: "Search", hotkey_idx: 0 },
-        MenuItem { label: "Goto", hotkey_idx: 0 },
-        MenuItem { label: "Help", hotkey_idx: 0 },
-    ];
     let mut keys = KeyState::with_user_bindings(&config.keys);
     let mut history = History::new(pos.clone());
     let mut bg = match initial_splash {
@@ -289,6 +282,7 @@ fn run(
             books.clone(),
             last,
             translation_label.clone(),
+            db.translation.clone(),
             qotd,
         )),
         None => Bg::Reading,
@@ -314,8 +308,9 @@ fn run(
         });
 
     loop {
-        let status = make_status(&bg);
+        let status = make_status(&bg, show_sidebar);
         let bookmarked_in_chapter = bookmarks_set(&bookmarks, &db.translation, pos);
+        let menu_title = format!(" Turbo Bible \u{00B7} {} ", translation_label);
         term.draw(|f| {
             let area = f.area();
             let buf = f.buffer_mut();
@@ -327,16 +322,17 @@ fn run(
                         buf,
                     );
                     crate::ui::menubar::render(
-                        &menu,
+                        &menu_title,
                         ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
                         buf,
                     );
-                    let mode_tag = mode_tag_for(&bg, &dialog, visual_anchor.is_some());
+                    let mode_tag =
+                        mode_tag_for(&bg, &dialog, visual_anchor.is_some(), verse_layout_two_line);
                     crate::ui::statusbar::render(
                         &status,
                         ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
                         buf,
-                        mode_tag,
+                        &mode_tag,
                     );
                     let body = ratatui::layout::Rect::new(
                         area.x,
@@ -347,15 +343,16 @@ fn run(
                     s.render(body, buf);
                 }
                 Bg::Reading => {
-                    let mode_tag = mode_tag_for(&bg, &dialog, visual_anchor.is_some());
+                    let mode_tag =
+                        mode_tag_for(&bg, &dialog, visual_anchor.is_some(), verse_layout_two_line);
                     let selection = visual_anchor.map(|a| {
                         let c = *cursor_verse;
                         if a <= c { (a, c) } else { (c, a) }
                     });
                     ui::Frame {
-                        menu: &menu,
+                        menu_title: &menu_title,
                         status: &status,
-                        status_mode: mode_tag,
+                        status_mode: &mode_tag,
                         passage: Some(passage),
                         cursor_verse: *cursor_verse,
                         selection,
@@ -613,6 +610,7 @@ fn run(
                                             books.clone(),
                                             last_label_for_splash.clone(),
                                             translation_label.clone(),
+                                            db.translation.clone(),
                                             qotd,
                                         ));
                                     }
@@ -653,26 +651,34 @@ fn bookmarks_set(
     out
 }
 
-fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> &'static str {
+fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, two_line: bool) -> String {
     match dialog {
-        Dialog::Goto(_) => "-- COMMAND --",
-        Dialog::Find(_) => "-- SEARCH --",
-        Dialog::Footnote(_) => "-- NOTES --",
-        Dialog::Help(_) => "-- HELP --",
-        Dialog::Bookmarks(_) => "-- BOOKMARKS --",
-        Dialog::Translations(_) => "-- TRANSLATIONS --",
+        Dialog::Goto(_) => "-- GOTO --".into(),
+        Dialog::Find(_) => "-- FIND --".into(),
+        Dialog::Footnote(_) => "-- NOTES --".into(),
+        Dialog::Help(_) => "-- HELP --".into(),
+        Dialog::Bookmarks(_) => "-- BOOKMARKS --".into(),
+        Dialog::Translations(_) => "-- TRANSLATIONS --".into(),
         Dialog::None => match bg {
             Bg::Splash(s) => match s.mode {
-                crate::ui::splash::SplashMode::Normal => "-- NORMAL --",
-                crate::ui::splash::SplashMode::Filter => "-- FILTER --",
+                crate::ui::splash::SplashMode::Normal => "-- NORMAL --".into(),
+                crate::ui::splash::SplashMode::Filter => "-- FILTER --".into(),
             },
-            Bg::Reading if visual => "-- VISUAL --",
-            Bg::Reading => "-- NORMAL --",
+            // Reading view: include the verse-layout marker so the user can
+            // tell 1L from 2L without counting blank lines between verses.
+            Bg::Reading => {
+                let layout = if two_line { "2L" } else { "1L" };
+                if visual {
+                    format!("-- VISUAL \u{00B7} {layout} --")
+                } else {
+                    format!("-- NORMAL \u{00B7} {layout} --")
+                }
+            }
         },
     }
 }
 
-fn make_status(bg: &Bg) -> Vec<Shortcut<'static>> {
+fn make_status(bg: &Bg, show_sidebar: bool) -> Vec<Shortcut<'static>> {
     match bg {
         Bg::Splash(_) => vec![
             Shortcut { key: "Enter", action: "Open" },
@@ -684,6 +690,13 @@ fn make_status(bg: &Bg) -> Vec<Shortcut<'static>> {
             Shortcut { key: "F1", action: "Help" },
             Shortcut { key: "F2", action: "Goto" },
             Shortcut { key: "F3", action: "Find" },
+            Shortcut { key: "K", action: "Notes" },
+            Shortcut { key: "v", action: "Select" },
+            Shortcut { key: "T", action: "Layout" },
+            Shortcut {
+                key: "Tab",
+                action: if show_sidebar { "Hide" } else { "Refs" },
+            },
             Shortcut { key: "Esc", action: "Home" },
             Shortcut { key: "Q", action: "Quit" },
         ],
@@ -713,9 +726,13 @@ fn jump_to(
     history: &mut History,
 ) -> Result<()> {
     history.push(p.clone());
+    let target_verse = p.verse;
     *pos = p;
     *passage = db.load_passage(&pos.book, pos.chapter)?;
-    *cursor_verse = 1;
+    // Find / Bookmarks / `:John 3:16` set p.verse so the cursor lands on the
+    // match instead of always snapping to verse 1. Clamp to the passage size.
+    let max = passage.verses.last().map(|v| v.number).unwrap_or(1);
+    *cursor_verse = target_verse.unwrap_or(1).clamp(1, max);
     Ok(())
 }
 

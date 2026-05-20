@@ -42,7 +42,11 @@ impl FindDialog {
             KeyCode::Enter => {
                 if let Some(hit) = self.results.get(self.selected) {
                     FindOutcome::Jump(
-                        Position { book: hit.book.clone(), chapter: hit.chapter },
+                        Position {
+                            book: hit.book.clone(),
+                            chapter: hit.chapter,
+                            verse: Some(hit.verse),
+                        },
                         self.input.clone(),
                     )
                 } else {
@@ -123,6 +127,22 @@ impl FindDialog {
             Span::styled(self.input.clone(), input_style),
             Span::styled("\u{2588}", input_style.fg(theme::bright_white())),
         ]));
+        // Empty-state hint under the input — only shown before the user types.
+        // Matches the Goto dialog's pattern so the two commands feel symmetric.
+        if self.input.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  ", bg),
+                Span::styled(
+                    "\u{2192} (type to search, e.g. \"love\", \"kingdom of God\")",
+                    Style::new()
+                        .fg(theme::yellow())
+                        .bg(theme::blue())
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        } else {
+            lines.push(blank());
+        }
         lines.push(blank());
 
         if let Some(err) = &self.error {
@@ -138,52 +158,64 @@ impl FindDialog {
             ]));
         }
 
-        for (i, hit) in self
-            .results
-            .iter()
-            .enumerate()
-            .take(inner.height as usize - 5)
-        {
+        // Each result is rendered as two rows — the reference on its own line
+        // in cyan/yellow, the snippet indented underneath — separated by a
+        // blank row. This trades density for scan-ability so the eye doesn't
+        // have to walk a wall of text.
+        let rows_per_hit: usize = 3;
+        let max_hits = ((inner.height as usize).saturating_sub(5)) / rows_per_hit;
+        for (i, hit) in self.results.iter().enumerate().take(max_hits) {
             let book_label = books
                 .iter()
                 .find(|b| b.code == hit.book)
                 .map(|b| b.abbreviation.clone())
                 .unwrap_or_else(|| hit.book.clone());
             let reference = format!(" {} {}:{} ", book_label, hit.chapter, hit.verse);
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            let line_bg = if i == self.selected { sel_bg } else { bg };
-            spans.push(Span::styled(" ", line_bg));
-            spans.push(Span::styled(
-                reference,
-                if i == self.selected { sel_bg } else { ref_style },
-            ));
-            spans.push(Span::styled(
-                "  ",
-                if i == self.selected { sel_bg } else { bg },
-            ));
+            let on = i == self.selected;
+            let ref_line_style = if on { sel_bg } else { ref_style };
 
-            // Highlight matched ranges within the verse text.
+            // Row 1: reference, full-width selectable.
+            let mut ref_spans: Vec<Span<'static>> = Vec::new();
+            ref_spans.push(Span::styled(" ".to_string(), if on { sel_bg } else { bg }));
+            ref_spans.push(Span::styled(reference.clone(), ref_line_style));
+            let used = 1 + reference.chars().count();
+            let pad = (inner.width as usize).saturating_sub(used);
+            ref_spans.push(Span::styled(
+                " ".repeat(pad),
+                if on { sel_bg } else { bg },
+            ));
+            lines.push(Line::from(ref_spans));
+
+            // Row 2: indented snippet with highlighted match ranges.
+            let mut snip_spans: Vec<Span<'static>> = Vec::new();
+            snip_spans.push(Span::styled(
+                "    ".to_string(),
+                if on { sel_bg } else { bg },
+            ));
             let mut cursor = 0;
             for &(s, e) in &hit.hits {
                 if s > cursor {
-                    spans.push(Span::styled(
+                    snip_spans.push(Span::styled(
                         hit.text[cursor..s].to_string(),
-                        if i == self.selected { sel_bg } else { label },
+                        if on { sel_bg } else { label },
                     ));
                 }
-                spans.push(Span::styled(
+                snip_spans.push(Span::styled(
                     hit.text[s..e].to_string(),
-                    if i == self.selected { sel_bg } else { hit_style },
+                    if on { sel_bg } else { hit_style },
                 ));
                 cursor = e;
             }
             if cursor < hit.text.len() {
-                spans.push(Span::styled(
+                snip_spans.push(Span::styled(
                     hit.text[cursor..].to_string(),
-                    if i == self.selected { sel_bg } else { label },
+                    if on { sel_bg } else { label },
                 ));
             }
-            lines.push(Line::from(spans));
+            lines.push(Line::from(snip_spans));
+
+            // Row 3: separator gap.
+            lines.push(blank());
         }
 
         if self.results.is_empty() && self.error.is_none() && !self.input.trim().is_empty() {

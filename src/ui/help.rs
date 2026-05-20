@@ -33,9 +33,9 @@ impl HelpDialog {
 
     pub fn render(&self, outer: Rect, buf: &mut Buffer) {
         let w: u16 = outer.width.saturating_sub(6).min(64);
-        let h: u16 = outer.height.saturating_sub(4).min(22);
+        let h: u16 = outer.height.saturating_sub(4).min(30);
         let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_dialog(area, "Help — Bible TUI", buf);
+        let inner = dialog::draw_dialog(area, "Help", buf);
 
         let bg = Style::new().bg(theme::blue());
         let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
@@ -48,40 +48,58 @@ impl HelpDialog {
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
 
-        let entries: &[(&str, &str)] = &[
-            ("h H ←", "previous chapter"),
-            ("l L →", "next chapter"),
-            ("[b ]b", "previous / next book"),
-            ("j ↓", "next verse (cursor)"),
-            ("k ↑", "previous verse"),
-            ("Ctrl-D / Ctrl-U", "half-page down / up"),
-            ("Ctrl-F / Ctrl-B / Space", "page down / up"),
-            ("gg / G", "first / last verse"),
-            ("Ctrl-O / Ctrl-I", "jump back / forward"),
-            ("F2 / :", "Goto reference"),
-            ("F3 / /", "Find (FTS5 search)"),
-            ("K", "Footnote popup at cursor"),
-            ("Tab", "toggle References sidebar"),
-            ("y", "copy verse to clipboard"),
-            ("F1", "this help"),
-            ("q / Esc", "quit"),
+        enum Row {
+            Section(&'static str),
+            Entry(&'static str, &'static str),
+        }
+        use Row::*;
+        let rows: &[Row] = &[
+            Section("Movement"),
+            Entry("j  k  ↓ ↑", "next / previous verse"),
+            Entry("h  l  ← →", "previous / next chapter"),
+            Entry("[b  ]b", "previous / next book"),
+            Entry("Ctrl-D  Ctrl-U", "half-page down / up"),
+            Entry("Ctrl-F  Ctrl-B  Space", "page down / up"),
+            Entry("gg  G", "first / last verse"),
+            Entry("5j   10G", "count prefix (Vim-style)"),
+            Entry("Ctrl-O  Ctrl-I", "jump back / forward in history"),
+            Section("Selection & bookmarks"),
+            Entry("v  V", "enter / exit visual selection"),
+            Entry("b", "toggle bookmark on cursor / range"),
+            Entry("y", "copy current verse to clipboard"),
+            Section("Reading view"),
+            Entry("Tab", "toggle References sidebar"),
+            Entry("T", "toggle two-line / single-line layout"),
+            Entry("K", "footnote / cross-ref popup"),
+            Section("Dialogs"),
+            Entry("F1", "this help"),
+            Entry("F2  :", "Goto reference  (e.g. John 3:16)"),
+            Entry("F3  /", "Find  (FTS5 search)"),
+            Entry("F4  M", "Bookmarks"),
+            Entry("F5  t", "Translations"),
+            Section("Quit"),
+            Entry("q  Esc  ZZ  ZQ  :q", "quit"),
         ];
 
         let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
 
         let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(blank());
-        lines.push(Line::from(vec![
-            Span::styled("  ", bg),
-            Span::styled("Keybindings", header),
-        ]));
-        lines.push(blank());
-        for (k, desc) in entries {
-            lines.push(Line::from(vec![
-                Span::styled("  ", bg),
-                Span::styled(format!("{:<24}", k), key),
-                Span::styled(desc.to_string(), label),
-            ]));
+        for row in rows {
+            match row {
+                Section(name) => {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", bg),
+                        Span::styled(name.to_string(), header),
+                    ]));
+                }
+                Entry(k, desc) => {
+                    lines.push(Line::from(vec![
+                        Span::styled("    ", bg),
+                        Span::styled(format!("{:<22}", k), key),
+                        Span::styled(desc.to_string(), label),
+                    ]));
+                }
+            }
         }
         while lines.len() < (inner.height as usize).saturating_sub(2) {
             lines.push(blank());

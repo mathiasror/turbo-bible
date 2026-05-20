@@ -80,8 +80,19 @@ impl FootnoteDialog {
     }
 
     pub fn render(&self, outer: Rect, buf: &mut Buffer, _books: &[Book]) {
-        let w: u16 = outer.width.saturating_sub(6).min(80);
-        let h: u16 = outer.height.saturating_sub(4).min(22);
+        let empty = self.footnotes.is_empty();
+        let w: u16 = if empty {
+            outer.width.saturating_sub(6).min(50)
+        } else {
+            outer.width.saturating_sub(6).min(80)
+        };
+        // Empty-state dialog shrinks to ~5 rows so it doesn't read as a render
+        // failure. Populated dialog gets the full 22-row max.
+        let h: u16 = if empty {
+            outer.height.saturating_sub(4).min(5)
+        } else {
+            outer.height.saturating_sub(4).min(22)
+        };
         let area = dialog::center(outer, w, h);
         let title = format!("Notes for {}", self.verse_label);
         let inner = dialog::draw_dialog(area, &title, buf);
@@ -142,61 +153,51 @@ impl FootnoteDialog {
             ]));
         }
 
-        // Footer.
+        // Footer — only advertise navigation/Enter when there's something to
+        // navigate; otherwise just Esc close so the footer doesn't promise
+        // actions the empty body can't deliver.
         while lines.len() < (inner.height as usize).saturating_sub(2) {
             lines.push(blank());
         }
-        lines.push(Line::from(vec![
-            Span::styled("  ", bg),
-            Span::styled(
-                "Enter ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "follow xref   ",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-            Span::styled(
-                "↑↓ ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "navigate   ",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-            Span::styled(
-                "Esc ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "close",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-        ]));
+        let key_style = Style::new()
+            .fg(theme::bright_white())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        let footer = if empty {
+            vec![
+                Span::styled("  ", bg),
+                Span::styled("Esc ", key_style),
+                Span::styled("close", dim),
+            ]
+        } else {
+            vec![
+                Span::styled("  ", bg),
+                Span::styled("Enter ", key_style),
+                Span::styled("follow xref   ", dim),
+                Span::styled("\u{2191}\u{2193} ", key_style),
+                Span::styled("navigate   ", dim),
+                Span::styled("Esc ", key_style),
+                Span::styled("close", dim),
+            ]
+        };
+        lines.push(Line::from(footer));
 
         Paragraph::new(lines).style(bg).render(inner, buf);
     }
 }
 
-/// OSIS string "BOOK.CHAP.VERSE" → (book, chapter). Verse is dropped (we jump
-/// to chapter granularity in v1). Returns None on parse error.
+/// OSIS string "BOOK.CHAP[.VERSE]" → Position. Returns None on parse error.
 pub fn parse_osis(s: &str) -> Option<Position> {
     let parts: Vec<&str> = s.split('.').collect();
     if parts.len() < 2 {
         return None;
     }
     let chapter: i64 = parts[1].parse().ok()?;
+    let verse: Option<i64> = parts.get(2).and_then(|v| v.parse().ok());
     Some(Position {
         book: parts[0].to_string(),
         chapter,
+        verse,
     })
 }

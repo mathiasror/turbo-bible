@@ -14,20 +14,24 @@ use crate::theme;
 pub struct SidebarView<'a> {
     pub passage: &'a Passage,
     pub cursor_verse: i64,
+    pub selection: Option<(i64, i64)>,
 }
 
 impl<'a> Widget for SidebarView<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         theme::draw_shadow(buf, area);
 
+        // Subordinate the sidebar visually: dim border + dim title so the
+        // reading pane is unambiguously the primary surface. Single-line
+        // border (vs the reading pane's double) further demotes it.
         let title = " References ";
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Double)
-            .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
+            .border_type(BorderType::Plain)
+            .border_style(Style::new().fg(theme::light_grey()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
-                Style::new().fg(theme::bright_white()).bg(theme::blue()),
+                Style::new().fg(theme::light_grey()).bg(theme::blue()),
             )))
             .style(Style::new().bg(theme::blue()));
 
@@ -41,7 +45,7 @@ impl<'a> Widget for SidebarView<'a> {
             }
         }
 
-        let lines = build_lines(self.passage, self.cursor_verse, inner.width);
+        let lines = build_lines(self.passage, self.cursor_verse, self.selection, inner.width);
         Paragraph::new(lines)
             .style(Style::new().bg(theme::blue()))
             .wrap(Wrap { trim: false })
@@ -49,7 +53,12 @@ impl<'a> Widget for SidebarView<'a> {
     }
 }
 
-fn build_lines(p: &Passage, cursor_verse: i64, _width: u16) -> Vec<Line<'static>> {
+fn build_lines(
+    p: &Passage,
+    cursor_verse: i64,
+    selection: Option<(i64, i64)>,
+    _width: u16,
+) -> Vec<Line<'static>> {
     let bg = Style::new().bg(theme::blue());
     let body = Style::new().fg(theme::bright_white()).bg(theme::blue());
     let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
@@ -69,11 +78,19 @@ fn build_lines(p: &Passage, cursor_verse: i64, _width: u16) -> Vec<Line<'static>
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from(Span::styled("", bg)));
 
-    // Verse label header
-    let verse_label = format!(
-        " {} {}:{}",
-        p.book_abbrev, p.chapter, cursor_verse
-    );
+    // Verse label header — in visual mode show the whole range so the user
+    // can see how many verses they have selected without doing arithmetic.
+    let verse_label = match selection {
+        Some((s, e)) if s != e => format!(
+            " {} {}:{}-{}  ({} verses)",
+            p.book_abbrev,
+            p.chapter,
+            s,
+            e,
+            e - s + 1
+        ),
+        _ => format!(" {} {}:{}", p.book_abbrev, p.chapter, cursor_verse),
+    };
     lines.push(Line::from(Span::styled(verse_label, accent)));
     lines.push(Line::from(Span::styled("", bg)));
 

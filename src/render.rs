@@ -43,9 +43,15 @@ pub fn render_passage(
         s = if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) };
         s
     };
+    // Non-cursor body text uses a softer fg so the cursor line is the only
+    // bright-white prose on the page — easier on the eyes during a long
+    // reading session, and the cursor stands out more without louder bg.
     let verse_text_style = |on_cursor: bool| {
-        let s = Style::new().fg(theme::bright_white());
-        if on_cursor { s.bg(cursor_bg) } else { s.bg(theme::blue()) }
+        if on_cursor {
+            Style::new().fg(theme::bright_white()).bg(cursor_bg)
+        } else {
+            Style::new().fg(theme::light_grey()).bg(theme::blue())
+        }
     };
     let marker_style = |on_cursor: bool| {
         let s = Style::new()
@@ -61,7 +67,8 @@ pub fn render_passage(
         headings_by_anchor.entry(h.before_verse).or_default().push(h);
     }
 
-    // Chapter banner.
+    // Chapter banner. The rule underneath the heading anchors verse 1 to it
+    // without a trailing blank line (which used to read as a missing verse 0).
     out.push(rl_blank());
     out.push(RenderedLine {
         line: Line::from(Span::styled(
@@ -77,7 +84,6 @@ pub fn render_passage(
         )),
         verse: 0,
     });
-    out.push(rl_blank());
 
     for v in &p.verses {
         // Any headings that anchor before this verse get printed here.
@@ -109,9 +115,19 @@ pub fn render_passage(
         }
 
         let in_selection = selection.map_or(false, |(s, e)| v.number >= s && v.number <= e);
-        let on_cursor = v.number == cursor_verse || in_selection;
-        let star = if bookmarked.contains(&v.number) { "★" } else { " " };
-        let num_str = format!("{}{:>width$}", star, v.number, width = VERSE_NUM_WIDTH - 1);
+        let is_cursor_verse = v.number == cursor_verse;
+        let on_cursor = is_cursor_verse || in_selection;
+        // The gutter glyph: cursor wins (so the active verse is always
+        // unambiguous, especially in a visual range), bookmark next, else
+        // blank.
+        let gutter = if is_cursor_verse {
+            "\u{25B8}"
+        } else if bookmarked.contains(&v.number) {
+            "\u{2605}"
+        } else {
+            " "
+        };
+        let num_str = format!("{}{:>width$}", gutter, v.number, width = VERSE_NUM_WIDTH - 1);
 
         let mut markers = String::new();
         if v.footnote_count > 0 {
@@ -249,9 +265,13 @@ fn rl_blank() -> RenderedLine {
 
 /// Pad/extend every line to the given width with the verse-text style so the
 /// blue background fills the window cleanly (no terminal default bg bleeding
-/// through). Returns a freshly owned Vec<Line>.
+/// through). The cursor / selection rows extend their cyan highlight all the
+/// way to the right margin so they read as a contiguous selected list item
+/// (matching how two-line mode already behaved).
 pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
-    let bg = Style::new().fg(theme::bright_white()).bg(theme::blue());
+    let cursor_bg = theme::cyan();
+    let blue_bg = Style::new().fg(theme::bright_white()).bg(theme::blue());
+    let cursor_pad = Style::new().fg(theme::bright_white()).bg(cursor_bg);
     lines
         .iter()
         .map(|rl| {
@@ -259,7 +279,14 @@ pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
             let mut spans = rl.line.spans.clone();
             if (used as u16) < width {
                 let pad = (width as usize).saturating_sub(used);
-                spans.push(Span::styled(" ".repeat(pad), bg));
+                let is_cursor_row = rl
+                    .line
+                    .spans
+                    .last()
+                    .and_then(|s| s.style.bg)
+                    .map_or(false, |c| c == cursor_bg);
+                let pad_style = if is_cursor_row { cursor_pad } else { blue_bg };
+                spans.push(Span::styled(" ".repeat(pad), pad_style));
             }
             Line::from(spans)
         })
