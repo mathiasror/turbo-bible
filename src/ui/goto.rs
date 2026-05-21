@@ -16,6 +16,7 @@ pub struct GotoDialog {
     pub input: String,
 }
 
+#[non_exhaustive]
 pub enum GotoOutcome {
     Continue,
     Cancel,
@@ -23,6 +24,7 @@ pub enum GotoOutcome {
     Command(GotoCommand),
 }
 
+#[non_exhaustive]
 pub enum GotoCommand {
     Quit,
     Help,

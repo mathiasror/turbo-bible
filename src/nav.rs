@@ -18,6 +18,7 @@ impl Position {
     /// Chapter-level equality: same book + chapter, regardless of verse hint.
     /// Used by the History stack to dedup consecutive entries that resolve to
     /// the same chapter even if the cursor verse differs.
+    #[must_use]
     pub fn same_chapter(&self, other: &Self) -> bool {
         self.book == other.book && self.chapter == other.chapter
     }
@@ -39,6 +40,9 @@ impl<'a> Navigator<'a> {
             .ok_or_else(|| anyhow!("unknown book {code}"))
     }
 
+    /// # Errors
+    /// Fails when `pos.book` isn't in the books list, or when the
+    /// chapter-count query for the previous book errors.
     pub fn prev_chapter(&self, db: &Db, pos: &Position) -> Result<Position> {
         if pos.chapter > 1 {
             return Ok(Position {
@@ -60,6 +64,9 @@ impl<'a> Navigator<'a> {
         })
     }
 
+    /// # Errors
+    /// Fails when `pos.book` isn't in the books list, or when the
+    /// chapter-count query for the current book errors.
     pub fn next_chapter(&self, db: &Db, pos: &Position) -> Result<Position> {
         let current_max = db.chapter_count(&pos.book)?.max(1);
         if pos.chapter < current_max {
@@ -80,6 +87,8 @@ impl<'a> Navigator<'a> {
         })
     }
 
+    /// # Errors
+    /// Fails when `pos.book` isn't in the books list.
     pub fn prev_book(&self, pos: &Position) -> Result<Position> {
         let idx = self.book_index(&pos.book)?;
         if idx == 0 {
@@ -92,6 +101,8 @@ impl<'a> Navigator<'a> {
         })
     }
 
+    /// # Errors
+    /// Fails when `pos.book` isn't in the books list.
     pub fn next_book(&self, pos: &Position) -> Result<Position> {
         let idx = self.book_index(&pos.book)?;
         if idx + 1 >= self.books.len() {

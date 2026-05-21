@@ -73,6 +73,7 @@ pub struct SplashView {
     nav: ListNav,
 }
 
+#[non_exhaustive]
 pub enum SplashOutcome {
     Continue,
     OpenBook(Position),

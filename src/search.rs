@@ -34,6 +34,9 @@ pub fn build_query(input: &str) -> String {
         .join(" AND ")
 }
 
+/// # Errors
+/// Fails when the FTS5 MATCH or the `verse` join queries error.
+/// An empty `input` returns `Ok(vec![])` rather than an error.
 pub fn search(db: &Db, translation: &str, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
     let query = build_query(input);
     if query.is_empty() {

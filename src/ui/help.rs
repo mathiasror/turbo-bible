@@ -12,6 +12,7 @@ use crate::ui::dialog;
 
 pub struct HelpDialog;
 
+#[non_exhaustive]
 pub enum HelpOutcome {
     Continue,
     Cancel,

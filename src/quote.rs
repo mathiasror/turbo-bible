@@ -52,6 +52,10 @@ pub struct DailyQuote {
 
 /// Pick today's quote and resolve its text against the DB. Walks forward
 /// through the curated list if the chosen reference isn't loaded yet.
+///
+/// # Errors
+/// Fails when the underlying SQL preparation errors. A row-not-found is
+/// not an error — it triggers the next-candidate walk.
 pub fn pick(db: &Db, translation: &str) -> Result<Option<DailyQuote>> {
     if CURATED.is_empty() {
         return Ok(None);

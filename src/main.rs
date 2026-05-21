@@ -1,3 +1,12 @@
+//! `turbo-bible` — a Turbo Vision–styled terminal Bible reader with
+//! FTS5 search.
+//!
+//! This crate is a single binary. See [`README.md`] for the user-facing
+//! tour and [`docs/USAGE.md`] for a feature walk-through; the source
+//! tree mirrors the README's "Layout" section.
+//!
+//! [`README.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/README.md
+//! [`docs/USAGE.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/docs/USAGE.md
 #![deny(unsafe_code)]
 
 mod bookmark;

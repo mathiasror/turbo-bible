@@ -34,9 +34,11 @@ pub struct Bookmark {
 }
 
 impl Bookmark {
+    #[must_use]
     pub fn matches_chapter(&self, translation: &str, book: &str, chapter: i64) -> bool {
         self.translation == translation && self.book == book && self.chapter == chapter
     }
+    #[must_use]
     pub fn same_range(&self, other: &Self) -> bool {
         self.translation == other.translation
             && self.book == other.book
@@ -44,6 +46,7 @@ impl Bookmark {
             && self.start_verse == other.start_verse
             && self.end_verse == other.end_verse
     }
+    #[must_use]
     pub fn reference_label(&self, book_name: &str) -> String {
         if self.start_verse == self.end_verse {
             format!("{} {}:{}", book_name, self.chapter, self.start_verse)
@@ -83,6 +86,10 @@ impl BookmarkStore {
         Self::default()
     }
 
+    /// # Errors
+    /// Fails when the config dir can't be created, the TOML serialization
+    /// errors, or the write to `bookmarks.toml` fails (typically:
+    /// permission denied, disk full).
     pub fn save(&self) -> Result<()> {
         let dir = paths::config_dir()?;
         fs::create_dir_all(&dir)?;

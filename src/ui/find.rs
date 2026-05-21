@@ -20,6 +20,7 @@ pub struct FindDialog {
     pub error: Option<String>,
 }
 
+#[non_exhaustive]
 pub enum FindOutcome {
     Continue,
     Cancel,

@@ -367,6 +367,10 @@ pub fn load() -> Config {
     })
 }
 
+/// # Errors
+/// Fails when the config dir can't be created, the TOML serialization
+/// errors, or the write to `config.toml` fails (typically: permission
+/// denied, disk full).
 pub fn save(cfg: &Config) -> Result<()> {
     let dir = paths::config_dir()?;
     fs::create_dir_all(&dir)?;

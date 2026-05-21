@@ -29,6 +29,7 @@ pub struct FootnoteDialog {
     nav: ListNav,
 }
 
+#[non_exhaustive]
 pub enum FootnoteOutcome {
     Continue,
     Cancel,

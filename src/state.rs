@@ -123,6 +123,10 @@ fn rename_legacy(s: &mut PersistedState) {
     }
 }
 
+/// # Errors
+/// Fails when the config dir can't be created, the TOML serialization
+/// errors, or the write to `state.toml` fails. Removing the legacy
+/// `state.json` is best-effort and does not surface errors.
 pub fn save(state: &PersistedState) -> Result<()> {
     let dir = paths::config_dir()?;
     fs::create_dir_all(&dir)?;

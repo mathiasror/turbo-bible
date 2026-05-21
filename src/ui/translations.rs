@@ -20,6 +20,7 @@ pub struct TranslationsDialog {
     nav: ListNav,
 }
 
+#[non_exhaustive]
 pub enum TranslationsOutcome {
     Continue,
     Cancel,

@@ -21,6 +21,7 @@ pub struct BookmarksDialog {
     nav: ListNav,
 }
 
+#[non_exhaustive]
 pub enum BookmarksOutcome {
     Continue,
     Cancel,

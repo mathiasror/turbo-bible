@@ -15,6 +15,12 @@ const FTS_TARGET_VERSION: &str = "2";
 ///
 /// Returns `Ok(true)` if a rebuild happened (so the caller can surface a
 /// "first launch is slow" message if desired).
+///
+/// # Errors
+/// Propagates `rusqlite::Error` when the file can't be opened RW, when
+/// the `meta` bookkeeping table can't be created, or when the FTS5
+/// rebuild fails (typically: corruption, missing FTS5 in the SQLite
+/// build).
 pub fn ensure_fts_optimized(path: &Path) -> Result<bool> {
     let conn = Connection::open(path).with_context(|| format!("open RW {}", path.display()))?;
     conn.execute_batch(
@@ -94,6 +100,7 @@ pub struct Book {
 }
 
 impl Book {
+    #[must_use]
     pub fn display_name(&self) -> &str {
         self.full_name.as_deref().unwrap_or(&self.name)
     }
@@ -153,6 +160,10 @@ pub struct Db {
 /// the startup probe — used to populate the picker before any
 /// translation has been chosen, so it deliberately does NOT construct a
 /// `Db` (which would require a translation code; see [`Db::open_ro`]).
+///
+/// # Errors
+/// Fails if the file can't be opened RO or if the `translation` table
+/// query errors (typically: schema mismatch on an out-of-date DB).
 pub fn list_translations(path: &Path) -> Result<Vec<TranslationInfo>> {
     let conn = open_ro_conn(path)?;
     query_translations(&conn)
@@ -189,6 +200,7 @@ impl Db {
         &self.conn
     }
 
+    #[must_use]
     pub fn translation(&self) -> &str {
         &self.translation
     }
@@ -200,6 +212,13 @@ impl Db {
         self.translation = code;
     }
 
+    /// # Errors
+    /// Fails if the SQLite file at `path` can't be opened read-only or
+    /// if `PRAGMA query_only = ON` is rejected.
+    ///
+    /// # Panics
+    /// In debug builds, panics if `translation` is empty — that path is
+    /// reserved for the probe (`db::list_translations`).
     pub fn open_ro(path: &Path, translation: &str) -> Result<Self> {
         debug_assert!(
             !translation.is_empty(),
@@ -213,11 +232,17 @@ impl Db {
         })
     }
 
+    /// # Errors
+    /// Fails when the `translation` table query errors.
     pub fn list_translations(&self) -> Result<Vec<TranslationInfo>> {
         query_translations(&self.conn)
     }
 
     /// "King James Version (1769)  ·  en-kjv" — the subtitle shown on splash.
+    ///
+    /// # Errors
+    /// Fails when the row for `self.translation` is missing (uninstalled
+    /// translation code) or the query errors.
     pub fn translation_label(&self) -> Result<String> {
         let mut stmt = self
             .conn
@@ -226,6 +251,9 @@ impl Db {
         Ok(format!("{}  ·  {}", name, self.translation))
     }
 
+    /// # Errors
+    /// Fails when the join on `book_label` errors (typically: schema
+    /// mismatch, or a translation row missing all its book labels).
     pub fn list_books(&self) -> Result<Vec<Book>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT b.code, bl.name, bl.abbreviation, b.testament, b.ord, bl.full_name
@@ -248,6 +276,9 @@ impl Db {
         Ok(rows)
     }
 
+    /// # Errors
+    /// Fails when the `verse` table query errors. Returns `Ok(0)` for an
+    /// unknown book code rather than an error.
     pub fn chapter_count(&self, book: &str) -> Result<i64> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT COALESCE(MAX(chapter), 0) FROM verse WHERE translation=?1 AND book=?2",
@@ -256,6 +287,10 @@ impl Db {
         Ok(n)
     }
 
+    /// # Errors
+    /// Fails when the `book_label` lookup returns no row (unknown book
+    /// for the active translation) or when any of the verse/heading/
+    /// footnote queries error.
     pub fn load_passage(&self, book: &str, chapter: i64) -> Result<Passage> {
         let (book_name, book_abbrev) = {
             let mut stmt = self.conn.prepare_cached(
