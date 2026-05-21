@@ -801,6 +801,143 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
     }
 }
 
+/// Direction parameter for [`LoopState::history_step`]. Internal sugar so
+/// `JumpBack` / `JumpForward` share one implementation.
+enum HistoryDir {
+    Back,
+    Forward,
+}
+
+impl LoopState {
+    fn open_footnote_dialog(&mut self, ctx: &AppCtx) {
+        let target = format!("{}.{}.{}", ctx.pos.book, ctx.pos.chapter, *ctx.cursor_verse);
+        let notes: Vec<_> = ctx
+            .passage
+            .footnotes
+            .iter()
+            .filter(|fn_| fn_.verse_osis == target)
+            .cloned()
+            .collect();
+        let label = format!(
+            "{} {}:{}",
+            ctx.passage.book_abbrev, ctx.pos.chapter, *ctx.cursor_verse
+        );
+        self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes));
+    }
+
+    fn history_step(&mut self, ctx: &mut AppCtx, dir: HistoryDir) -> Result<()> {
+        let target = match dir {
+            HistoryDir::Back => self.history.back(),
+            HistoryDir::Forward => self.history.forward(),
+        };
+        if let Some(p) = target {
+            *ctx.pos = p;
+            *ctx.passage = ctx.db.load_passage(&ctx.pos.book, ctx.pos.chapter)?;
+            *ctx.cursor_verse = 1;
+        }
+        Ok(())
+    }
+
+    fn copy_verse(&self, ctx: &mut AppCtx) {
+        save_or_warn(
+            ctx.warnings,
+            "clipboard set",
+            copy_verse_to_clipboard(ctx.passage, ctx.pos, *ctx.cursor_verse),
+        );
+    }
+
+    fn toggle_visual(&mut self, cursor: i64) {
+        self.visual_anchor = if self.visual_anchor.is_some() {
+            None
+        } else {
+            Some(cursor)
+        };
+    }
+
+    fn add_bookmark(&mut self, ctx: &mut AppCtx) {
+        let (s, e) = match self.visual_anchor {
+            Some(a) if a <= *ctx.cursor_verse => (a, *ctx.cursor_verse),
+            Some(a) => (*ctx.cursor_verse, a),
+            None => (*ctx.cursor_verse, *ctx.cursor_verse),
+        };
+        self.bookmarks.add(bookmark::Bookmark {
+            translation: ctx.db.translation().to_string(),
+            book: ctx.pos.book.clone(),
+            chapter: ctx.pos.chapter,
+            start_verse: s,
+            end_verse: e,
+            label: None,
+            created_at: bookmark::now_unix(),
+        });
+        save_or_warn(ctx.warnings, "bookmarks save (add)", self.bookmarks.save());
+        self.visual_anchor = None;
+    }
+
+    fn open_bookmarks_dialog(&mut self) {
+        let mut d = crate::ui::bookmarks::BookmarksDialog::new(&self.bookmarks);
+        d.sort_canonical(&self.books);
+        self.dialog = Dialog::Bookmarks(d);
+    }
+
+    fn open_translations_dialog(&mut self, ctx: &AppCtx) -> Result<()> {
+        self.dialog = Dialog::Translations(TranslationsDialog::new(
+            ctx.db.list_translations()?,
+            ctx.db.translation(),
+        ));
+        Ok(())
+    }
+
+    /// Esc-from-reading: cancel visual selection if active, otherwise
+    /// rebuild the splash view and switch the background to it.
+    fn enter_splash(&mut self, ctx: &AppCtx) {
+        if self.visual_anchor.is_some() {
+            self.visual_anchor = None;
+            return;
+        }
+        update_splash_label(
+            &mut self.last_label_for_splash,
+            &self.books,
+            ctx.pos,
+            *ctx.cursor_verse,
+        );
+        let qotd = quote::pick(ctx.db, ctx.db.translation()).unwrap_or(None);
+        self.bg = Bg::Splash(Box::new(SplashView::new(
+            self.books.clone(),
+            self.last_label_for_splash.clone(),
+            self.translation_label.clone(),
+            ctx.db.translation().to_string(),
+            qotd,
+        )));
+    }
+
+    /// Re-run the most recent `/`-search in `forward` or backward order
+    /// relative to the cursor, jumping to the next hit (with wrap).
+    fn repeat_search_action(&mut self, ctx: &mut AppCtx, forward: bool) -> Result<()> {
+        let Some(q) = self.last_query.as_deref() else {
+            return Ok(());
+        };
+        let Some(p) = repeat_search(ctx.db, &self.books, q, ctx.pos, *ctx.cursor_verse, forward)
+        else {
+            return Ok(());
+        };
+        jump_to(
+            p,
+            ctx.db,
+            ctx.pos,
+            ctx.passage,
+            ctx.cursor_verse,
+            &mut self.history,
+        )?;
+        update_splash_label(
+            &mut self.last_label_for_splash,
+            &self.books,
+            ctx.pos,
+            *ctx.cursor_verse,
+        );
+        Ok(())
+    }
+}
+
 fn dispatch_reading(
     state: &mut LoopState,
     ctx: &mut AppCtx,
@@ -813,132 +950,20 @@ fn dispatch_reading(
         Action::OpenGoto => state.dialog = Dialog::Goto(GotoDialog::new()),
         Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new()),
         Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
-        Action::OpenFootnote => {
-            let target = format!("{}.{}.{}", ctx.pos.book, ctx.pos.chapter, *ctx.cursor_verse);
-            let notes: Vec<_> = ctx
-                .passage
-                .footnotes
-                .iter()
-                .filter(|fn_| fn_.verse_osis == target)
-                .cloned()
-                .collect();
-            let label = format!(
-                "{} {}:{}",
-                ctx.passage.book_abbrev, ctx.pos.chapter, *ctx.cursor_verse
-            );
-            state.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes));
-        }
-        Action::JumpBack => {
-            if let Some(p) = state.history.back() {
-                *ctx.pos = p;
-                *ctx.passage = ctx.db.load_passage(&ctx.pos.book, ctx.pos.chapter)?;
-                *ctx.cursor_verse = 1;
-            }
-        }
-        Action::JumpForward => {
-            if let Some(p) = state.history.forward() {
-                *ctx.pos = p;
-                *ctx.passage = ctx.db.load_passage(&ctx.pos.book, ctx.pos.chapter)?;
-                *ctx.cursor_verse = 1;
-            }
-        }
-        Action::CopyVerse => {
-            save_or_warn(
-                ctx.warnings,
-                "clipboard set",
-                copy_verse_to_clipboard(ctx.passage, ctx.pos, *ctx.cursor_verse),
-            );
-        }
+        Action::OpenFootnote => state.open_footnote_dialog(ctx),
+        Action::JumpBack => state.history_step(ctx, HistoryDir::Back)?,
+        Action::JumpForward => state.history_step(ctx, HistoryDir::Forward)?,
+        Action::CopyVerse => state.copy_verse(ctx),
         Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
-        Action::ToggleVerseLayout => {
-            state.verse_layout_two_line = !state.verse_layout_two_line;
-        }
-        Action::ToggleVisual => {
-            state.visual_anchor = if state.visual_anchor.is_some() {
-                None
-            } else {
-                Some(*ctx.cursor_verse)
-            };
-        }
-        Action::AddBookmark => {
-            let (s, e) = match state.visual_anchor {
-                Some(a) if a <= *ctx.cursor_verse => (a, *ctx.cursor_verse),
-                Some(a) => (*ctx.cursor_verse, a),
-                None => (*ctx.cursor_verse, *ctx.cursor_verse),
-            };
-            state.bookmarks.add(bookmark::Bookmark {
-                translation: ctx.db.translation().to_string(),
-                book: ctx.pos.book.clone(),
-                chapter: ctx.pos.chapter,
-                start_verse: s,
-                end_verse: e,
-                label: None,
-                created_at: bookmark::now_unix(),
-            });
-            save_or_warn(ctx.warnings, "bookmarks save (add)", state.bookmarks.save());
-            state.visual_anchor = None;
-        }
-        Action::OpenBookmarks => {
-            let mut d = crate::ui::bookmarks::BookmarksDialog::new(&state.bookmarks);
-            d.sort_canonical(&state.books);
-            state.dialog = Dialog::Bookmarks(d);
-        }
-        Action::OpenTranslations => {
-            state.dialog = Dialog::Translations(TranslationsDialog::new(
-                ctx.db.list_translations()?,
-                ctx.db.translation(),
-            ));
-        }
-        Action::Back => {
-            // In visual mode, Esc cancels the selection instead of
-            // returning to splash.
-            if state.visual_anchor.is_some() {
-                state.visual_anchor = None;
-            } else {
-                update_splash_label(
-                    &mut state.last_label_for_splash,
-                    &state.books,
-                    ctx.pos,
-                    *ctx.cursor_verse,
-                );
-                let qotd = quote::pick(ctx.db, ctx.db.translation()).unwrap_or(None);
-                state.bg = Bg::Splash(Box::new(SplashView::new(
-                    state.books.clone(),
-                    state.last_label_for_splash.clone(),
-                    state.translation_label.clone(),
-                    ctx.db.translation().to_string(),
-                    qotd,
-                )));
-            }
-        }
+        Action::ToggleVerseLayout => state.verse_layout_two_line = !state.verse_layout_two_line,
+        Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
+        Action::AddBookmark => state.add_bookmark(ctx),
+        Action::OpenBookmarks => state.open_bookmarks_dialog(),
+        Action::OpenTranslations => state.open_translations_dialog(ctx)?,
+        Action::Back => state.enter_splash(ctx),
         Action::Quit => return Ok(DispatchStep::Quit),
-        Action::SearchNext | Action::SearchPrev => {
-            if let Some(q) = state.last_query.as_deref()
-                && let Some(p) = repeat_search(
-                    ctx.db,
-                    &state.books,
-                    q,
-                    ctx.pos,
-                    *ctx.cursor_verse,
-                    matches!(action, Action::SearchNext),
-                )
-            {
-                jump_to(
-                    p,
-                    ctx.db,
-                    ctx.pos,
-                    ctx.passage,
-                    ctx.cursor_verse,
-                    &mut state.history,
-                )?;
-                update_splash_label(
-                    &mut state.last_label_for_splash,
-                    &state.books,
-                    ctx.pos,
-                    *ctx.cursor_verse,
-                );
-            }
-        }
+        Action::SearchNext => state.repeat_search_action(ctx, true)?,
+        Action::SearchPrev => state.repeat_search_action(ctx, false)?,
         _ => {
             if apply_action(
                 action,
