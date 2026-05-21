@@ -539,7 +539,7 @@ fn draw_frame(
     let status = make_status(&state.bg, state.show_sidebar);
     let bookmarked_in_chapter = bookmarks_set(
         &state.bookmarks,
-        state.bookmarks_translation(passage),
+        &passage.translation,
         &Position {
             book: passage.book_code.clone(),
             chapter: passage.chapter,
@@ -623,17 +623,6 @@ fn draw_frame(
         }
     })?;
     Ok(())
-}
-
-impl LoopState {
-    /// Translation lookup helper used only by `draw_frame` so the
-    /// `bookmarks_set` call site can read `db.translation()` without
-    /// holding `&db` (which would conflict with the simultaneous
-    /// mutable draw borrow). The active passage's translation always
-    /// matches the active DB translation.
-    fn bookmarks_translation<'a>(&self, passage: &'a Passage) -> &'a str {
-        &passage.translation
-    }
 }
 
 /// Route a key event: dialog has first refusal, then the active
