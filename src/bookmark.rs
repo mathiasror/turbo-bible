@@ -14,7 +14,11 @@ use serde::{Deserialize, Serialize};
 use crate::paths;
 use crate::state::{LEGACY_TRANSLATION, REPLACEMENT_TRANSLATION};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// PartialEq/Eq/Hash are deliberately NOT derived: production code uses
+// `same_range` (position-only equality) and a derived `==` would mean
+// label/created_at participated too. Two equalities on one type is a
+// foot-gun, so the type only has one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
     pub translation: String,
     pub book: String,
@@ -210,7 +214,17 @@ mod tests {
         };
         let txt = toml::to_string_pretty(&store).unwrap();
         let back: BookmarkStore = toml::from_str(&txt).unwrap();
-        assert_eq!(store.bookmarks, back.bookmarks);
+        // Compare field-by-field rather than via derived PartialEq — the
+        // type intentionally has only `same_range`, and the round-trip needs
+        // to assert ALL fields survive serialization (including the ones
+        // same_range omits: label, created_at).
+        assert_eq!(store.bookmarks.len(), back.bookmarks.len());
+        for (a, b) in store.bookmarks.iter().zip(back.bookmarks.iter()) {
+            assert!(a.same_range(b), "range mismatch: {a:?} vs {b:?}");
+            assert_eq!(a.translation, b.translation);
+            assert_eq!(a.label, b.label);
+            assert_eq!(a.created_at, b.created_at);
+        }
     }
 
     #[test]
