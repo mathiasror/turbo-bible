@@ -413,9 +413,6 @@ impl SplashView {
             .fg(theme::bright_white())
             .bg(theme::cyan())
             .add_modifier(Modifier::BOLD);
-        let dim_cursor = Style::new()
-            .fg(theme::bright_white())
-            .bg(theme::dark_grey());
         let filter_style = Style::new()
             .fg(theme::black())
             .bg(theme::cyan())
@@ -591,6 +588,12 @@ impl SplashView {
         let scroll_ot = scroll_for(self.cursor_ot, entries_ot.len(), visible_rows);
         let scroll_nt = scroll_for(self.cursor_nt, entries_nt.len(), visible_rows);
 
+        let entry_styles = EntryStyles {
+            sel,
+            label,
+            dim,
+            bg,
+        };
         for row in 0..visible_rows {
             let i_ot = scroll_ot + row;
             let i_nt = scroll_nt + row;
@@ -600,11 +603,7 @@ impl SplashView {
                 self.cursor_ot,
                 self.focus == SplashColumn::OT && !self.on_continue,
                 col_left,
-                sel,
-                label,
-                dim,
-                dim_cursor,
-                bg,
+                &entry_styles,
             );
             let right = render_entry_cell(
                 entries_nt.get(i_nt).copied(),
@@ -612,11 +611,7 @@ impl SplashView {
                 self.cursor_nt,
                 self.focus == SplashColumn::NT && !self.on_continue,
                 col_right,
-                sel,
-                label,
-                dim,
-                dim_cursor,
-                bg,
+                &entry_styles,
             );
             let mut spans: Vec<Span<'static>> = Vec::new();
             spans.extend(left);
@@ -713,26 +708,36 @@ fn left_padded(s: &str, width: usize) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Style bundle for [`render_entry_cell`]. Grouped so the entry-cell
+/// signature stays manageable; all four styles are derived once per
+/// render pass and shared across every cell.
+struct EntryStyles {
+    sel: Style,
+    label: Style,
+    dim: Style,
+    bg: Style,
+}
+
 fn render_entry_cell(
     book: Option<&Book>,
     idx: usize,
     cursor_idx: usize,
     column_has_focus: bool,
     width: usize,
-    sel: Style,
-    label: Style,
-    dim: Style,
-    dim_cursor: Style,
-    bg: Style,
+    styles: &EntryStyles,
 ) -> Vec<Span<'static>> {
+    let EntryStyles {
+        sel,
+        label,
+        dim,
+        bg,
+    } = *styles;
     let Some(b) = book else {
         return vec![Span::styled(" ".repeat(width), bg)];
     };
     // Only render the cursor on the column that currently has focus. The
     // unfocused column remembers its position internally, but nothing visible
     // hints at it — avoids the "ghost cursor" effect.
-    let _ = dim_cursor;
     let is_cursor = idx == cursor_idx && column_has_focus;
 
     let row_style = if is_cursor { sel } else { label };
