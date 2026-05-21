@@ -7,8 +7,6 @@
 // renaming them to satisfy clippy would obscure intent.
 #![allow(clippy::similar_names)]
 
-use std::time::{Duration, Instant};
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -22,6 +20,7 @@ use crate::quote::DailyQuote;
 use crate::text::word_wrap;
 use crate::theme;
 use crate::ui::dialog;
+use crate::ui::listnav::{ListNav, Step};
 
 const TITLE_TURBO: &[&str] = &[
     "████████╗██╗   ██╗██████╗ ██████╗  ██████╗ ",
@@ -67,8 +66,11 @@ pub struct SplashView {
     pub translation_code: String,
     pub mode: SplashMode,
     pub quote: Option<DailyQuote>,
-    pending_g: Option<Instant>,
-    count: u16,
+    /// Chord + count state for `gg`, `G`, `5j`, etc. Shared with the
+    /// list dialogs so the third copy of this state machine doesn't
+    /// have to live here. Splash-specific keys (Ctrl-D/U/F/B,
+    /// PageUp/Down, Home/End, column-switch, `o`/Enter) bypass it.
+    nav: ListNav,
 }
 
 pub enum SplashOutcome {
@@ -104,8 +106,7 @@ impl SplashView {
             translation_code,
             mode: SplashMode::Normal,
             quote,
-            pending_g: None,
-            count: 0,
+            nav: ListNav::default(),
         }
     }
 
@@ -157,20 +158,7 @@ impl SplashView {
         self.on_continue = false;
     }
 
-    const fn count_or(&self, default: usize) -> usize {
-        if self.count == 0 {
-            default
-        } else {
-            self.count as usize
-        }
-    }
-
     pub fn handle(&mut self, key: KeyEvent) -> SplashOutcome {
-        if let Some(t) = self.pending_g
-            && t.elapsed() > Duration::from_millis(500)
-        {
-            self.pending_g = None;
-        }
         match self.mode {
             SplashMode::Filter => self.handle_filter(key),
             SplashMode::Normal => self.handle_normal(key),
@@ -256,26 +244,54 @@ impl SplashView {
     }
 
     fn handle_normal(&mut self, key: KeyEvent) -> SplashOutcome {
-        // Count prefix.
-        if key.modifiers.is_empty()
-            && let KeyCode::Char(c) = key.code
-            && c.is_ascii_digit()
-            && !(self.count == 0 && c == '0')
-        {
-            // Digit guard above ensures `to_digit(10)` is 0..=9 (always fits u16).
-            let digit = u16::try_from(c.to_digit(10).unwrap_or(0)).unwrap_or(0);
-            self.count = self.count.saturating_mul(10).saturating_add(digit);
-            return SplashOutcome::Continue;
+        // Digit + j/k/g/G go through ListNav so the chord+count state
+        // lives in one place across this view and the list dialogs.
+        // 'n'/'N' are splash aliases for j/k — route them in.
+        let nav_key = match key.code {
+            KeyCode::Char('n') => KeyEvent::new(KeyCode::Char('j'), key.modifiers),
+            KeyCode::Char('N') => KeyEvent::new(KeyCode::Char('k'), key.modifiers),
+            _ => key,
+        };
+        match self.nav.handle(nav_key) {
+            Step::Down(n) => {
+                self.move_down(n as usize);
+                return SplashOutcome::Continue;
+            }
+            Step::Up(n) => {
+                self.move_up(n as usize);
+                return SplashOutcome::Continue;
+            }
+            Step::Top => {
+                if self.last.is_some() {
+                    self.on_continue = true;
+                }
+                self.set_current_cursor(0);
+                return SplashOutcome::Continue;
+            }
+            Step::BottomOrAt(n) => {
+                self.on_continue = false;
+                let max = self.current_max_idx();
+                let target = if n == 0 {
+                    max
+                } else {
+                    (n as usize).saturating_sub(1).min(max)
+                };
+                self.set_current_cursor(target);
+                return SplashOutcome::Continue;
+            }
+            Step::Pending => return SplashOutcome::Continue,
+            Step::Pass => {}
         }
 
+        // Splash-specific keys. ListNav's Pass arm already cleared any
+        // pending chord/count, so each arm here is self-contained.
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let res = match key.code {
+        match key.code {
             KeyCode::Esc | KeyCode::Char('q') if !ctrl => SplashOutcome::Quit,
             KeyCode::Char('c') if ctrl => SplashOutcome::Quit,
             KeyCode::F(2) | KeyCode::Char(':') => SplashOutcome::OpenGoto,
             KeyCode::F(3) => SplashOutcome::OpenFind,
             KeyCode::F(5) | KeyCode::Char('t') => SplashOutcome::OpenTranslations,
-
             KeyCode::Char('/') => {
                 self.mode = SplashMode::Filter;
                 self.filter.clear();
@@ -283,15 +299,9 @@ impl SplashView {
                 self.cursor_nt = 0;
                 SplashOutcome::Continue
             }
-
-            KeyCode::Enter | KeyCode::Char('o') => {
-                if let Some(p) = self.open_current() {
-                    return SplashOutcome::OpenBook(p);
-                }
-                SplashOutcome::Continue
-            }
-
-            // Column-switch
+            KeyCode::Enter | KeyCode::Char('o') => self
+                .open_current()
+                .map_or(SplashOutcome::Continue, SplashOutcome::OpenBook),
             KeyCode::Char('h') | KeyCode::Left => {
                 self.switch_focus(SplashColumn::OT);
                 SplashOutcome::Continue
@@ -306,18 +316,6 @@ impl SplashView {
                     SplashColumn::NT => SplashColumn::OT,
                 };
                 self.switch_focus(to);
-                SplashOutcome::Continue
-            }
-
-            // Vertical
-            KeyCode::Char('j' | 'n') | KeyCode::Down => {
-                let step = self.count_or(1);
-                self.move_down(step);
-                SplashOutcome::Continue
-            }
-            KeyCode::Char('k' | 'N') | KeyCode::Up => {
-                let step = self.count_or(1);
-                self.move_up(step);
                 SplashOutcome::Continue
             }
             KeyCode::Char('d') if ctrl => {
@@ -344,33 +342,6 @@ impl SplashView {
                 self.move_up(20);
                 SplashOutcome::Continue
             }
-            KeyCode::Char('G') => {
-                self.on_continue = false;
-                let max = self.current_max_idx();
-                let n = self.count;
-                let target = if n == 0 {
-                    max
-                } else {
-                    (n as usize).saturating_sub(1).min(max)
-                };
-                self.set_current_cursor(target);
-                SplashOutcome::Continue
-            }
-            KeyCode::Char('g') => {
-                if self.pending_g.is_some() {
-                    // gg → top: Continue if present, else cursor=0.
-                    if self.last.is_some() {
-                        self.on_continue = true;
-                    }
-                    self.set_current_cursor(0);
-                    self.pending_g = None;
-                } else {
-                    self.pending_g = Some(Instant::now());
-                    self.count = 0;
-                    return SplashOutcome::Continue;
-                }
-                SplashOutcome::Continue
-            }
             KeyCode::Home => {
                 if self.last.is_some() {
                     self.on_continue = true;
@@ -383,12 +354,8 @@ impl SplashView {
                 self.set_current_cursor(self.current_max_idx());
                 SplashOutcome::Continue
             }
-
             _ => SplashOutcome::Continue,
-        };
-        self.count = 0;
-        self.pending_g = None;
-        res
+        }
     }
 
     pub fn render(&self, outer: Rect, buf: &mut Buffer) {
