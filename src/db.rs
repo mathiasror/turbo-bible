@@ -149,6 +149,41 @@ pub struct Db {
     translation: String,
 }
 
+/// Open the DB read-only and list every installed translation. This is
+/// the startup probe — used to populate the picker before any
+/// translation has been chosen, so it deliberately does NOT construct a
+/// `Db` (which would require a translation code; see [`Db::open_ro`]).
+pub fn list_translations(path: &Path) -> Result<Vec<TranslationInfo>> {
+    let conn = open_ro_conn(path)?;
+    query_translations(&conn)
+}
+
+fn open_ro_conn(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("opening {}", path.display()))?;
+    conn.pragma_update(None, "query_only", "ON")?;
+    Ok(conn)
+}
+
+fn query_translations(conn: &Connection) -> Result<Vec<TranslationInfo>> {
+    let mut stmt =
+        conn.prepare_cached("SELECT code, name, language, license FROM translation ORDER BY code")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(TranslationInfo {
+                code: r.get(0)?,
+                name: r.get(1)?,
+                language: r.get(2)?,
+                license: r.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 impl Db {
     pub(crate) const fn conn(&self) -> &Connection {
         &self.conn
@@ -166,12 +201,12 @@ impl Db {
     }
 
     pub fn open_ro(path: &Path, translation: &str) -> Result<Self> {
-        let conn = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .with_context(|| format!("opening {}", path.display()))?;
-        conn.pragma_update(None, "query_only", "ON")?;
+        debug_assert!(
+            !translation.is_empty(),
+            "Db::open_ro requires a translation code; use db::list_translations \
+             to probe the DB before any translation has been picked",
+        );
+        let conn = open_ro_conn(path)?;
         Ok(Self {
             conn,
             translation: translation.to_string(),
@@ -179,20 +214,7 @@ impl Db {
     }
 
     pub fn list_translations(&self) -> Result<Vec<TranslationInfo>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT code, name, language, license FROM translation ORDER BY code",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(TranslationInfo {
-                    code: r.get(0)?,
-                    name: r.get(1)?,
-                    language: r.get(2)?,
-                    license: r.get(3)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        query_translations(&self.conn)
     }
 
     /// "King James Version (1769)  ·  en-kjv" — the subtitle shown on splash.

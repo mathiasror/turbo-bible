@@ -397,8 +397,7 @@ fn resolve_translation(args: &Args, db_path: &Path, cfg: &config::Config) -> Res
             db_path.display()
         );
     }
-    let probe = Db::open_ro(db_path, "")?;
-    let mut list = probe.list_translations()?;
+    let mut list = db::list_translations(db_path)?;
     if list.is_empty() {
         anyhow::bail!(
             "No translations installed in {}. Run scripts/import_translations.py first.",
