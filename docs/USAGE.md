@@ -22,8 +22,8 @@ reference, see the [README](../README.md). For an animated overview, see
 
 ## First launch
 
-After running the importer once (`python3 ../scripts/import_translations.py`),
-launch with `cargo run --release`. The first launch rebuilds the FTS5 index
+After running the importer once (`turbo-bible import`), launch with
+`cargo run --release`. The first launch rebuilds the FTS5 index
 with a diacritic-folding tokenizer and a prefix index. This takes about a
 second and is cached — subsequent launches start instantly.
 

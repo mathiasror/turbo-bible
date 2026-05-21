@@ -8,8 +8,8 @@
 - `just` task runner — `cargo install just` or
   `brew install just`. Optional but convenient.
 - `cargo-audit` for the audit recipe — `cargo install cargo-audit`.
-- Python 3 if you need to repopulate `bible.sqlite` from scrollmapper
-  via `scripts/import_translations.py`.
+- To populate `bible.sqlite` from scrollmapper, run `turbo-bible import`
+  (network required).
 
 ## Day-to-day
 
@@ -52,7 +52,7 @@ via `just check`.
 To populate the DB for the e2e tests:
 
 ```sh
-python3 scripts/import_translations.py
+cargo run --release -- import
 ```
 
 ## Style

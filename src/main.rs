@@ -12,6 +12,7 @@
 mod bookmark;
 mod config;
 mod db;
+mod import;
 mod keys;
 mod nav;
 mod paths;
@@ -29,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -128,8 +129,15 @@ impl History {
 }
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Turbo-Vision Bible reader")]
+#[command(
+    version,
+    about = "Turbo-Vision Bible reader",
+    args_conflicts_with_subcommands = true
+)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Path to bible.sqlite. Defaults to `$XDG_DATA_HOME/turbo-bible/bible.sqlite`
     /// (i.e. `~/.local/share/turbo-bible/bible.sqlite` on Linux/macOS).
     #[arg(long)]
@@ -147,6 +155,12 @@ struct Args {
     /// Chapter to open initially. Requires --book.
     #[arg(long, default_value_t = 1)]
     chapter: i64,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Download translations from scrollmapper and (re)build the local DB.
+    Import(import::ImportArgs),
 }
 
 type Tty = Terminal<CrosstermBackend<Stdout>>;
@@ -240,6 +254,9 @@ impl Drop for TerminalGuard {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(Commands::Import(import_args)) = &args.command {
+        return import::run(import_args);
+    }
     let db_path = resolve_db_path(&args)?;
     match db::ensure_fts_optimized(&db_path) {
         Ok(true) => eprintln!("Optimizing search index (one-time)…"),
@@ -403,14 +420,14 @@ fn resolve_translation(args: &Args, db_path: &Path, cfg: &config::Config) -> Res
     // Probe the DB for the first installed translation.
     if !db_path.exists() {
         anyhow::bail!(
-            "{} does not exist. Run `python3 scripts/import_translations.py` to create it.",
+            "{} does not exist. Run `turbo-bible import` to create it.",
             db_path.display()
         );
     }
     let mut list = db::list_translations(db_path)?;
     if list.is_empty() {
         anyhow::bail!(
-            "No translations installed in {}. Run scripts/import_translations.py first.",
+            "No translations installed in {}. Run `turbo-bible import` first.",
             db_path.display()
         );
     }

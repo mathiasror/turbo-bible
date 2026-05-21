@@ -3,57 +3,37 @@
 Planned work captured between sessions. Take an item, do it, delete its
 entry.
 
-## Port `scripts/import_translations.py` into a Rust subcommand
+## Slice D: empty-DB bootstrap prompt
 
-Replace the sibling Python script with `turbo-bible import [--only ...]`
-so the project ships as a single binary with no Python dependency.
+On launch, when `db_path` doesn't exist, prompt: "No translations
+installed. Press `i` to import KJV, Norsk 1930, RV1909 (~6 MB)." The
+prompt invokes the existing `turbo-bible import` logic in-process
+(`crate::import::run(&ImportArgs::default())`) rather than shelling
+out, so the user stays inside the TUI.
 
 ### Outline
 
-- New `src/import.rs` containing:
-  - `const SCROLLMAPPER_COMMIT: &str` (pinned)
-  - `const SOURCES: &[(code, file, name, license, language)]`
-  - `const SCROLLMAPPER_NAME_TO_OSIS: &[(&str, &str)]`
-  - `const KJV_LABELS / NB_1930_LABELS / ES_RV1909_LABELS: &[(osis,
-    name, abbrev)]`
-  - `const SCHEMA_SQL: &str` (lift from `import_translations.py`)
-- New CLI subcommand. Cleanest with `clap`'s `#[derive(Subcommand)]`:
-  - `turbo-bible run` (current behaviour, default when no subcommand)
-  - `turbo-bible import [--only code,code] [--db PATH] [--backup-dir
-    PATH] [--cache-dir PATH] [--no-backup] [--backup-only]`
-- HTTP download with `ureq` (smaller than `reqwest`; blocking is the
-  natural fit for a one-shot script).
-- Reuse existing rusqlite handle and `ensure_fts_optimized` — no new
-  DB-access code needed.
-- Backup step (`sqlite3 .dump` equivalent): rusqlite doesn't expose
-  `iterdump`; either port the iterdump Python implementation
-  (~80 lines) or shell out to `sqlite3` if installed. Defer the
-  decision until porting; the legacy `nb-2024` dump is a one-time
-  artifact and can stay where it is.
-- On launch, when `db_path` doesn't exist, prompt: "No translations
-  installed. Press `i` to import KJV, Norsk 1930, RV1909 (~6 MB)."
-  This is Slice D of the original plan
-  (`~/.claude/plans/my-idea-is-to-foamy-dawn.md`).
+- New TUI state on `main.rs` startup: if `resolve_db_path()` returns a
+  path that doesn't exist, render a centred dialog (style: see
+  `src/ui/dialog.rs`) with the prompt text and an `i` / `Esc` chord.
+- On `i`: drop terminal raw-mode (so download progress prints land
+  cleanly), call `import::run(...)`, restore raw-mode, then resume
+  normal startup. On `Esc`: quit with a non-zero exit code.
+- `import::ImportArgs::default()` (add it) returns the same defaults
+  the CLI computes, so the in-process path matches `turbo-bible
+  import` exactly.
 
 ### Tradeoffs
 
-- **Pros**: single distributable; no Python toolchain; the empty-DB
-  bootstrap path becomes ergonomic.
-- **Cons**: ~200 LoC, adds `ureq` (~50 KB) as a runtime dep; legacy
-  `crawl.py` and `scripts/import_translations.py` get deprecated.
+- **Pros**: removes the only manual setup step; new users get a
+  working reader on first launch.
+- **Cons**: ~80 LoC of TUI dialog + a teardown / rebuild of the
+  terminal guard around the download. Network failures mid-import
+  leave the user in a bad spot — needs a clean retry / abort path.
 
 ### Acceptance
 
-- `turbo-bible import` populates `~/.local/share/turbo-bible/bible.sqlite`
-  with all three translations, matching what the Python script produces
-  byte-for-byte (verse counts, FTS index version, book labels).
-- A fourth e2e test covers `turbo-bible import` end-to-end against a
-  temp HOME (network access required; mark `#[ignore]` for offline CI
-  or use the existing `~/.cache/turbo-bible/scrollmapper/` cache).
-- README references `turbo-bible import` instead of the Python script.
-- `scripts/import_translations.py` and `crawl.py` either deleted or
-  archived under `legacy/`.
-
-### Effort
-
-1–2 hours; mostly mechanical translation.
+- Launching `turbo-bible` against an empty XDG home shows the prompt.
+- Pressing `i` performs the import in-process and then lands the user
+  on the splash screen with all three translations available.
+- Pressing `Esc` exits cleanly with exit code 1.

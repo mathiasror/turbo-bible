@@ -6,7 +6,7 @@
 //!
 //! These tests depend on a populated `~/.local/share/turbo-bible/bible.sqlite`
 //! (the dev's installed DB). They skip if it's missing rather than fail —
-//! CI can populate it via `scripts/import_translations.py` if desired.
+//! CI can populate it via `turbo-bible import` if desired.
 //!
 //! Reading the rendered TUI characters is unreliable (each cell is positioned
 //! individually), so assertions read the side-effect files (state.toml,

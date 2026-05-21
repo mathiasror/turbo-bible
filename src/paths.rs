@@ -31,3 +31,15 @@ pub fn data_dir() -> Result<PathBuf> {
     p.push("turbo-bible");
     Ok(p)
 }
+
+/// `~/.cache/turbo-bible/` on Linux / macOS via `etcetera`.
+///
+/// # Errors
+/// Propagates `etcetera::AppStrategyArgs` failures (`HOME` unset on
+/// platforms where it's required).
+pub fn cache_dir() -> Result<PathBuf> {
+    let strategy = choose_base_strategy()?;
+    let mut p = strategy.cache_dir();
+    p.push("turbo-bible");
+    Ok(p)
+}

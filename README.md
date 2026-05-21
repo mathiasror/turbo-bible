@@ -16,7 +16,7 @@ For a narrative walk-through of every feature, see
 the reference; the guide is the tutorial.
 
 All three are imported from [`scrollmapper/bible_databases`][scrollmapper] at
-a pinned commit by `../scripts/import_translations.py`.
+a pinned commit by `turbo-bible import`.
 
 [scrollmapper]: https://github.com/scrollmapper/bible_databases
 
@@ -25,7 +25,7 @@ a pinned commit by `../scripts/import_translations.py`.
 Run the importer once to populate the database:
 
 ```sh
-python3 ../scripts/import_translations.py
+turbo-bible import
 ```
 
 It writes to `$XDG_DATA_HOME/turbo-bible/bible.sqlite` (typically
