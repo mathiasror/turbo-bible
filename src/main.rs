@@ -14,6 +14,7 @@ mod text;
 mod theme;
 mod ui;
 
+use std::borrow::Cow;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -445,7 +446,7 @@ fn run(
             let synth: Option<KeyEvent> = match raw_event {
                 Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
                 Event::Mouse(me) => {
-                    mouse_to_key(me, term_height, &make_status(&state.bg, state.show_sidebar))
+                    mouse_to_key(me, term_height, make_status(&state.bg, state.show_sidebar))
                 }
                 _ => None,
             };
@@ -572,7 +573,7 @@ fn draw_frame(
                     state.verse_layout_two_line,
                 );
                 crate::ui::statusbar::render(
-                    &status,
+                    status,
                     ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
                     buf,
                     &mode_tag,
@@ -598,7 +599,7 @@ fn draw_frame(
                 });
                 ui::Frame {
                     menu_title: &menu_title,
-                    status: &status,
+                    status,
                     status_mode: &mode_tag,
                     passage: Some(passage),
                     cursor_verse,
@@ -981,6 +982,12 @@ fn dispatch_reading(
     Ok(DispatchStep::Continue)
 }
 
+/// Compute the set of bookmarked verse numbers for the given chapter.
+///
+/// Called per draw frame (~6 Hz). The bookmark store is small (<100
+/// entries in any realistic session) so the O(n) scan + BTreeSet
+/// allocation here is well under the noise floor; not worth the
+/// borrow-checker contortions of a cached invalidation scheme.
 fn bookmarks_set(
     store: &bookmark::BookmarkStore,
     translation: &str,
@@ -997,91 +1004,101 @@ fn bookmarks_set(
     out
 }
 
-fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, two_line: bool) -> String {
+fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, two_line: bool) -> Cow<'static, str> {
     match dialog {
-        Dialog::Goto(_) => "-- GOTO --".into(),
-        Dialog::Find(_) => "-- FIND --".into(),
-        Dialog::Footnote(_) => "-- NOTES --".into(),
-        Dialog::Help(_) => "-- HELP --".into(),
-        Dialog::Bookmarks(_) => "-- BOOKMARKS --".into(),
-        Dialog::Translations(_) => "-- TRANSLATIONS --".into(),
+        Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
+        Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
+        Dialog::Footnote(_) => Cow::Borrowed("-- NOTES --"),
+        Dialog::Help(_) => Cow::Borrowed("-- HELP --"),
+        Dialog::Bookmarks(_) => Cow::Borrowed("-- BOOKMARKS --"),
+        Dialog::Translations(_) => Cow::Borrowed("-- TRANSLATIONS --"),
         Dialog::None => match bg {
             Bg::Splash(s) => match s.mode {
-                crate::ui::splash::SplashMode::Normal => "-- NORMAL --".into(),
-                crate::ui::splash::SplashMode::Filter => "-- FILTER --".into(),
+                crate::ui::splash::SplashMode::Normal => Cow::Borrowed("-- NORMAL --"),
+                crate::ui::splash::SplashMode::Filter => Cow::Borrowed("-- FILTER --"),
             },
             // Reading view: include the verse-layout marker so the user can
             // tell 1L from 2L without counting blank lines between verses.
-            Bg::Reading => {
-                let layout = if two_line { "2L" } else { "1L" };
-                if visual {
-                    format!("-- VISUAL \u{00B7} {layout} --")
-                } else {
-                    format!("-- NORMAL \u{00B7} {layout} --")
-                }
-            }
+            // Four reading-view variants are enumerated as &'static literals
+            // so this path also stays allocation-free.
+            Bg::Reading => match (visual, two_line) {
+                (true, true) => Cow::Borrowed("-- VISUAL \u{00B7} 2L --"),
+                (true, false) => Cow::Borrowed("-- VISUAL \u{00B7} 1L --"),
+                (false, true) => Cow::Borrowed("-- NORMAL \u{00B7} 2L --"),
+                (false, false) => Cow::Borrowed("-- NORMAL \u{00B7} 1L --"),
+            },
         },
     }
 }
 
-fn make_status(bg: &Bg, show_sidebar: bool) -> Vec<Shortcut<'static>> {
+const STATUS_SPLASH: &[Shortcut<'static>] = &[
+    Shortcut {
+        key: "Enter",
+        action: "Open",
+    },
+    Shortcut {
+        key: "F2",
+        action: "Goto",
+    },
+    Shortcut {
+        key: "F3",
+        action: "Find",
+    },
+    Shortcut {
+        key: "Esc",
+        action: "Quit",
+    },
+];
+
+const STATUS_READING_HIDE: &[Shortcut<'static>] = &reading_shortcuts("Hide");
+const STATUS_READING_REFS: &[Shortcut<'static>] = &reading_shortcuts("Refs");
+
+const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 9] {
+    [
+        Shortcut {
+            key: "F1",
+            action: "Help",
+        },
+        Shortcut {
+            key: "F2",
+            action: "Goto",
+        },
+        Shortcut {
+            key: "F3",
+            action: "Find",
+        },
+        Shortcut {
+            key: "K",
+            action: "Notes",
+        },
+        Shortcut {
+            key: "v",
+            action: "Select",
+        },
+        Shortcut {
+            key: "T",
+            action: "Layout",
+        },
+        Shortcut {
+            key: "Tab",
+            action: tab_action,
+        },
+        Shortcut {
+            key: "Esc",
+            action: "Home",
+        },
+        Shortcut {
+            key: "Q",
+            action: "Quit",
+        },
+    ]
+}
+
+fn make_status(bg: &Bg, show_sidebar: bool) -> &'static [Shortcut<'static>] {
     match bg {
-        Bg::Splash(_) => vec![
-            Shortcut {
-                key: "Enter",
-                action: "Open",
-            },
-            Shortcut {
-                key: "F2",
-                action: "Goto",
-            },
-            Shortcut {
-                key: "F3",
-                action: "Find",
-            },
-            Shortcut {
-                key: "Esc",
-                action: "Quit",
-            },
-        ],
-        Bg::Reading => vec![
-            Shortcut {
-                key: "F1",
-                action: "Help",
-            },
-            Shortcut {
-                key: "F2",
-                action: "Goto",
-            },
-            Shortcut {
-                key: "F3",
-                action: "Find",
-            },
-            Shortcut {
-                key: "K",
-                action: "Notes",
-            },
-            Shortcut {
-                key: "v",
-                action: "Select",
-            },
-            Shortcut {
-                key: "T",
-                action: "Layout",
-            },
-            Shortcut {
-                key: "Tab",
-                action: if show_sidebar { "Hide" } else { "Refs" },
-            },
-            Shortcut {
-                key: "Esc",
-                action: "Home",
-            },
-            Shortcut {
-                key: "Q",
-                action: "Quit",
-            },
-        ],
+        Bg::Splash(_) => STATUS_SPLASH,
+        Bg::Reading if show_sidebar => STATUS_READING_HIDE,
+        Bg::Reading => STATUS_READING_REFS,
     }
 }
 
