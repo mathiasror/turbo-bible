@@ -17,6 +17,15 @@ pub enum HelpOutcome {
     Cancel,
 }
 
+/// Row-type for the help table; either a section heading or a
+/// `(keys, description)` entry. Module-level so `render` doesn't trip
+/// `clippy::items_after_statements`.
+enum Row {
+    Section(&'static str),
+    Entry(&'static str, &'static str),
+}
+use Row::{Entry, Section};
+
 impl HelpDialog {
     pub const fn new() -> Self {
         Self
@@ -48,11 +57,6 @@ impl HelpDialog {
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
 
-        enum Row {
-            Section(&'static str),
-            Entry(&'static str, &'static str),
-        }
-        use Row::{Entry, Section};
         let rows: &[Row] = &[
             Section("Movement"),
             Entry("j  k  ↓ ↑", "next / previous verse"),

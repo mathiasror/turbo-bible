@@ -220,10 +220,9 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
             verse: None,
         });
     }
-    let (chap_str, verse_str) = match rest.find([':', ',', '.']) {
-        Some(i) => (rest[..i].trim(), rest[i + 1..].trim()),
-        None => (rest, ""),
-    };
+    let (chap_str, verse_str) = rest
+        .find([':', ',', '.'])
+        .map_or((rest, ""), |i| (rest[..i].trim(), rest[i + 1..].trim()));
     let chapter: i64 = chap_str.parse().ok()?;
     if chapter < 1 {
         return None;

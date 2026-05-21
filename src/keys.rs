@@ -291,10 +291,7 @@ impl KeyState {
             (KeyCode::Char(':'), false, _) => Resolve::Action(Action::OpenGoto),
 
             // Multi-key starters.
-            (KeyCode::Char('Z'), false, true) => Resolve::Partial,
-            (KeyCode::Char('g'), false, true) => Resolve::Partial,
-            (KeyCode::Char('['), false, true) => Resolve::Partial,
-            (KeyCode::Char(']'), false, true) => Resolve::Partial,
+            (KeyCode::Char('Z' | 'g' | '[' | ']'), false, true) => Resolve::Partial,
 
             _ => Resolve::Unknown,
         }

@@ -19,7 +19,7 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
     let base = theme::menubar_style();
     let key = Style::new()
         .fg(theme::bright_white())
-        .bg(theme::menubar_style().bg.unwrap_or(theme::light_grey()))
+        .bg(theme::menubar_style().bg.unwrap_or_else(theme::light_grey))
         .add_modifier(Modifier::BOLD);
     // VISUAL gets a high-contrast yellow pill so the eye doesn't have to read
     // the four letters — the colour shift alone signals mode change. Other

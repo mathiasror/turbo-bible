@@ -1,535 +1,387 @@
-# Rust Review: turbo-bible
+# Rust Review: turbo-bible (round 2)
 
-_Generated 2026-05-20. Baseline logs in `target/rust-review/`._
+_Generated 2026-05-21. Baseline logs in `target/rust-review/`._
 
-Scope: a single binary crate (`publish = false`), Rust 2024 edition, MSRV
-1.88, ~3.4k lines of source plus ~3.6k lines of tests. No `unsafe` code.
-The CI gate (`cargo fmt --check`, `cargo clippy -D warnings`, `cargo test
---all-features`, and `cargo audit`) is already enforced.
+Second-pass review of the same crate after the 13-item follow-up sweep
+landed in `f76fabd`. The previous review's blockers (atomic
+`switch_translation`, bounded `History`, `App`-style refactor of
+`run()`, deduped `word_wrap`/`config_dir`, RAII `TerminalGuard`,
+`#![deny(unsafe_code)]`, …) are all in. This pass focuses on what's
+left after the easy wins.
 
 Baseline ground truth:
 - `cargo build --all-targets --all-features`: clean.
 - `cargo clippy --all-targets --all-features -- -D warnings`: clean.
-- `cargo clippy -W clippy::pedantic -W clippy::nursery`: **102 warnings**
-  (94 from the bin + 8 unique to tests). Triaged below.
+- `cargo clippy -W clippy::pedantic -W clippy::nursery`: **25 warnings**
+  (down from 102 last round). Triaged below.
 - `cargo doc --no-deps --all-features`: clean.
-- `cargo test --no-run`: clean.
+- `cargo test --all-features`: 71 unit + 5 e2e tests, all pass.
 - `cargo audit`: 0 advisories.
-- `cargo tree -d`: several known transitive duplicates (see §10).
+- `cargo tree -d`: unchanged transitive duplicates (mostly via `rexpect`
+  and `ratatui`).
 
 ## Executive summary
 
-- The binary is in solid shape: zero `unsafe`, clean clippy, clean audit,
-  good test coverage including proptest on the reference parser and PTY
-  e2e for state migrations. CI runs the same gate contributors run
-  locally — exemplary.
-- The largest blocker for "release readiness" is `run()` in
-  `src/main.rs:314` weighing in at **402 lines** with deeply nested
-  dialog/bg routing. It works but is hard to extend and review.
-- `switch_translation` (`src/main.rs:1032`) mutates `db.translation`
-  before the follow-up calls that depend on it; if any of those fail the
-  reader is left holding a `Db` pointing at one translation while the
-  in-memory `books`/`passage`/`label` describe another. This is a real
-  inconsistency window, not just clippy noise.
-- `History::push` (`src/main.rs:83`) is unbounded — a multi-hour
-  reading session walking chapters will grow the stack forever. Trivial
-  bound to add.
-- There is duplication that's worth removing now while the API surface
-  is still small: `word_wrap` exists in both `render.rs:233` and
-  `splash.rs:688`; `config_dir()` is reimplemented in three modules
-  (`config.rs`, `state.rs`, `bookmark.rs`).
-- 102 pedantic/nursery warnings cluster into a small number of
-  recurring patterns (`map(_).unwrap_or(_)` → `map_or`, `as` casts that
-  should be `try_from`, function-too-many-lines, identical match arms).
-  None are alone a blocker, but they're worth taking in one sweep to
-  shrink the noise floor before adopting them as CI gates.
+- The crate is in genuinely good shape. Zero blockers this round —
+  everything that follows is "raise the bar," not "fix a real bug."
+- The refactor of `run()` into `LoopState` + `AppCtx` + per-mode
+  dispatchers worked. `dispatch_reading` is now the only function still
+  over 100 lines (146) and `main()` itself is at 116 — both expected
+  given the surface area they coordinate, but worth the next pass.
+- The remaining 25 pedantic warnings are highly clustered (5 ×
+  `similar_names` in splash, 4 × `items_after_statements` in help,
+  3 × `match_same_arms`, 3 × `unused_self`, 6 × `too_many_lines`,
+  plus singletons). With the easy ones done, the rest are either taste
+  calls or genuinely worth touching — see §3.
+- `SplashView` has carried over its own bespoke chord+count state
+  (`pending_g`, `count`) instead of using the `ListNav` you already
+  built for the list dialogs. Consolidating would remove the third copy
+  of `u16::try_from(c.to_digit(10).unwrap_or(0)).unwrap_or(0)` in the
+  tree (which clippy points at as `cast_lossless` candidates).
+- `Bookmark` derives `PartialEq`/`Hash` AND has a custom `same_range`
+  method that compares a strict subset of fields. Today no caller
+  notices, but the two equalities will drift; pick one.
 
 ## Blockers
 
-### 1. `switch_translation` mutates `Db` before fallible follow-ups
-
-- **Location:** `src/main.rs:1032-1052`
-- **Problem:** `db.translation = code.to_string();` happens before
-  `db.list_books()?`, `db.translation_label()?`, and `db.load_passage(...)?`.
-  If any of those fail (e.g. a translation row missing labels or verses
-  for the requested book/chapter), `db.translation` is left pointing at
-  the new code while `books`, `translation_label`, `passage`, and
-  `cursor_verse` still describe the old translation. The reader is then
-  out of sync with itself and the persisted state at quit reflects the
-  partially-swapped world.
-- **Fix:** Either (a) compute everything against a candidate then commit
-  atomically:
-
-  ```rust
-  let original = std::mem::replace(&mut db.translation, code.to_string());
-  let do_swap = || -> Result<_> {
-      let new_books = db.list_books()?;
-      let new_label = db.translation_label()?;
-      let new_passage = db.load_passage(&pos.book, pos.chapter)?;
-      Ok((new_books, new_label, new_passage))
-  };
-  match do_swap() {
-      Ok((b, l, p)) => { *books = b; *translation_label = l; *passage = p; }
-      Err(e) => { db.translation = original; return Err(e); }
-  }
-  ```
-
-  Or (b) treat `Db` as immutable in its translation: build a fresh `Db`
-  for the new translation and swap. The second is cleaner long-term but
-  forces the caller to plumb the new handle through.
-- **Rationale:** A failed translation switch should leave the reader in
-  the pre-switch state, not in a half-swapped state that the next save
-  will persist as corrupt.
-
-### 2. `run()` is 402 lines with deeply nested match/match/match
-
-- **Location:** `src/main.rs:314-741`
-- **Problem:** `clippy::too_many_lines` (402/100). The function holds the
-  draw closure, the event poll loop, all dialog routing, all background
-  routing, and all action dispatch in a single body. Every match arm
-  reaches into the same locals (`bg`, `dialog`, `pos`, `passage`,
-  `cursor_verse`, `history`, `bookmarks`, `last_label_for_splash`,
-  `warnings`, `visual_anchor`). Adding a new dialog means editing five
-  places.
-- **Fix:** Lift each `Dialog::*` arm into a method on a small `App`
-  struct that owns the mutable state. The shape would be:
-
-  ```rust
-  struct App<'a> { /* the fields currently passed around in run() */ }
-  impl App<'_> {
-      fn handle_goto(&mut self, ev: GotoOutcome) -> Result<DialogTransition> { ... }
-      fn handle_find(&mut self, ev: FindOutcome) -> Result<DialogTransition> { ... }
-      // ... one per dialog
-      fn dispatch_action(&mut self, action: Action) -> Result<Loop> { ... }
-  }
-  enum DialogTransition { Close, KeepOpen, Replace(Dialog) }
-  enum Loop { Continue, Exit }
-  ```
-
-  This shrinks `run()` to "poll → route → draw" and makes each handler
-  individually testable.
-- **Rationale:** The function is already at the boundary where reviewers
-  miss subtle changes (the dialog-side `update_splash_label` calls are
-  identical across six arms — easy place to forget one). Refactoring
-  before adding more dialogs (the BACKLOG.md `import` subcommand will
-  add at least one) is materially cheaper than after.
-
-### 3. `History` stack grows without bound
-
-- **Location:** `src/main.rs:71-104`
-- **Problem:** `History::push` only `truncate`s entries ahead of the
-  cursor on a new push; entries behind the cursor accumulate forever. A
-  long reading session that walks `]b`/`]b`/`]b` and back over hours
-  will retain every visited chapter.
-- **Fix:** Cap the stack at e.g. 100 entries and drop from the front
-  when pushing past the cap. Adjust `cur` accordingly:
-
-  ```rust
-  const HISTORY_CAP: usize = 100;
-  fn push(&mut self, p: Position) {
-      self.stack.truncate(self.cur + 1);
-      if self.stack.last().is_none_or(|last| !last.same_chapter(&p)) {
-          self.stack.push(p);
-          if self.stack.len() > HISTORY_CAP {
-              let drop = self.stack.len() - HISTORY_CAP;
-              self.stack.drain(..drop);
-              self.cur = self.cur.saturating_sub(drop);
-          } else {
-              self.cur = self.stack.len() - 1;
-          }
-      }
-  }
-  ```
-
-- **Rationale:** Trivial to bound; the user-visible behavior of `Ctrl-O`/`Ctrl-I`
-  is unchanged for any session shorter than 100 jumps. Today the only
-  thing that holds the leak in check is closing the program.
+None.
 
 ## Strong recommendations
 
-### 1. Eliminate the inconsistency window in `theme::init`
+### 1. `dispatch_reading` is the new outlier at 146 lines
 
-- **Location:** `src/theme.rs:14-20`
-- **Problem:** `init()` ignores the `Err` from `OnceLock::set`. If init
-  is called twice (e.g. a future test setup), the second call is
-  silently dropped and the theme remains whatever it was first set to.
-  Worse: any code that calls a theme accessor *before* `init` runs (eg.
-  via lazy initialization in `theme()`) will lock in the default palette
-  forever, then `init()` becomes a no-op.
-- **Fix:** Either pre-condition the init at startup with an `expect` so
-  double-init is loud, or expose a `set_or_log` that warns. For a
-  binary-only crate, `expect("theme initialized twice")` is fine.
-- **Rationale:** The fire-and-forget `let _ = ...` is a known-loud
-  failure mode silenced. With `OnceLock` plus a single call site this
-  isn't biting today, but it's a "Chesterton's fence" for the next
-  contributor.
+- **Location:** `src/main.rs:816-969`
+- **Problem:** The Bg/Reading branch of the run loop now lives here. It
+  works, but every `Action::*` arm reaches into the same locals
+  (`state.bg`, `state.dialog`, `state.last_label_for_splash`,
+  `state.bookmarks`, `state.visual_anchor`, `ctx.pos`, `ctx.passage`,
+  `ctx.cursor_verse`, `ctx.warnings`). Adding a new action means
+  editing one more arm and reaching the same five fields. `clippy::too_many_lines`
+  flags it (146/100).
+- **Fix:** Split out the high-cardinality groups into `impl LoopState`
+  methods, mirroring what was done for the dispatcher boundaries:
+  - `fn open_footnote(&mut self, ctx: &mut AppCtx) -> Dialog`
+  - `fn jump_back(&mut self, ctx: &mut AppCtx) -> Result<()>` /
+    `fn jump_forward(...)` — already isomorphic to each other; could
+    share an inner `step(direction: HistoryStep)` helper.
+  - `fn enter_splash(&mut self, ctx: &mut AppCtx)` for the `Action::Back`
+    fall-through that rebuilds `SplashView`.
+  - `fn add_bookmark(&mut self, ctx: &mut AppCtx)` — owns the
+    visual-anchor arithmetic.
+  - `fn enter_visual(&mut self, cursor: i64)` / `fn exit_visual(&mut self)`.
+  This shrinks the arm bodies to one-line method calls and exposes the
+  units that are actually testable in isolation.
+- **Rationale:** Same logic as last round's `run()` finding: refactor
+  before the BACKLOG.md `import` subcommand lands and the table grows
+  further. The previous reviewer was right that this kind of file
+  rewards aggressive method extraction.
 
-### 2. Deduplicate `word_wrap` and `config_dir`
+### 2. `SplashView` reinvents `ListNav`
 
-- **Locations:**
-  - `src/render.rs:233-256` and `src/ui/splash.rs:688-713` — same
-    greedy word-wrap implementation, byte-for-byte except for the
-    panic-on-empty case in `splash.rs`. They will drift.
-  - `src/config.rs:336-341`, `src/state.rs:42-47`,
-    `src/bookmark.rs:118-123` — three copies of the same XDG
-    config-dir resolution. If `etcetera`'s strategy ever changes (or
-    we want to honor `$TURBO_BIBLE_CONFIG_DIR` for tests), it has to
-    change in three places.
-- **Fix:** `word_wrap` belongs in a `src/text.rs` (or top of
-  `render.rs`, re-exported). `config_dir`/`data_dir` belong on a
-  single `src/paths.rs` that owns XDG resolution and the
-  `turbo-bible` subdirectory join. Make them `pub(crate)` and import
-  from the call sites.
-- **Rationale:** Three copies is the threshold where a small abstraction
-  is unambiguously cheaper than the duplication.
+- **Location:** `src/ui/splash.rs:64-67, 163-389` vs
+  `src/ui/listnav.rs:1-99`.
+- **Problem:** `SplashView` carries its own `pending_g: Option<Instant>`
+  and `count: u16` plus an inline state machine in `handle_normal` for
+  digit accumulation, `gg`, `G`, `Ctrl-D`/`U`/`F`/`B`, `PageUp`/`Down`,
+  `Home`/`End`. The list dialogs (`bookmarks`, `translations`,
+  `footnote`) have all been routed through `ListNav` already; this is
+  the third copy. The third instance of `u16::try_from(c.to_digit(10).unwrap_or(0)).unwrap_or(0)`
+  (also in `keys.rs:159` and `listnav.rs:41`) lives here.
+- **Fix:** Extend `ListNav` with the splash-shaped extras and replace
+  the inline state machine. The honest blockers are:
+  - **Two-column cursor.** Splash has `cursor_ot` + `cursor_nt` + a
+    `focus: SplashColumn` selector. `ListNav` is single-column. Either
+    parameterise `ListNav` over a `Cursor` trait (overkill) or hold
+    two `ListNav`s on `SplashView` and dispatch by focus.
+  - **`Continue` row above the columns.** Splash's `on_continue` flag
+    intercepts navigation. Wrap the `ListNav::Step` return in a thin
+    `match` that consumes `on_continue` for the top boundary case.
+  - **Time-based chord reset.** `SplashView::handle` walks `pending_g`'s
+    `Instant`; `ListNav` resets purely on the next keypress. The
+    list-dialog behavior is arguably better (no hidden timeout); adopt
+    it on splash and drop the `Instant` field.
+- **Rationale:** Three implementations of the same vim-list state
+  machine is the threshold where the abstraction earns its keep. The
+  test fixture in `splash.rs` (`move_up_from_top_lands_on_continue`)
+  already pins the only splash-specific behaviour worth preserving.
 
-### 3. Clippy pedantic clean-up — high-value pass
+### 3. The remaining 25 pedantic warnings, triaged
 
-The 102 pedantic/nursery warnings cluster as follows. Take the bulk in
-one mechanical sweep; the others can become CI gates afterward.
-
-| Pattern | Count | Auto-fix? |
+| Pattern | Count | Recommendation |
 |---|---|---|
-| `map(f).unwrap_or(v)` → `map_or(v, f)` | 14 | yes |
-| `as` cast that could truncate | 14 | partial |
-| `this could be a const fn` | 17 | yes |
-| `format!("{}", x)` → `format!("{x}")` | 5 | yes |
-| `unnecessary structure name repetition` | 5 | yes |
-| `binding's name too similar` | 5 | rename |
-| `identical match arms` | 8 | merge |
-| `unnested or-patterns` (`Foo \| Bar` in let) | 4 | yes |
-| `function has too many lines` | 6 | refactor |
-| `unused self argument` | 2 | drop |
-| `clippy::cast_possible_truncation` for screen widths | several | usually safe |
+| `clippy::similar_names` in splash (`books_ot`/`books_nt`, `entries_ot`/`entries_nt`, `i_ot`/`i_nt`, …) | 5 | Allow at the module level (`#![allow(clippy::similar_names)]` in `splash.rs`); the OT/NT distinction is the whole point and renaming would obscure intent. |
+| `clippy::items_after_statements` in `help.rs:51-55` (the `Row` enum + `use Row::{...}` declared mid-function) | 4 | Hoist the `enum Row` and `use` to the top of `render`. Trivial. |
+| `clippy::match_same_arms` — keys.rs:294-297 (4 chord starters → `Resolve::Partial`), splash.rs:270-274 (F2/`:` → OpenGoto, F5/`t` → OpenTranslations) | 3 | Merge with `|` patterns. Clippy's auto-suggestion is correct; the only reason these are still here is they're cosmetic. |
+| `clippy::too_many_lines` — `render::render_passage` (160), `find::render` (150), `splash::handle_normal` (124), `splash::render` (262), `main::main` (116), `main::dispatch_reading` (146) | 6 | See §1 for `dispatch_reading`. `splash::render` is the biggest; split into helper `fn render_title`, `fn render_filter_row`, `fn render_columns`. The renderers are pure functions of `&self` + a `Buffer`, so extraction is mechanical. |
+| `clippy::unused_self` — `help::HelpDialog::handle`/`render`, `main::LoopState::bookmarks_translation` | 3 | `HelpDialog` is a unit struct; make `handle`/`render` associated functions (or implement `Widget` for `&HelpDialog`). `bookmarks_translation` is dead-weight — see §4. |
+| `clippy::option_if_let_else` in `goto.rs:223` (the `match rest.find([':',',','.'])`) | 1 | Apply the suggestion (`map_or`); same semantics, less indentation. |
+| `clippy::or_fun_call` in `statusbar.rs:22` — `unwrap_or(theme::light_grey())` | 1 | Swap for `unwrap_or_else(theme::light_grey)`. One-character fix that actually avoids the eager call. |
+| `clippy::useless_let_if_seq` in `splash.rs:522` (the `cursor_extra` accumulator) | 1 | Rewrite as `let cursor_extra = if ... { 1 } else { 0 };` — the suggestion is correct. |
+| `clippy::equatable_if_let` in `main.rs:716` — `if let HelpOutcome::Cancel = d.handle(key)` | 1 | Use `matches!`. |
+| `clippy::needless_pass_by_ref_mut` on `apply_action(pos: &mut Position, ...)` at `main.rs:1264` | 1 | False positive — `pos` is written through `jump_to`'s `&mut Position` parameter; clippy can't follow the call. Add `#[allow(clippy::needless_pass_by_ref_mut, reason = "written via jump_to call below")]`. |
 
-Suggestion: take the first eight rows as one PR (`cargo clippy --fix
-... --allow-dirty -- -W clippy::pedantic` produces 55 autofixes), then
-bump `justfile`'s `lint` to include `clippy::pedantic` selectively
-with allowlist entries for the noisy ones. The remaining
-`cast_possible_truncation` warnings are nearly all on `chars().count()
-as u16` for screen positions; replace with `u16::try_from(...).unwrap_or(u16::MAX)`
-or accept the lint with a per-call `#[allow]` + justification — silent
-truncation here would only manifest on a >65k-column terminal, which
-warrants a comment, not paranoia code.
+Aim: take everything except `similar_names` and `too_many_lines` in one
+mechanical PR (those two need a refactor or a module-level allow with a
+justification, not a touch-each-line sweep).
 
-### 4. Truncation casts: a real one and many cosmetic ones
+### 4. `LoopState::bookmarks_translation` is a no-op wrapper
 
-- **Real one:** `src/ui/splash.rs:842,852` cast `usize` → `i64` to set
-  `ord` on a fake-book builder used only in tests. Safe in practice but
-  flagged by `cast_possible_wrap`. Use `i64::try_from(i).unwrap()`.
-- **Cosmetic:** `src/main.rs:917,921` cast a count `u16` → `i64`. Use
-  `i64::from(n)` — infallible, clippy-clean.
-- **Slightly risky:** `c.to_digit(10).unwrap() as u16` at
-  `src/keys.rs:159`, `src/ui/listnav.rs:43`, `src/ui/splash.rs:262`.
-  `c.is_ascii_digit()` is checked just above, so `.unwrap()` can't
-  panic, and `to_digit(10)` returns at most 9 so the `as u16` can't
-  truncate. Still: prefer `u16::from(c.to_digit(10).unwrap() as u8)` or
-  rewrite as `c as u32 - '0' as u32` → `try_from` to avoid the
-  brittleness invariant — one rename elsewhere and an audit becomes
-  necessary.
-- **Rationale:** Casts that *can't* truncate today are still landmines
-  when a contributor changes a nearby type. Make them obviously
-  infallible.
+- **Location:** `src/main.rs:628-637`
+- **Problem:** The method signature is `fn bookmarks_translation<'a>(&self, passage: &'a Passage) -> &'a str` and the body is literally `&passage.translation`. `self` is unused (`clippy::unused_self`). The doc comment explains it exists to avoid borrowing `&db` simultaneously with the mutable draw borrow — but since the body doesn't touch `self`, that justification doesn't hold.
+- **Fix:** Inline `&passage.translation` at the call site
+  (`main.rs:542`) and delete the method. The comment about the
+  borrowing constraint can move to the inlined call site as a one-line
+  comment.
+- **Rationale:** Wrapper methods that don't do anything are
+  Chesterton's-fence bait — the next reviewer will spend a minute
+  wondering whether the wrapper protects an invariant before realising
+  it doesn't.
 
-### 5. Silent error swallowing in user-visible paths
+### 5. `Bookmark` has two equality definitions
+
+- **Location:** `src/bookmark.rs:17` (derives `PartialEq, Eq, Hash`) and
+  `src/bookmark.rs:36` (`same_range` method).
+- **Problem:** The derive includes `label` and `created_at`. `same_range`
+  is the position-only equality. The only writer (`BookmarkStore::add`,
+  line 96) uses `same_range`; the only equality test that uses the
+  derived `PartialEq` is the round-trip test at line 213. So today the
+  two coexist peacefully — but if `iter().any(|b| b == &bm)` ever
+  appears (and it will, the derive invites it), the dedup will leak
+  past a `created_at` difference.
+- **Fix:** Either (a) drop `PartialEq, Eq, Hash` from the derive and
+  make round-trip tests use field-by-field comparison; or (b) implement
+  `PartialEq` manually with the `same_range` semantics and remove the
+  named method. (b) is preferred — there's exactly one notion of
+  "two bookmarks point at the same range" and the trait should carry it.
+- **Rationale:** Two equalities on the same type is a foot-gun that
+  pays off later.
+
+### 6. `render_entry_cell` has a dead parameter and 10 arguments
+
+- **Location:** `src/ui/splash.rs:716-771`
+- **Problem:** `dim_cursor: Style` is explicitly discarded inside the
+  function (`let _ = dim_cursor;` at line 735) — the comment says "no
+  ghost cursor on the unfocused column" but the parameter is still
+  required at the call site. Beyond that, ten positional arguments is
+  past the readability threshold; the call sites at lines 597-620 have
+  to count commas.
+- **Fix:** Drop `dim_cursor` from the signature + call sites. Then
+  bundle the four `Style` parameters (`sel`, `label`, `dim`, `bg`) into
+  a small `RenderEntryStyles` struct local to the module.
+- **Rationale:** The `#[allow(clippy::too_many_arguments)]` on line 716
+  is currently masking the symptom rather than fixing it.
+
+### 7. Per-frame allocations in `draw_frame`
 
 - **Locations:**
-  - `src/main.rs:629` — `let _ = copy_verse_to_clipboard(...)`. The
-    user pressed `y` expecting clipboard population; if the clipboard
-    backend fails (Wayland without `wl-clipboard`, headless SSH
-    session, etc.) they get no feedback.
-  - `src/config.rs:349-359` — `load()` returns `Config::default()` on
-    *any* error from `config_path()` or `fs::read_to_string`. The toml
-    parse error is reported via `eprintln!`, but a permission-denied
-    or other read error vanishes.
-  - `src/quote.rs:88` — `lookup(...)` returns `Ok(None)` on row-not-found
-    but also on any SQL error (`.ok()` strips the diagnostic).
-- **Fix:** Push these into the existing `warnings` collector used in
-  `main.rs:141`. For `copy_verse_to_clipboard`, replace `let _ = …`
-  with `save_or_warn(warnings, "clipboard", copy_verse_to_clipboard(...))`.
-  For `config::load`, distinguish "file not found" (silent default)
-  from "found but unreadable" (warn).
-- **Rationale:** "Disappeared into the void" is the worst failure mode
-  for user-facing state writes. The collector pattern already exists;
-  use it consistently.
+  - `src/main.rs:1014` — `make_status` returns a fresh `Vec<Shortcut<'static>>`
+    every draw call (~6Hz). Every field is `&'static str`; the
+    `Vec`'s content is constant per `bg` variant.
+  - `src/main.rs:987` — `mode_tag_for` returns `String` from
+    `format!("-- NORMAL · {} --", layout)` etc. The reading-view path
+    runs every frame; the strings are tiny but the allocation is
+    real.
+  - `src/main.rs:971` — `bookmarks_set` allocates a fresh `BTreeSet<i64>`
+    every frame and re-scans every bookmark in the store. The set only
+    changes when the chapter or bookmark-store mutates.
+- **Fix:**
+  - `make_status` → either two `static` `Shortcut` arrays (`STATUS_SPLASH`,
+    `STATUS_READING`) plus a tiny `match` to mutate the one element
+    whose label depends on `show_sidebar`, or build the `Vec` once in
+    `LoopState::new` and re-build only when `show_sidebar` toggles.
+  - `mode_tag_for` → return `Cow<'static, str>`; the splash/dialog arms
+    can be `Cow::Borrowed("-- NORMAL --")` while only the reading
+    arm allocates.
+  - `bookmarks_set` → cache it on `LoopState` and invalidate from
+    `add_bookmark` / `Delete` / `jump_to` (chapter change). Or, since
+    the only reader is `draw_frame` and the chapter-comparison cost
+    is tiny per bookmark, leave it and add a comment that the cache
+    is intentional churn given the modest bookmark count.
+- **Rationale:** Not a hot path yet, but the project's "Turbo Vision
+  feel" hinges on the draw never stuttering — a flame graph at first
+  paint would already implicate these three. Cheaper to fix now than
+  to retrofit after `make_status` gains state.
 
-### 6. `SidebarView::build_lines` takes an unused `width` parameter
+### 8. `Db::open_ro` accepts an empty-string translation sentinel
 
-- **Location:** `src/ui/sidebar.rs:60` — `_width: u16` is leading-
-  underscored to satisfy clippy, but the function takes it on every call
-  from `SidebarView::render` (line 48). Either use it (the function
-  could pre-truncate parallel-passage labels rather than relying on
-  `Wrap { trim: false }`) or drop it.
-- **Fix:** Drop the parameter and the call-site argument.
-- **Rationale:** Cosmetic, but it's a load-bearing function that's
-  pretending to be configurable. Either be configurable or commit.
-
-### 7. Translation reads from `Db::translation` mid-flight rather than
-through the search/quote signatures
-
-- **Location:** `src/search.rs:51` `db.translation` and
-  `src/quote.rs:84` `db.translation`. The functions take a `&Db`
-  parameter; they then read mutable state off it.
-- **Fix:** Pass the translation explicitly: `search(db: &Db, translation:
-  &str, input: &str, limit: usize)`. This makes the data flow obvious
-  and lets callers eventually switch to a `&str` parameter without
-  juggling `Db` ownership.
-- **Rationale:** The current design works (translation is set on Db at
-  startup and on translation-picker confirmation), but the implicit
-  read makes `switch_translation`'s atomicity bug (Blocker #1) harder
-  to see.
-
-### 8. Public surface hygiene
-
-- **Location:** Most `pub` declarations in `src/db.rs`, `src/nav.rs`,
-  `src/render.rs`, `src/search.rs`.
-- **Problem:** This is a binary, but the modules export `pub` types and
-  fields where `pub(crate)` would do. `Db::translation: pub String`
-  invites the exact mutation bug in Blocker #1 — there's no API
-  boundary blocking arbitrary writes.
-- **Fix:** Sweep `pub → pub(crate)` and gate mutable field access
-  behind methods (e.g. `Db::set_translation(&mut self, code: &str)`).
-- **Rationale:** Internal API hygiene catches bugs even in a binary;
-  `pub` should mean "I really do intend for external code to depend on
-  this," not "I needed a getter and reached for the shortest keyword."
-
-### 9. CHANGELOG.md missing
-
-- **Location:** project root.
-- **Problem:** Rubric §8 calls for `CHANGELOG.md`. `Cargo.toml` has
-  `version = "0.1.0"`, README documents features comprehensively, but
-  there's no per-release diff record.
-- **Fix:** Adopt Keep-a-Changelog. Backfill is cheap (the git history
-  shows the structure already — bookmarks → translations picker →
-  USAGE.md → keymap profile).
-- **Rationale:** "Release readiness" is the framing of this review, and
-  every release pipeline expects a changelog.
-
-### 10. Dependency duplication
-
-- **Location:** `target/rust-review/tree-dupes.log`.
-- **Problem:**
-  - `bitflags 1.3.2` (via `nix 0.25` → `rexpect`) alongside
-    `bitflags 2.11` (everywhere else). Dev-only, but ageing rexpect's
-    transitive `nix` is 4 majors behind.
-  - `thiserror 1.0` (via rexpect) + `thiserror 2.0` (via kasuari,
-    ratatui-core).
-  - `hashbrown 0.14`, `0.16`, `0.17` and `getrandom 0.3`, `0.4`
-    simultaneously.
-  - `quick-error 1.2` + `2.0`.
-- **Fix:** Most are upstream transitive — track but don't fight. The
-  one worth a try is bumping `rexpect` to its latest 0.6.x line (if
-  out) to deduplicate `nix`/`bitflags` v1.
-- **Rationale:** Affects binary size and compile time more than
-  correctness. Worth listing in the changelog when upstream lets you
-  fix it.
+- **Location:** `src/db.rs:168` + `src/main.rs:400` (`probe`) +
+  `src/main.rs:251` (real open).
+- **Problem:** `resolve_translation` opens a "probe" `Db` with an
+  empty translation just to call `list_translations()`. The empty
+  string never matches any row, so any call to `translation_label` /
+  `list_books` / `load_passage` on the probe would silently return
+  zero rows. The previous review flagged this and it's still there.
+- **Fix:** Split into two constructors:
+  ```rust
+  impl Db {
+      /// Open RO without an active translation. Only translation-list
+      /// queries (`list_translations`) are valid on the returned handle.
+      pub fn open_probe(path: &Path) -> Result<DbProbe> { ... }
+  }
+  pub struct DbProbe { conn: Connection }
+  impl DbProbe {
+      pub fn list_translations(&self) -> Result<Vec<TranslationInfo>> { ... }
+      pub fn into_db(self, code: &str) -> Db { ... }
+  }
+  ```
+  Or keep one type but make `open_ro` require a non-empty translation
+  and add `pub fn list_translations(path: &Path)` as a free function.
+- **Rationale:** Sentinels rot. Today the probe handle is dropped before
+  any wrong method is called on it, but a future refactor that hangs
+  onto it will silently return empty results — the worst kind of bug.
 
 ## Nice to have
 
-- `#![deny(unsafe_code)]` at crate root. Free protection given the crate
-  has zero `unsafe`.
-- `#![warn(missing_docs)]` once the crate stabilises — public items in
-  `db.rs` have no rustdoc beyond field comments.
-- `BACKLOG.md` notes a planned `turbo-bible import` subcommand; when
-  that lands, take the opportunity to introduce a `Subcommand` enum and
-  drop the implicit "no subcommand → run" pattern that today's
-  `clap::Parser` derives.
-- `init_terminal`/`restore_terminal` (`src/main.rs:1060-1076`) should be
-  paired via RAII so a panic between them still leaves the terminal
-  sane. Today a panic in the draw closure won't run `restore_terminal`,
-  and the user is left with a corrupted terminal. A `TerminalGuard {
-  fn drop(&mut self) { disable_raw_mode(); leave_alternate_screen(); } }`
-  closes that gap.
-- The `extras.push(...)` loop in `KeyState::with_user_bindings`
-  (`src/keys.rs:92`) is `O(n)` per keypress in the `for (binding,
-  action) in &self.extras` lookup. With ~20 bindings × ~6 keys/sec it's
-  irrelevant; if it ever matters, a `HashMap<KeyBind, Action>` (with a
-  fixup for the SHIFT-normalisation in `KeyBind::matches`) is the next
-  step.
-- `scripts/baseline.fish` (the rust-review baseline runner) has a fish
-  redirection bug: `if $cmd > $logfile` fails because `$cmd` is an
-  array. Use `eval $cmd` or `command $cmd[1] $cmd[2..-1]`. Not a bug in
-  the crate, but the rust-review skill bundles it.
-- The `KeyState::tick` invocation inside `KeyState::handle` then again
-  in the outer loop (`src/main.rs:738`) is correct but redundant. The
-  first call clears expired chord buffer before processing the new key;
-  the outer call clears it when the poll times out. Document one or
-  remove one.
-- `Db::open_ro` accepts an empty `translation` string from `resolve_translation`
-  (`main.rs:302`) so the probe can list translations. Make the probe a
-  separate `Db::open_probe` that doesn't pretend to hold a translation —
-  the empty-string sentinel works, but it's the kind of state that
-  causes a silent bug later (e.g. someone calls `translation_label`
-  before resolving).
+- **Crate-level rustdoc**: `src/main.rs:1` has `#![deny(unsafe_code)]`
+  and modules but no `//!` doc explaining what the binary is. For a
+  binary crate the README is the user-facing docs, but a one-paragraph
+  `//!` block helps anyone reading via `cargo doc`.
+- **`# Errors` rustdoc sections** on the ~15 public `fn -> Result<...>`
+  in `db.rs`, `paths.rs`, `bookmark.rs`, `config.rs`, `state.rs`,
+  `search.rs`, `quote.rs`. None today. `clippy::missing_errors_doc`
+  fires under pedantic; the doc-with-context exercise tends to surface
+  "wait, this can fail in three ways" realizations.
+- **`#[must_use]` on `Position::same_chapter`, `Bookmark::matches_chapter`,
+  `Bookmark::same_range`, `Bookmark::reference_label`, `Book::display_name`,
+  `Db::translation_label`, `Db::list_books`, `Db::list_translations`**.
+  All are pure queries whose return value is the whole point;
+  accidentally dropping it is a bug.
+- **`#[non_exhaustive]` on the public outcome enums** (`SplashOutcome`,
+  `FindOutcome`, `GotoOutcome`, `BookmarksOutcome`, `TranslationsOutcome`,
+  `FootnoteOutcome`, `HelpOutcome`). They live in dialogs and grow
+  whenever a dialog gains a new outcome; without `#[non_exhaustive]`
+  every dispatch site silently breaks on the new variant. Internal
+  to the binary so the protection is mostly for the next contributor,
+  but matches the same hygiene as the rest of the cleanup.
+- **`unused fields` lurking under `#[expect(dead_code)]`**: `db.rs:72-76`
+  marks `TranslationInfo::license` as roadmap material. Once the
+  Translations picker grows a details panel, drop the expect; until
+  then it's accurate. Worth a quick audit that no other roadmap
+  markers have drifted out of date.
+- **A `Cargo.toml` `repository` field** would help `cargo audit` and
+  `cargo-deny` policy queries; the metadata block has `keywords`,
+  `categories`, `license`, but no `repository`. `publish = false` so
+  the crate isn't going to crates.io, but the field is consumed by
+  multiple downstream tools.
+- **`Bookmark::add` is `O(n)` per add via `iter().any(|b| b.same_range(...))`**.
+  Trivial today (10s of bookmarks at most), but a future "import
+  bookmarks from a study Bible" flow could blow up. A `HashSet<RangeKey>`
+  alongside `bookmarks: Vec<Bookmark>` keeps the ordering and adds
+  `O(1)` dedup. Not worth fixing until it bites.
+- **`xref_rows: Vec<(String, Xref)>` in `Db::load_footnotes:339`** is
+  collected up-front then iterated to attach refs to footnotes via
+  `find`. With many footnotes this is `O(n × m)`. For sane chapter
+  sizes it doesn't matter; a `HashMap<String, Vec<Xref>>` would be
+  `O(n + m)`. Note for the day someone profiles `load_passage`.
+- **Test naming**: most tests describe behaviour well, but
+  `dump_default_config` at `config.rs:503` is an `eprintln` smoke
+  test, not an assertion (asserts only that `[theme]`/`[reading]`/`[keys]`
+  appear). Either delete it or move the eprintln to a doc example
+  where it serves as living documentation.
+- **`SplashView` exposes 11 `pub` fields** (`filter`, `focus`, `cursor_ot`,
+  `cursor_nt`, `on_continue`, `translation_name`, `translation_code`,
+  `mode`, `quote`). The test suite in the same file is the only
+  external mutator; production code only constructs via `new` and
+  calls `handle`/`render`. Most could be `pub(crate)`, several could
+  be private. Same playbook as last round's `Db.translation` fix.
+- **`scripts/baseline.fish` is still broken** (fish-3 redirection
+  rules — `if $cmd > file` fails because `$cmd` is an array). The
+  bash equivalent works. The skill bundles both; flagged again for
+  the skill owner.
 
 ## Patches
 
-Top three patches to apply directly.
-
-### `switch_translation` becomes atomic
+### Drop the no-op wrapper
 
 ```rust
-// src/main.rs:1032 — before
-fn switch_translation(
-    db: &mut Db,
-    books: &mut Vec<Book>,
-    translation_label: &mut String,
-    code: &str,
-    pos: &mut Position,
-    passage: &mut Passage,
-    cursor_verse: &mut i64,
-) -> Result<()> {
-    db.translation = code.to_string();
-    *books = db.list_books()?;
-    *translation_label = db.translation_label()?;
-    *passage = db.load_passage(&pos.book, pos.chapter)?;
-    let max = passage.verses.last().map(|v| v.number).unwrap_or(1);
-    if *cursor_verse > max {
-        *cursor_verse = max.max(1);
+// src/main.rs:628-637 — delete
+impl LoopState {
+    fn bookmarks_translation<'a>(&self, passage: &'a Passage) -> &'a str {
+        &passage.translation
     }
-    Ok(())
 }
 
-// after
-fn switch_translation(
-    db: &mut Db,
-    books: &mut Vec<Book>,
-    translation_label: &mut String,
-    code: &str,
-    pos: &mut Position,
-    passage: &mut Passage,
-    cursor_verse: &mut i64,
-) -> Result<()> {
-    let prev = std::mem::replace(&mut db.translation, code.to_string());
-    let result = (|| -> Result<(Vec<Book>, String, Passage)> {
-        Ok((
-            db.list_books()?,
-            db.translation_label()?,
-            db.load_passage(&pos.book, pos.chapter)?,
-        ))
-    })();
-    match result {
-        Ok((new_books, new_label, new_passage)) => {
-            *books = new_books;
-            *translation_label = new_label;
-            *passage = new_passage;
-            let max = passage.verses.last().map_or(1, |v| v.number);
-            if *cursor_verse > max { *cursor_verse = max.max(1); }
-            Ok(())
-        }
-        Err(e) => {
-            db.translation = prev;
-            Err(e)
-        }
-    }
-}
+// src/main.rs:542 — inline
+-        state.bookmarks_translation(passage),
++        &passage.translation,
 ```
 
-### Bound `History`
+### Fix the `statusbar.rs` eager call
 
 ```rust
-// src/main.rs:71 — before
-struct History { stack: Vec<Position>, cur: usize }
-impl History {
-    fn push(&mut self, p: Position) {
-        self.stack.truncate(self.cur + 1);
-        if self.stack.last().is_none_or(|last| !last.same_chapter(&p)) {
-            self.stack.push(p);
-            self.cur = self.stack.len() - 1;
-        }
-    }
-    ...
-}
+// src/ui/statusbar.rs:22 — before
+.bg(theme::menubar_style().bg.unwrap_or(theme::light_grey()))
 
 // after
-const HISTORY_CAP: usize = 100;
-struct History { stack: Vec<Position>, cur: usize }
-impl History {
-    fn push(&mut self, p: Position) {
-        self.stack.truncate(self.cur + 1);
-        if self.stack.last().is_none_or(|last| !last.same_chapter(&p)) {
-            self.stack.push(p);
-            if self.stack.len() > HISTORY_CAP {
-                let drop = self.stack.len() - HISTORY_CAP;
-                self.stack.drain(..drop);
-                self.cur = self.stack.len().saturating_sub(1);
-            } else {
-                self.cur = self.stack.len() - 1;
-            }
-        }
-    }
-    ...
-}
+.bg(theme::menubar_style().bg.unwrap_or_else(theme::light_grey))
 ```
 
-### Surface clipboard failures
+### Hoist `Row` in `help.rs::render`
 
 ```rust
-// src/main.rs:628 — before
-Action::CopyVerse => {
-    let _ = copy_verse_to_clipboard(passage, pos, *cursor_verse);
-}
+// src/ui/help.rs — before (4 clippy::items_after_statements warnings)
+pub fn render(&self, outer: Rect, buf: &mut Buffer) {
+    // ... 20 lines of style setup ...
+    enum Row { Section(&'static str), Entry(&'static str, &'static str) }
+    use Row::{Entry, Section};
+    let rows: &[Row] = &[ ... ];
 
 // after
-Action::CopyVerse => {
-    save_or_warn(
-        warnings,
-        "clipboard set",
-        copy_verse_to_clipboard(passage, pos, *cursor_verse),
-    );
-}
+enum Row { Section(&'static str), Entry(&'static str, &'static str) }
+
+impl HelpDialog {
+    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
+        use Row::{Entry, Section};
+        let rows: &[Row] = &[ ... ];
+        // ... 20 lines of style setup ...
 ```
+
+(Move the enum above the `impl` block.)
 
 ## Follow-up checklist
 
 One commit per item, in priority order.
 
-- [ ] 1. Make `switch_translation` atomic — restore `db.translation` on
-  any inner-call failure. (Blocker #1)
-- [ ] 2. Bound `History` at 100 entries. (Blocker #3)
-- [ ] 3. Extract `App` struct from `run()`; lift each dialog arm into a
-  `handle_*` method. (Blocker #2; bigger commit — split into "extract
-  App" first, then "lift dialog arms" if it gets unwieldy.)
-- [ ] 4. Pipe `copy_verse_to_clipboard` errors through `save_or_warn`,
-  and distinguish "file missing" vs "file unreadable" in `config::load`.
-  (§5)
-- [ ] 5. Deduplicate `word_wrap` (move to `src/text.rs` or top of
-  `render.rs`) and `config_dir`/`data_dir` (new `src/paths.rs`). (§2)
-- [ ] 6. Drop the `_width: u16` parameter from `sidebar::build_lines`
-  and the corresponding call site. (§6)
-- [ ] 7. Tighten public surface: `pub Db.translation` → method-gated,
-  `Db::set_translation(&mut self, code: &str)`; sweep `pub →
-  pub(crate)` across `db.rs`, `nav.rs`, `render.rs`, `search.rs`. (§8)
-- [ ] 8. Pass translation explicitly to `search()` / `quote::pick()`
-  instead of reading `db.translation`. (§7)
-- [ ] 9. Auto-apply the safe clippy pedantic bulk: `cargo clippy --fix
-  --bin turbo-bible --allow-dirty -- -W clippy::pedantic` then review
-  the diff. Add an `#[allow(...)]` cluster at the crate root for the
-  warnings you want to permanently silence (with one-liner
-  justifications). (§3)
-- [ ] 10. Replace `as i64`/`as u16` casts on values that don't actually
-  truncate with `i64::from(...)` / `u16::try_from(...).unwrap_or(...)`
-  to make infallibility obvious. (§4)
-- [ ] 11. Replace the `init_terminal`/`restore_terminal` pair with an
-  RAII `TerminalGuard`. (Nice-to-have)
-- [ ] 12. Add `#![deny(unsafe_code)]` and `CHANGELOG.md`. (§9 + nice-to-have)
-- [ ] 13. `theme::init` — replace `let _ = THEME.set(t);` with an
-  `expect("theme initialized twice")` so the second-init panic is
-  loud. (§1)
+- [ ] 1. Drop `LoopState::bookmarks_translation`; inline at call site. (§4)
+- [ ] 2. Pick one `Bookmark` equality. Remove either the derive or the
+  `same_range` method. (§5)
+- [ ] 3. Drop the unused `dim_cursor` parameter from `render_entry_cell`
+  and bundle the remaining four `Style`s into a `RenderEntryStyles`. (§6)
+- [ ] 4. Mechanical pedantic sweep: `or_fun_call` (statusbar.rs),
+  `option_if_let_else` (goto.rs), `equatable_if_let` (main.rs),
+  `useless_let_if_seq` (splash.rs), `match_same_arms` (3 sites),
+  `items_after_statements` (help.rs). Add module-level
+  `#[allow(clippy::similar_names)]` on `splash.rs`. (§3)
+- [ ] 5. Split `Db::open_ro` into a probe path + a translation-aware
+  open. (§8)
+- [ ] 6. Refactor `dispatch_reading` into per-action methods on
+  `LoopState`. (§1)
+- [ ] 7. Refactor `SplashView` to share `ListNav` (or extract the chord
+  + count machinery). (§2)
+- [ ] 8. Refactor `splash::render` (262 lines) into a handful of helper
+  fns. (§3)
+- [ ] 9. Per-frame allocations: hoist `make_status` to `&'static`,
+  switch `mode_tag_for` to `Cow<'static, str>`, cache `bookmarks_set`
+  on `LoopState`. (§7)
+- [ ] 10. Add crate-level `//!` doc to `main.rs`. Add `# Errors`
+  sections to the ~15 public `Result`-returning fns. Sprinkle
+  `#[must_use]` on the pure queries. Add `#[non_exhaustive]` on the
+  six dialog-outcome enums. (Nice-to-have cluster)
+- [ ] 11. Add `repository = "..."` to `Cargo.toml`. (Nice-to-have)
 
 ## Coverage self-assessment
 
 | Dimension | Confidence | Notes |
 |---|---|---|
-| Compiler and lint cleanliness | high | clippy logs read end-to-end; 102 pedantic warnings triaged into categories. |
-| API design | medium | This is a binary, so the API-guideline rubric (newtypes, sealed traits, `From`/`TryFrom`) carries less weight; I focused on internal surface hygiene. |
-| Error handling | high | All `unwrap`/`expect` outside `cfg(test)` checked. The three `.unwrap()` calls on `c.to_digit(10)` are guarded by `is_ascii_digit()` and safe; called out for brittleness. |
-| Ownership and borrowing | medium | The crate avoids the common `Arc<Mutex<_>>` antipatterns. `BookmarkStore::add` clones; `Frame` borrows everything. No obvious wasteful allocation hotspots; perf is not exercised. |
-| Unsafe code | high | Confirmed zero `unsafe` in `src/`. |
-| Concurrency | high | Single-threaded, no async. The 150ms event poll with `tick()`-based timeout is well-suited. |
-| Testing | high | Unit tests next to code, proptest on the parser, PTY e2e on state migrations. The PTY tests skip cleanly without a populated DB. No fuzz targets for FTS5 query building or OSIS parsing — would be the next layer. |
-| Documentation | high | Module-level docstrings throughout. `README.md` and `docs/USAGE.md` are excellent. Missing: `CHANGELOG.md`, rustdoc on most `pub` items in `db.rs`. |
-| Project structure | high | One-module-per-concern, `lib.rs`-style. `run()` is the one outlier (Blocker #2). |
-| Dependencies and toolchain | high | MSRV declared, toolchain pinned to `stable`, audit clean. Dupes are inherited from rexpect/ratatui and not actionable directly. |
-| Performance | medium | Not profiled. Visible candidates flagged (allocating `make_status` on every draw, `make_status` is fine since it runs ~6Hz). No obvious quadratic loops. |
-| Contributor experience | high | `just` + CI parity + `BACKLOG.md` + `CONTRIBUTING.md` is the gold-standard setup. The `scripts/baseline.fish` redirection bug in the rust-review skill itself bit me here, but that's not on the crate. |
+| Compiler and lint cleanliness | high | All 25 pedantic warnings read end-to-end and triaged. clippy default is clean. |
+| API design | high | This is a binary; rubric reweighted toward internal surface hygiene. Two real findings (§4 wrapper, §6 dead parameter) plus the `SplashView` field-visibility note. |
+| Error handling | high | All `unwrap`/`expect` outside `cfg(test)` re-checked. `theme::init`'s `expect` and the three `c.to_digit(10).unwrap_or(0)` sites are the only ones, all guarded. `# Errors` docs missing — flagged. |
+| Ownership and borrowing | medium | No obvious egregious clones. Per-frame allocation hotspots in §7. Did not profile. |
+| Unsafe code | high | `#![deny(unsafe_code)]` confirmed at `main.rs:1`. |
+| Concurrency | high | Single-threaded, no async. `OnceLock` for the theme is the only shared state. |
+| Testing | high | 71 unit + 5 e2e tests; proptest on the parser; PTY e2e covers translation swap, migration, find-result jump, goto-with-verse. Still no fuzz target for `build_query` / `parse_osis` — would be the next layer. |
+| Documentation | medium | README + USAGE.md + CHANGELOG.md + CONTRIBUTING.md all current. Crate-level `//!` and `# Errors` sections still missing. |
+| Project structure | high | Modules well-segregated; `text.rs` + `paths.rs` extracted last round and held up. Only `splash.rs` (936 lines) and `dispatch_reading` are outliers. |
+| Dependencies and toolchain | high | `cargo audit` clean. MSRV declared, toolchain pinned. Dupes inherited from `rexpect`/`ratatui`. `repository` missing from Cargo.toml — flagged. |
+| Performance | medium | Three per-frame allocation sites identified by inspection (§7); not profiled. No obvious quadratics in user-facing paths. |
+| Contributor experience | high | `just` recipes match CI 1:1, `BACKLOG.md` is concrete, `CONTRIBUTING.md` covers the test-skip semantics. The fish baseline script is still broken (skill bug, not crate bug). |

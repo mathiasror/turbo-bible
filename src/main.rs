@@ -702,7 +702,7 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
             }
         },
         Dialog::Help(d) => {
-            if let HelpOutcome::Cancel = d.handle(key) {
+            if matches!(d.handle(key), HelpOutcome::Cancel) {
                 state.dialog = Dialog::None;
             }
             Ok(DispatchStep::Continue)
@@ -1114,6 +1114,11 @@ fn max_verse(passage: &Passage) -> i64 {
 }
 
 /// Returns true if the loop should exit.
+#[allow(
+    clippy::needless_pass_by_ref_mut,
+    reason = "pos is mutated through jump_to in the chapter/book arms below; \
+              clippy can't follow the call"
+)]
 fn apply_action(
     action: Action,
     db: &Db,

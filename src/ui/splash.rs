@@ -2,6 +2,11 @@
 //! with testament headings localised off the active translation's language
 //! prefix. Vim-style navigation.
 
+// The OT/NT pairing is the file's whole subject — binding name pairs like
+// `books_ot`/`books_nt` and `cursor_ot`/`cursor_nt` are intentional and
+// renaming them to satisfy clippy would obscure intent.
+#![allow(clippy::similar_names)]
+
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -267,11 +272,9 @@ impl SplashView {
         let res = match key.code {
             KeyCode::Esc | KeyCode::Char('q') if !ctrl => SplashOutcome::Quit,
             KeyCode::Char('c') if ctrl => SplashOutcome::Quit,
-            KeyCode::F(2) => SplashOutcome::OpenGoto,
+            KeyCode::F(2) | KeyCode::Char(':') => SplashOutcome::OpenGoto,
             KeyCode::F(3) => SplashOutcome::OpenFind,
-            KeyCode::F(5) => SplashOutcome::OpenTranslations,
-            KeyCode::Char('t') => SplashOutcome::OpenTranslations,
-            KeyCode::Char(':') => SplashOutcome::OpenGoto,
+            KeyCode::F(5) | KeyCode::Char('t') => SplashOutcome::OpenTranslations,
 
             KeyCode::Char('/') => {
                 self.mode = SplashMode::Filter;
@@ -516,14 +519,15 @@ impl SplashView {
         ];
         let used_filter: usize =
             2 + mode_label.chars().count() + 2 + filter_display.chars().count();
-        let mut cursor_extra = 0;
-        if self.mode == SplashMode::Filter {
+        let cursor_extra = if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
                 "\u{2588}",
                 filter_style.fg(theme::bright_white()),
             ));
-            cursor_extra = 1;
-        }
+            1
+        } else {
+            0
+        };
         if (used_filter + cursor_extra) < inner_w {
             filter_row.push(Span::styled(
                 " ".repeat(inner_w - used_filter - cursor_extra),
