@@ -6,6 +6,7 @@ rust-version = "1.88"
 description = "Turbo Vision–styled terminal Bible reader with FTS5 search."
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/mathiasror/turbo-bible"
 keywords = ["bible", "tui", "ratatui", "terminal", "turbo-vision"]
 categories = ["command-line-utilities", "text-processing"]
 publish = false
