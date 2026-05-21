@@ -364,108 +364,101 @@ impl SplashView {
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_dialog(area, "Turbo Bible", buf);
 
-        let bg = Style::new().bg(theme::blue());
-        let title_style = Style::new()
-            .fg(theme::yellow())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
-        let subtitle = Style::new()
-            .fg(theme::cyan())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
-        let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
-        let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
-        let key_style = Style::new()
-            .fg(theme::bright_white())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
-        let sel = Style::new()
-            .fg(theme::bright_white())
-            .bg(theme::cyan())
-            .add_modifier(Modifier::BOLD);
-        let filter_style = Style::new()
-            .fg(theme::black())
-            .bg(theme::cyan())
-            .add_modifier(Modifier::BOLD);
-        let mode_style = match self.mode {
-            SplashMode::Filter => Style::new()
-                .fg(theme::black())
-                .bg(theme::yellow())
-                .add_modifier(Modifier::BOLD),
-            SplashMode::Normal => Style::new()
-                .fg(theme::black())
-                .bg(theme::cyan())
-                .add_modifier(Modifier::BOLD),
-        };
-        let column_header = Style::new()
-            .fg(theme::yellow())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
-        let column_header_focused = Style::new()
-            .fg(theme::bright_white())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-
+        let styles = RenderStyles::new(self.mode);
         let inner_w = inner.width as usize;
-        let blank = || Line::from(Span::styled(" ".repeat(inner_w), bg));
-        let center_padded = |row: &str, st: Style| -> Line<'static> {
-            let pad_left = inner_w.saturating_sub(row.chars().count()) / 2;
-            let pad_right = inner_w
-                .saturating_sub(pad_left)
-                .saturating_sub(row.chars().count());
-            Line::from(vec![
-                Span::styled(" ".repeat(pad_left), bg),
-                Span::styled(row.to_string(), st),
-                Span::styled(" ".repeat(pad_right), bg),
-            ])
-        };
-
         let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(blank());
+        lines.push(blank_line(inner_w, styles.bg));
 
-        // Title — prefer side-by-side ("TURBO  BIBLE" on one 6-row logo).
-        // Fall back to stacked, then to plain text on narrow terminals.
-        let avail = inner.height as usize;
+        self.render_title(&styles, inner_w, inner.height as usize, &mut lines);
+        self.render_quote(&styles, inner_w, &mut lines);
+        self.render_filter_row(&styles, inner_w, &mut lines);
+        self.render_continue_row(&styles, inner_w, &mut lines);
+        let entries_ot = self.entries(SplashColumn::OT);
+        let entries_nt = self.entries(SplashColumn::NT);
+        self.render_columns(
+            &styles,
+            inner_w,
+            inner.height,
+            &entries_ot,
+            &entries_nt,
+            &mut lines,
+        );
+        self.render_footer(&styles, &entries_ot, &entries_nt, &mut lines);
+
+        Paragraph::new(lines).style(styles.bg).render(inner, buf);
+    }
+
+    fn render_title(
+        &self,
+        styles: &RenderStyles,
+        inner_w: usize,
+        avail: usize,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        // Prefer side-by-side ("TURBO  BIBLE" on one 6-row logo). Fall back
+        // to stacked, then to plain text on narrow terminals.
         let combined_w = TITLE_TURBO[0].chars().count() + 2 + TITLE_BIBLE[0].chars().count();
         if inner_w >= combined_w && avail >= 12 {
             for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
-                lines.push(center_padded(&format!("{t}  {b}"), title_style));
+                lines.push(center_padded(
+                    inner_w,
+                    styles.bg,
+                    &format!("{t}  {b}"),
+                    styles.title,
+                ));
             }
         } else if inner_w >= TITLE_TURBO[0].chars().count() && avail >= 22 {
             for row in TITLE_TURBO.iter().chain(TITLE_BIBLE.iter()) {
-                lines.push(center_padded(row, title_style));
+                lines.push(center_padded(inner_w, styles.bg, row, styles.title));
             }
         } else {
-            lines.push(center_padded(TITLE_COMPACT, title_style));
+            lines.push(center_padded(
+                inner_w,
+                styles.bg,
+                TITLE_COMPACT,
+                styles.title,
+            ));
         }
-        lines.push(blank());
+        lines.push(blank_line(inner_w, styles.bg));
         lines.push(center_padded(
+            inner_w,
+            styles.bg,
             &format!("· {} ·", self.translation_name),
-            subtitle,
+            styles.subtitle,
         ));
+    }
 
-        // Daily verse — word-wrapped to fit the column, then a reference
-        // line. Not truncated; uses as many lines as it needs.
-        if let Some(q) = &self.quote {
-            lines.push(blank());
-            let max_width = inner_w.saturating_sub(8).max(20);
-            // Wrap the body so it renders as one block; the open and close
-            // curly quotes hug the first/last words.
-            let mut body_lines = word_wrap(&q.text, max_width);
-            if let Some(first) = body_lines.first_mut() {
-                *first = format!("\u{201C}{first}");
-            }
-            if let Some(last) = body_lines.last_mut() {
-                *last = format!("{last}\u{201D}");
-            }
-            for body_line in &body_lines {
-                lines.push(center_padded(body_line, label));
-            }
-            lines.push(center_padded(&format!("\u{2014} {}", q.reference), dim));
+    fn render_quote(&self, styles: &RenderStyles, inner_w: usize, lines: &mut Vec<Line<'static>>) {
+        let Some(q) = &self.quote else { return };
+        lines.push(blank_line(inner_w, styles.bg));
+        let max_width = inner_w.saturating_sub(8).max(20);
+        // Wrap the body so it renders as one block; the open and close curly
+        // quotes hug the first/last words.
+        let mut body_lines = word_wrap(&q.text, max_width);
+        if let Some(first) = body_lines.first_mut() {
+            *first = format!("\u{201C}{first}");
         }
+        if let Some(last) = body_lines.last_mut() {
+            *last = format!("{last}\u{201D}");
+        }
+        for body_line in &body_lines {
+            lines.push(center_padded(inner_w, styles.bg, body_line, styles.label));
+        }
+        lines.push(center_padded(
+            inner_w,
+            styles.bg,
+            &format!("\u{2014} {}", q.reference),
+            styles.dim,
+        ));
+    }
 
-        // Filter row
-        lines.push(blank());
+    fn render_filter_row(
+        &self,
+        styles: &RenderStyles,
+        inner_w: usize,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        lines.push(blank_line(inner_w, styles.bg));
         let mode_label = match self.mode {
             SplashMode::Normal => " NORMAL ",
             SplashMode::Filter => " FILTER ",
@@ -479,17 +472,17 @@ impl SplashView {
             format!(" {} ", self.filter)
         };
         let mut filter_row = vec![
-            Span::styled("  ", bg),
-            Span::styled(mode_label, mode_style),
-            Span::styled("  ", bg),
-            Span::styled(filter_display.clone(), filter_style),
+            Span::styled("  ", styles.bg),
+            Span::styled(mode_label, styles.mode),
+            Span::styled("  ", styles.bg),
+            Span::styled(filter_display.clone(), styles.filter),
         ];
         let used_filter: usize =
             2 + mode_label.chars().count() + 2 + filter_display.chars().count();
         let cursor_extra = if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
                 "\u{2588}",
-                filter_style.fg(theme::bright_white()),
+                styles.filter.fg(theme::bright_white()),
             ));
             1
         } else {
@@ -498,61 +491,73 @@ impl SplashView {
         if (used_filter + cursor_extra) < inner_w {
             filter_row.push(Span::styled(
                 " ".repeat(inner_w - used_filter - cursor_extra),
-                bg,
+                styles.bg,
             ));
         }
         lines.push(Line::from(filter_row));
-        lines.push(blank());
+        lines.push(blank_line(inner_w, styles.bg));
+    }
 
-        // Continue line — full width, highlighted if on_continue.
-        if let Some((_p, label_str)) = &self.last {
-            let on = self.on_continue;
-            let row_style = if on { sel } else { label };
-            let mark = if on { "  \u{25B8} " } else { "    " };
-            let content = format!("Continue: {label_str}");
-            let used = mark.chars().count() + content.chars().count();
-            let pad = inner_w.saturating_sub(used);
-            lines.push(Line::from(vec![
-                Span::styled(mark, if on { sel } else { dim }),
-                Span::styled(content, row_style),
-                Span::styled(" ".repeat(pad), if on { sel } else { bg }),
-            ]));
-            lines.push(blank());
-        }
+    fn render_continue_row(
+        &self,
+        styles: &RenderStyles,
+        inner_w: usize,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        let Some((_p, label_str)) = &self.last else {
+            return;
+        };
+        let on = self.on_continue;
+        let row_style = if on { styles.sel } else { styles.label };
+        let mark = if on { "  \u{25B8} " } else { "    " };
+        let content = format!("Continue: {label_str}");
+        let used = mark.chars().count() + content.chars().count();
+        let pad = inner_w.saturating_sub(used);
+        lines.push(Line::from(vec![
+            Span::styled(mark, if on { styles.sel } else { styles.dim }),
+            Span::styled(content, row_style),
+            Span::styled(" ".repeat(pad), if on { styles.sel } else { styles.bg }),
+        ]));
+        lines.push(blank_line(inner_w, styles.bg));
+    }
 
-        // Column headers
-        let entries_ot = self.entries(SplashColumn::OT);
-        let entries_nt = self.entries(SplashColumn::NT);
-        let total_count = entries_ot.len() + entries_nt.len();
-
+    fn render_columns(
+        &self,
+        styles: &RenderStyles,
+        inner_w: usize,
+        inner_h: u16,
+        entries_ot: &[&Book],
+        entries_nt: &[&Book],
+        lines: &mut Vec<Line<'static>>,
+    ) {
         let (col_left, col_right, gap) = split_columns(inner_w);
         let (ot_label, nt_label) = testament_labels(&self.translation_code);
         let ot_header = format!(" {}  ({}) ", ot_label, entries_ot.len());
         let nt_header = format!(" {}  ({}) ", nt_label, entries_nt.len());
         let ot_header_style = if self.focus == SplashColumn::OT && !self.on_continue {
-            column_header_focused
+            styles.column_focused
         } else {
-            column_header
+            styles.column_header
         };
         let nt_header_style = if self.focus == SplashColumn::NT && !self.on_continue {
-            column_header_focused
+            styles.column_focused
         } else {
-            column_header
+            styles.column_header
         };
         lines.push(Line::from(vec![
             Span::styled(left_padded(&ot_header, col_left), ot_header_style),
-            Span::styled(" ".repeat(gap), bg),
+            Span::styled(" ".repeat(gap), styles.bg),
             Span::styled(left_padded(&nt_header, col_right), nt_header_style),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("─".repeat(col_left), dim),
-            Span::styled(" ".repeat(gap), bg),
-            Span::styled("─".repeat(col_right), dim),
+            Span::styled("─".repeat(col_left), styles.dim),
+            Span::styled(" ".repeat(gap), styles.bg),
+            Span::styled("─".repeat(col_right), styles.dim),
         ]));
 
         // Entries: side-by-side.
         let header_len = lines.len();
-        let visible_rows = (inner.height as usize)
+        let visible_rows = (inner_h as usize)
             .saturating_sub(header_len)
             .saturating_sub(1); // footer
 
@@ -560,10 +565,10 @@ impl SplashView {
         let scroll_nt = scroll_for(self.cursor_nt, entries_nt.len(), visible_rows);
 
         let entry_styles = EntryStyles {
-            sel,
-            label,
-            dim,
-            bg,
+            sel: styles.sel,
+            label: styles.label,
+            dim: styles.dim,
+            bg: styles.bg,
         };
         for row in 0..visible_rows {
             let i_ot = scroll_ot + row;
@@ -586,18 +591,26 @@ impl SplashView {
             );
             let mut spans: Vec<Span<'static>> = Vec::new();
             spans.extend(left);
-            spans.push(Span::styled(" ".repeat(gap), bg));
+            spans.push(Span::styled(" ".repeat(gap), styles.bg));
             spans.extend(right);
             lines.push(Line::from(spans));
         }
+    }
 
-        // Footer hint.
+    fn render_footer(
+        &self,
+        styles: &RenderStyles,
+        entries_ot: &[&Book],
+        entries_nt: &[&Book],
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        let total_count = entries_ot.len() + entries_nt.len();
         let count_text = if self.on_continue {
             "Continue".to_string()
         } else {
             let entries_focused = match self.focus {
-                SplashColumn::OT => &entries_ot,
-                SplashColumn::NT => &entries_nt,
+                SplashColumn::OT => entries_ot,
+                SplashColumn::NT => entries_nt,
             };
             let len = entries_focused.len();
             if len == 0 {
@@ -617,36 +630,116 @@ impl SplashView {
         // we don't show them twice.
         let footer = match self.mode {
             SplashMode::Normal => vec![
-                Span::styled("  ", bg),
-                Span::styled("j k ", key_style),
-                Span::styled("move  ", dim),
-                Span::styled("h l Tab ", key_style),
-                Span::styled("column  ", dim),
-                Span::styled("gg G ", key_style),
-                Span::styled("ends  ", dim),
-                Span::styled("/ ", key_style),
-                Span::styled("filter  ", dim),
-                Span::styled("t ", key_style),
-                Span::styled("translation   ", dim),
-                Span::styled(count_text, key_style),
+                Span::styled("  ", styles.bg),
+                Span::styled("j k ", styles.key),
+                Span::styled("move  ", styles.dim),
+                Span::styled("h l Tab ", styles.key),
+                Span::styled("column  ", styles.dim),
+                Span::styled("gg G ", styles.key),
+                Span::styled("ends  ", styles.dim),
+                Span::styled("/ ", styles.key),
+                Span::styled("filter  ", styles.dim),
+                Span::styled("t ", styles.key),
+                Span::styled("translation   ", styles.dim),
+                Span::styled(count_text, styles.key),
             ],
             SplashMode::Filter => vec![
-                Span::styled("  ", bg),
-                Span::styled("type ", key_style),
-                Span::styled("to filter  ", dim),
-                Span::styled("Enter ", key_style),
-                Span::styled("done  ", dim),
-                Span::styled("Esc ", key_style),
-                Span::styled("clear  ", dim),
-                Span::styled("Ctrl-U ", key_style),
-                Span::styled("wipe   ", dim),
-                Span::styled(count_text, key_style),
+                Span::styled("  ", styles.bg),
+                Span::styled("type ", styles.key),
+                Span::styled("to filter  ", styles.dim),
+                Span::styled("Enter ", styles.key),
+                Span::styled("done  ", styles.dim),
+                Span::styled("Esc ", styles.key),
+                Span::styled("clear  ", styles.dim),
+                Span::styled("Ctrl-U ", styles.key),
+                Span::styled("wipe   ", styles.dim),
+                Span::styled(count_text, styles.key),
             ],
         };
         lines.push(Line::from(footer));
-
-        Paragraph::new(lines).style(bg).render(inner, buf);
     }
+}
+
+/// Style table built once per render pass and shared across helpers.
+/// Lives module-side rather than in a `lazy_static` because some styles
+/// depend on `self.mode`.
+struct RenderStyles {
+    bg: Style,
+    title: Style,
+    subtitle: Style,
+    dim: Style,
+    label: Style,
+    key: Style,
+    sel: Style,
+    filter: Style,
+    mode: Style,
+    column_header: Style,
+    column_focused: Style,
+}
+
+impl RenderStyles {
+    fn new(mode: SplashMode) -> Self {
+        let bold = Modifier::BOLD;
+        Self {
+            bg: Style::new().bg(theme::blue()),
+            title: Style::new()
+                .fg(theme::yellow())
+                .bg(theme::blue())
+                .add_modifier(bold),
+            subtitle: Style::new()
+                .fg(theme::cyan())
+                .bg(theme::blue())
+                .add_modifier(bold),
+            dim: Style::new().fg(theme::light_grey()).bg(theme::blue()),
+            label: Style::new().fg(theme::bright_white()).bg(theme::blue()),
+            key: Style::new()
+                .fg(theme::bright_white())
+                .bg(theme::blue())
+                .add_modifier(bold),
+            sel: Style::new()
+                .fg(theme::bright_white())
+                .bg(theme::cyan())
+                .add_modifier(bold),
+            filter: Style::new()
+                .fg(theme::black())
+                .bg(theme::cyan())
+                .add_modifier(bold),
+            mode: match mode {
+                SplashMode::Filter => Style::new()
+                    .fg(theme::black())
+                    .bg(theme::yellow())
+                    .add_modifier(bold),
+                SplashMode::Normal => Style::new()
+                    .fg(theme::black())
+                    .bg(theme::cyan())
+                    .add_modifier(bold),
+            },
+            column_header: Style::new()
+                .fg(theme::yellow())
+                .bg(theme::blue())
+                .add_modifier(bold),
+            column_focused: Style::new()
+                .fg(theme::bright_white())
+                .bg(theme::blue())
+                .add_modifier(bold | Modifier::UNDERLINED),
+        }
+    }
+}
+
+fn blank_line(inner_w: usize, bg: Style) -> Line<'static> {
+    Line::from(Span::styled(" ".repeat(inner_w), bg))
+}
+
+fn center_padded(inner_w: usize, bg: Style, row: &str, st: Style) -> Line<'static> {
+    let pad_left = inner_w.saturating_sub(row.chars().count()) / 2;
+    let pad_right = inner_w
+        .saturating_sub(pad_left)
+        .saturating_sub(row.chars().count());
+    Line::from(vec![
+        Span::styled(" ".repeat(pad_left), bg),
+        Span::styled(row.to_string(), st),
+        Span::styled(" ".repeat(pad_right), bg),
+    ])
 }
 
 const fn split_columns(inner_w: usize) -> (usize, usize, usize) {
