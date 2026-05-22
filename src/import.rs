@@ -339,9 +339,19 @@ pub fn run(args: &ImportArgs) -> Result<()> {
         Some(p) => p.clone(),
         None => paths::data_dir()?.join("bible.sqlite"),
     };
-    let backup_dir = match &args.backup_dir {
-        Some(p) => p.clone(),
-        None => paths::data_dir()?.join("backups"),
+    // When `--db /custom/path` is passed without `--backup-dir`, default
+    // backups to the same parent as the DB. Two flags either share a root
+    // or one is explicitly anchored to the other; the previous behavior
+    // (backups always at $XDG_DATA_HOME/turbo-bible/backups/) silently
+    // ignored `--db` and surfaced misleading "permission denied" errors
+    // on read-only/ephemeral mounts.
+    let backup_dir = match (&args.backup_dir, &args.db) {
+        (Some(p), _) => p.clone(),
+        (None, Some(db)) => db
+            .parent()
+            .map(|p| p.join("backups"))
+            .ok_or_else(|| anyhow!("--db {} has no parent directory", db.display()))?,
+        (None, None) => paths::data_dir()?.join("backups"),
     };
     let cache_dir = match &args.cache_dir {
         Some(p) => p.clone(),
@@ -422,7 +432,20 @@ fn download_source(file: &str, cache_dir: &Path, url_subdir: &str) -> Result<Pat
     std::fs::create_dir_all(cache_dir)?;
     let cached = cache_dir.join(format!("{SCROLLMAPPER_COMMIT}-{file}"));
     if cached.exists() && std::fs::metadata(&cached)?.len() > 0 {
-        return Ok(cached);
+        // Belt-and-braces: a previous run might have died after `persist`
+        // but before downstream consumers validated the file; or the disk
+        // might have flipped a bit since. `quick_check` is fast and catches
+        // truncation + most corruption without us needing to know the
+        // file's schema (translations vs xref shards). On failure, drop
+        // the cached file and re-download.
+        if probe_sqlite_ok(&cached).is_ok() {
+            return Ok(cached);
+        }
+        eprintln!(
+            "cache: {} fails quick_check; re-downloading",
+            cached.display()
+        );
+        let _ = std::fs::remove_file(&cached);
     }
     let url = format!("{SCROLLMAPPER_URL_BASE}/{SCROLLMAPPER_COMMIT}/{url_subdir}/{file}");
     println!("download {url}");
@@ -434,7 +457,32 @@ fn download_source(file: &str, cache_dir: &Path, url_subdir: &str) -> Result<Pat
 
     tmp.persist(&cached)
         .map_err(|e| anyhow!("persist cached download: {e}"))?;
+    probe_sqlite_ok(&cached).with_context(|| {
+        format!(
+            "downloaded {} but it failed SQLite quick_check — \
+             likely a partial download or upstream corruption; \
+             delete the file under {cache_dir:?} and retry",
+            cached.display(),
+        )
+    })?;
     Ok(cached)
+}
+
+/// Open the file read-only and run `PRAGMA quick_check`. Returns `Ok(())`
+/// when the DB reports `"ok"`, otherwise an error describing the
+/// integrity-check failure. Doesn't care about schema — works for both
+/// translation files and xref shards.
+fn probe_sqlite_ok(path: &Path) -> Result<()> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open {}", path.display()))?;
+    let status: String = conn
+        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+        .with_context(|| format!("quick_check on {}", path.display()))?;
+    if status == "ok" {
+        Ok(())
+    } else {
+        Err(anyhow!("{}: quick_check returned {status}", path.display()))
+    }
 }
 
 fn recreate_schema(db_path: &Path) -> Result<()> {
