@@ -176,6 +176,11 @@ struct LoopState {
     dialog: Dialog,
     history: History,
     bookmarks: bookmark::BookmarkStore,
+    /// Memoized set of bookmarked verses for the chapter currently in
+    /// `passage`. Lazily filled by [`LoopState::bookmarks_for`]; invalidated
+    /// (set to `None`) whenever `self.bookmarks` mutates. Saves rebuilding
+    /// the `BTreeSet` on every draw frame.
+    bookmarks_cache: Option<(BookmarksKey, std::collections::BTreeSet<i64>)>,
     last_query: Option<String>,
     last_label_for_splash: Option<(Position, String)>,
     visual_anchor: Option<i64>,
@@ -183,6 +188,9 @@ struct LoopState {
     max_reading_width: u16,
     keys: KeyState,
 }
+
+/// Cache key for [`LoopState::bookmarks_cache`]: `(translation, book, chapter)`.
+type BookmarksKey = (String, String, i64);
 
 /// Borrowed bundle of the externally-owned reader state. Built fresh
 /// per dispatch call so the extracted handlers don't need to take six
@@ -484,7 +492,7 @@ fn run(
     );
 
     loop {
-        draw_frame(term, &state, passage, *cursor_verse)?;
+        draw_frame(term, &mut state, passage, *cursor_verse)?;
 
         if event::poll(Duration::from_millis(150))? {
             let term_height = term.size().map_or(24, |s| s.height);
@@ -562,6 +570,7 @@ impl LoopState {
             dialog: Dialog::None,
             history,
             bookmarks,
+            bookmarks_cache: None,
             last_query: None,
             last_label_for_splash,
             visual_anchor: None,
@@ -577,20 +586,18 @@ impl LoopState {
 /// duplicates the dialog overlay match.
 fn draw_frame(
     term: &mut Tty,
-    state: &LoopState,
+    state: &mut LoopState,
     passage: &Passage,
     cursor_verse: i64,
 ) -> Result<()> {
     let status = make_status(&state.bg, state.show_sidebar);
-    let bookmarked_in_chapter = bookmarks_set(
-        &state.bookmarks,
-        &passage.translation,
-        &Position {
-            book: passage.book_code.clone(),
-            chapter: passage.chapter,
-            verse: None,
-        },
-    );
+    state.refresh_bookmarks_cache(passage);
+    // SAFETY (logical): refresh_bookmarks_cache guarantees Some(...) on return.
+    let bookmarked_in_chapter = &state
+        .bookmarks_cache
+        .as_ref()
+        .expect("refresh_bookmarks_cache always sets the cache")
+        .1;
     let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
     term.draw(|f| {
         let area = f.area();
@@ -641,7 +648,7 @@ fn draw_frame(
                     passage,
                     cursor_verse,
                     selection,
-                    bookmarked: &bookmarked_in_chapter,
+                    bookmarked: bookmarked_in_chapter,
                     show_sidebar: state.show_sidebar,
                     max_reading_width: state.max_reading_width,
                 }
@@ -754,6 +761,7 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 BookmarksOutcome::Jump(p) => close_with_jump(state, ctx, p)?,
                 BookmarksOutcome::Delete(bm) => {
                     state.bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
+                    state.bookmarks_cache = None;
                     save_or_warn(
                         ctx.warnings,
                         "bookmarks save (delete)",
@@ -918,8 +926,35 @@ impl LoopState {
             label: None,
             created_at: bookmark::now_unix(),
         });
+        self.bookmarks_cache = None;
         save_or_warn(ctx.warnings, "bookmarks save (add)", self.bookmarks.save());
         self.visual_anchor = None;
+    }
+
+    /// Rebuild `bookmarks_cache` if it doesn't already match the current
+    /// passage. The set itself is small (verses bookmarked in this chapter)
+    /// and rebuilds in microseconds, but at 6 Hz the per-frame allocation
+    /// was wasted churn.
+    fn refresh_bookmarks_cache(&mut self, passage: &Passage) {
+        let key = (
+            passage.translation.clone(),
+            passage.book_code.clone(),
+            passage.chapter,
+        );
+        if self
+            .bookmarks_cache
+            .as_ref()
+            .is_some_and(|(k, _)| k == &key)
+        {
+            return;
+        }
+        let set = build_bookmarks_set(
+            &self.bookmarks,
+            &passage.translation,
+            &passage.book_code,
+            passage.chapter,
+        );
+        self.bookmarks_cache = Some((key, set));
     }
 
     fn open_bookmarks_dialog(&mut self) {
@@ -1031,18 +1066,18 @@ fn dispatch_reading(
 
 /// Compute the set of bookmarked verse numbers for the given chapter.
 ///
-/// Called per draw frame (~6 Hz). The bookmark store is small (<100
-/// entries in any realistic session) so the O(n) scan + `BTreeSet`
-/// allocation here is well under the noise floor; not worth the
-/// borrow-checker contortions of a cached invalidation scheme.
-fn bookmarks_set(
+/// Called per draw frame (~6 Hz). The set is memoized on `LoopState`
+/// keyed by `(translation, book, chapter)` and invalidated when the
+/// bookmark store mutates, so the rebuild only fires on a real change.
+fn build_bookmarks_set(
     store: &bookmark::BookmarkStore,
     translation: &str,
-    pos: &Position,
+    book: &str,
+    chapter: i64,
 ) -> std::collections::BTreeSet<i64> {
     let mut out = std::collections::BTreeSet::new();
     for b in &store.bookmarks {
-        if b.matches_chapter(translation, &pos.book, pos.chapter) {
+        if b.matches_chapter(translation, book, chapter) {
             for v in b.start_verse..=b.end_verse {
                 out.insert(v);
             }
