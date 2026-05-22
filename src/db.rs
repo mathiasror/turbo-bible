@@ -196,9 +196,10 @@ pub struct Passage {
 
 pub struct Db {
     conn: Connection,
-    /// Active translation code. Use [`Db::translation`] / [`Db::set_translation`]
-    /// rather than reaching in directly so the call sites stay greppable
-    /// and a future invalidation hook has somewhere to live.
+    /// Active translation code. Use [`Db::translation`] /
+    /// [`Db::set_translation_unchecked`] rather than reaching in directly
+    /// so the call sites stay greppable and a future invalidation hook has
+    /// somewhere to live.
     translation: String,
 }
 
@@ -251,10 +252,18 @@ impl Db {
         &self.translation
     }
 
-    /// Bare setter. Callers that need an atomic translation swap (i.e.
-    /// roll back on a follow-up failure) must implement that themselves;
-    /// see `switch_translation` in `main.rs`.
-    pub fn set_translation(&mut self, code: String) {
+    /// Bare setter. Mutates the active translation field without touching
+    /// any cached state, books list, or current passage — so the [`Db`]
+    /// is in an inconsistent state on its own. The `_unchecked` suffix
+    /// is a contract: callers must follow up with the queries (books,
+    /// label, passage) that re-anchor the reader, and must roll back on
+    /// failure. Today the only caller is `switch_translation` in
+    /// `main.rs`, which holds both halves of that contract.
+    ///
+    /// `pub(crate)` because the unsafety contract isn't something a
+    /// library consumer should ever take on; if a second caller appears,
+    /// extract the swap into [`Db`] itself.
+    pub(crate) fn set_translation_unchecked(&mut self, code: String) {
         self.translation = code;
     }
 

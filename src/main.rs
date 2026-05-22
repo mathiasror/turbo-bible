@@ -1326,7 +1326,7 @@ fn switch_translation(
     // fails, restore the previous translation so the reader stays
     // consistent with itself.
     let prev = db.translation().to_string();
-    db.set_translation(code.to_string());
+    db.set_translation_unchecked(code.to_string());
     let probe = (|| -> Result<(Vec<Book>, String, Passage)> {
         Ok((
             db.list_books()?,
@@ -1349,7 +1349,7 @@ fn switch_translation(
             Ok(())
         }
         Err(e) => {
-            db.set_translation(prev);
+            db.set_translation_unchecked(prev);
             Err(e)
         }
     }
