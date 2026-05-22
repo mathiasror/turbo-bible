@@ -10,9 +10,10 @@
 #![forbid(unsafe_code)]
 
 mod bookmark;
+mod bundled;
 mod config;
 mod db;
-mod import;
+mod install;
 mod keys;
 mod nav;
 mod paths;
@@ -29,7 +30,7 @@ use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -138,13 +139,16 @@ struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to bible.sqlite. Defaults to `$XDG_DATA_HOME/turbo-bible/bible.sqlite`
-    /// (i.e. `~/.local/share/turbo-bible/bible.sqlite` on Linux/macOS).
+    /// Directory holding the per-translation `<code>.db` files plus
+    /// `xrefs.db`. Defaults to `$XDG_DATA_HOME/turbo-bible/translations/`
+    /// (i.e. `~/.local/share/turbo-bible/translations/` on Linux/macOS).
+    /// First launch auto-extracts the bundled translations into this
+    /// directory; pass `install --force` to re-extract.
     #[arg(long)]
-    db: Option<PathBuf>,
+    translations_dir: Option<PathBuf>,
 
     /// Translation code. If omitted, falls back to the picker default
-    /// stored in state.toml, then to the first translation in the DB.
+    /// stored in config.toml, then to the first installed translation.
     #[arg(long)]
     translation: Option<String>,
 
@@ -159,8 +163,10 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Download translations from scrollmapper and (re)build the local DB.
-    Import(import::ImportArgs),
+    /// Extract bundled translations into the translations directory.
+    /// Runs automatically on every startup when files are missing;
+    /// invoke explicitly with `--force` to re-extract.
+    Install(install::InstallArgs),
 }
 
 type Tty = Terminal<CrosstermBackend<Stdout>>;
@@ -282,28 +288,29 @@ impl Drop for TerminalGuard {
 )]
 fn main() -> Result<()> {
     let args = Args::parse();
-    if let Some(Commands::Import(import_args)) = &args.command {
-        return import::run(import_args);
+    let translations_dir = resolve_translations_dir(&args)?;
+    if let Some(Commands::Install(install_args)) = &args.command {
+        return install::run(install_args);
     }
-    let db_path = resolve_db_path(&args)?;
-    match db::ensure_fts_optimized(&db_path) {
-        Ok(true) => eprintln!("Optimizing search index (one-time)…"),
-        Ok(false) => {}
-        Err(e) => eprintln!("warning: FTS optimize skipped: {e}"),
-    }
+    // First launch (or any time files are missing) auto-extracts the
+    // bundled translations into the translations directory; idempotent
+    // and silent when nothing is missing. The data pipeline ships
+    // FTS5 pre-optimised, so no runtime rebuild is needed any more.
+    install::ensure_installed(&translations_dir)
+        .with_context(|| format!("auto-install into {}", translations_dir.display()))?;
     // Non-fatal save failures collected here and replayed to stderr after
     // restore_terminal. Inside the TUI loop, eprintln would mangle the
     // alternate-screen display, so we defer.
     let mut warnings: Vec<String> = Vec::new();
     let (persisted, config) = state::load_with_migration();
     theme::init(config.theme.clone());
-    let translation = resolve_translation(&args, &db_path, &config)?;
+    let translation = resolve_translation(&args, &translations_dir, &config)?;
     // Save right away so the on-disk layout converges to the split form.
     save_or_warn(&mut warnings, "config save", config::save(&config));
     if let Some(ps) = &persisted {
         save_or_warn(&mut warnings, "state save", state::save(ps));
     }
-    let mut db = Db::open_ro(&db_path, &translation)?;
+    let mut db = Db::open_ro(&translations_dir, &translation)?;
     let books = db.list_books()?;
     let translation_label = db.translation_label()?;
 
@@ -426,40 +433,38 @@ fn save_or_warn<T>(out: &mut Vec<String>, what: &str, r: anyhow::Result<T>) {
     }
 }
 
-/// Resolve the DB path: explicit `--db` flag wins; otherwise
-/// `$XDG_DATA_HOME/turbo-bible/bible.sqlite` (typically `~/.local/share/...`).
-fn resolve_db_path(args: &Args) -> Result<PathBuf> {
-    if let Some(p) = args.db.clone() {
+/// Resolve the translations directory: explicit `--translations-dir`
+/// flag wins; otherwise `paths::translations_dir()` (typically
+/// `~/.local/share/turbo-bible/translations/`).
+fn resolve_translations_dir(args: &Args) -> Result<PathBuf> {
+    if let Some(p) = args.translations_dir.clone() {
         return Ok(p);
     }
-    let mut p = paths::data_dir()?;
-    p.push("bible.sqlite");
-    Ok(p)
+    paths::translations_dir()
 }
 
-/// Startup translation resolution: `--translation` > config default > first DB row.
-fn resolve_translation(args: &Args, db_path: &Path, cfg: &config::Config) -> Result<String> {
+/// Startup translation resolution: `--translation` > config default >
+/// first installed code (alphabetical).
+fn resolve_translation(
+    args: &Args,
+    translations_dir: &Path,
+    cfg: &config::Config,
+) -> Result<String> {
     if let Some(t) = args.translation.as_ref() {
         return Ok(t.clone());
     }
     if let Some(t) = cfg.default_translation.clone() {
         return Ok(t);
     }
-    // Probe the DB for the first installed translation.
-    if !db_path.exists() {
+    let mut codes = db::installed_codes(translations_dir)?;
+    if codes.is_empty() {
         anyhow::bail!(
-            "{} does not exist. Run `turbo-bible import` to create it.",
-            db_path.display()
+            "No translations installed in {}. Run `turbo-bible install --force` \
+             to extract the bundled translations.",
+            translations_dir.display()
         );
     }
-    let mut list = db::list_translations(db_path)?;
-    if list.is_empty() {
-        anyhow::bail!(
-            "No translations installed in {}. Run `turbo-bible import` first.",
-            db_path.display()
-        );
-    }
-    Ok(list.remove(0).code)
+    Ok(codes.remove(0))
 }
 
 #[allow(
@@ -841,7 +846,7 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
         }
         SplashOutcome::OpenTranslations => {
             state.dialog = Dialog::Translations(TranslationsDialog::new(
-                ctx.db.list_translations()?,
+                ctx.db.translations().to_vec(),
                 ctx.db.translation(),
             ));
             Ok(DispatchStep::Continue)
@@ -965,7 +970,7 @@ impl LoopState {
 
     fn open_translations_dialog(&mut self, ctx: &AppCtx) -> Result<()> {
         self.dialog = Dialog::Translations(TranslationsDialog::new(
-            ctx.db.list_translations()?,
+            ctx.db.translations().to_vec(),
             ctx.db.translation(),
         ));
         Ok(())

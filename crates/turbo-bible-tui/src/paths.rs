@@ -32,14 +32,14 @@ pub fn data_dir() -> Result<PathBuf> {
     Ok(p)
 }
 
-/// `~/.cache/turbo-bible/` on Linux / macOS via `etcetera`.
+/// `~/.local/share/turbo-bible/translations/` — per-translation `.db`
+/// files plus the shared `xrefs.db`, extracted from the binary's
+/// bundled assets on first launch.
 ///
 /// # Errors
-/// Propagates `etcetera::AppStrategyArgs` failures (`HOME` unset on
-/// platforms where it's required).
-pub fn cache_dir() -> Result<PathBuf> {
-    let strategy = choose_base_strategy()?;
-    let mut p = strategy.cache_dir();
-    p.push("turbo-bible");
+/// Propagates `etcetera::AppStrategyArgs` failures.
+pub fn translations_dir() -> Result<PathBuf> {
+    let mut p = data_dir()?;
+    p.push("translations");
     Ok(p)
 }

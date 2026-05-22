@@ -45,7 +45,12 @@ pub fn build_query(input: &str) -> String {
 /// # Errors
 /// Fails when the FTS5 MATCH or the `verse` join queries error.
 /// An empty `input` returns `Ok(vec![])` rather than an error.
-pub fn search(db: &Db, translation: &str, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
+///
+/// `_translation` is kept on the signature for callsite locality
+/// (search-by-translation is the obvious mental model) even though
+/// translation routing is now embedded in `db.conn()` (the active
+/// translation's own `Connection`).
+pub fn search(db: &Db, _translation: &str, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
     let query = build_query(input);
     if query.is_empty() {
         return Ok(vec![]);
@@ -55,12 +60,12 @@ pub fn search(db: &Db, translation: &str, input: &str, limit: usize) -> Result<V
                 highlight(verse_fts, 0, char(1), char(2)) AS hilit
          FROM verse_fts
          JOIN verse v ON v.rowid = verse_fts.rowid
-         WHERE verse_fts MATCH ?1 AND v.translation = ?2
-         ORDER BY bm25(verse_fts) LIMIT ?3",
+         WHERE verse_fts MATCH ?1
+         ORDER BY bm25(verse_fts) LIMIT ?2",
     )?;
     let rows = stmt
         .query_map(
-            params![query, translation, i64::try_from(limit).unwrap_or(i64::MAX)],
+            params![query, i64::try_from(limit).unwrap_or(i64::MAX)],
             |r| {
                 let book: String = r.get(0)?;
                 let chapter: i64 = r.get(1)?;

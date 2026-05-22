@@ -1,0 +1,32 @@
+[package]
+name = "turbo-bible"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Turbo Vision–styled terminal Bible reader with FTS5 search."
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+keywords = ["bible", "tui", "ratatui", "terminal", "turbo-vision"]
+categories = ["command-line-utilities", "text-processing"]
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+arboard = "3"
+clap.workspace = true
+crossterm = "0.29"
+etcetera = "0.8"
+ratatui = "0.30"
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smallvec = "1"
+tempfile.workspace = true
+time.workspace = true
+toml.workspace = true
+zstd = "0.13"
+
+[dev-dependencies]
+proptest = "1"
+rexpect = "0.5"

@@ -1,0 +1,134 @@
+# Curated translation slate. The legal paper trail: only translations
+# listed here are ever built by `turbo-bible-data build`.
+#
+# Each license string is SPDX where one exists. For pre-1923 public-domain
+# texts there is no clean SPDX identifier; we use `LicenseRef-PublicDomain`
+# (an SPDX-conformant user-defined reference) and document the rationale
+# in the per-entry notes below.
+#
+# `attribution` is the short string we surface in the in-app
+# "About this translation" view. Required for CC-BY-family entries.
+
+schema_version = 1
+
+# ---------- English ----------
+
+# KJV.json's wrapping metadata names the source "with Strongs Numbers and
+# Morphology", under GPL — but the JSON export strips all Strongs/morphology
+# fields and ships only the plain 1769 KJV verse text (verified by inspecting
+# verse objects: only `verse` and `text` keys present). The verse text itself
+# is unambiguously public domain (1769); the GPL claim attached only to the
+# annotation overlay that the JSON export drops.
+[[translation]]
+code        = "en-kjv"
+abbr        = "KJV"
+language    = "en"
+name        = "King James Version (1769)"
+source_json = "formats/json/KJV.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+[[translation]]
+code        = "en-asv"
+abbr        = "ASV"
+language    = "en"
+name        = "American Standard Version (1901)"
+source_json = "formats/json/ASV.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+[[translation]]
+code        = "en-ylt"
+abbr        = "YLT"
+language    = "en"
+name        = "Young's Literal Translation (1898)"
+source_json = "formats/json/YLT.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+[[translation]]
+code        = "en-drc"
+abbr        = "DRC"
+language    = "en"
+name        = "Douay-Rheims-Challoner"
+source_json = "formats/json/DRC.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+[[translation]]
+code        = "en-bsb"
+abbr        = "BSB"
+language    = "en"
+name        = "Berean Standard Bible"
+source_json = "formats/json/BSB.json"
+license     = "CC0-1.0"
+attribution = ""
+
+# ---------- Norwegian ----------
+
+[[translation]]
+code        = "nb-1930"
+abbr        = "Norsk"
+language    = "nb"
+name        = "Bibelen 1930 (Bokmål)"
+source_json = "formats/json/Norsk.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+# ---------- Spanish ----------
+
+[[translation]]
+code        = "es-rv1909"
+abbr        = "SpaRV"
+language    = "es"
+name        = "Reina-Valera 1909"
+source_json = "formats/json/SpaRV.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+# ---------- German ----------
+
+[[translation]]
+code        = "de-menge"
+abbr        = "GerMenge"
+language    = "de"
+name        = "Menge-Bibel (1939)"
+source_json = "formats/json/GerMenge.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+# ---------- French ----------
+
+[[translation]]
+code        = "fr-crampon"
+abbr        = "FreCrampon"
+language    = "fr"
+name        = "La Bible Crampon (1923)"
+source_json = "formats/json/FreCrampon.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""
+
+# ---------- Portuguese ----------
+
+# Bíblia Livre is CC-BY 3.0 Brazil. SPDX has no `CC-BY-3.0-BR` identifier;
+# `CC-BY-3.0` is the closest published identifier and the unported and
+# Brazilian variants impose the same attribution requirement in practice.
+[[translation]]
+code        = "pt-blivre"
+abbr        = "PorBLivre"
+language    = "pt"
+name        = "Bíblia Livre"
+source_json = "formats/json/PorBLivre.json"
+license     = "CC-BY-3.0"
+attribution = "Bíblia Livre — Creative Commons Attribution 3.0 Brazil"
+
+# ---------- Latin ----------
+
+[[translation]]
+code        = "la-clementine"
+abbr        = "VulgClementine"
+language    = "la"
+name        = "Clementine Vulgate (1592)"
+source_json = "formats/json/VulgClementine.json"
+license     = "LicenseRef-PublicDomain"
+attribution = ""

@@ -1,30 +1,48 @@
 # Contributing to turbo-bible
 
+## Workspace layout
+
+```
+crates/
+  turbo-bible-tui/    # the TUI binary
+  turbo-bible-data/   # offline data pipeline (scrollmapper -> .db.zst)
+website/              # hand-authored static site (GitHub Pages, no SSG)
+```
+
+The repo is a Cargo workspace; the root `Cargo.toml` only carries
+`[workspace]` plumbing. Shared deps are pinned in
+`[workspace.dependencies]` and the member crates inherit via
+`{ workspace = true }`.
+
 ## Prerequisites
 
 - Rust stable (the project tracks the latest stable via
   `rust-toolchain.toml`; the MSRV gate is `rust-version = "1.88"` in
-  `Cargo.toml`).
+  the root `Cargo.toml`).
 - `just` task runner — `cargo install just` or
   `brew install just`. Optional but convenient.
 - `cargo-audit` for the audit recipe — `cargo install cargo-audit`.
 - `cargo-deny` for the license / bans / sources policy — `cargo install cargo-deny`.
-- To populate `bible.sqlite` from scrollmapper, run `turbo-bible import`
-  (network required).
+- To build the TUI binary you need
+  `crates/turbo-bible-tui/assets/*.db.zst` populated. The recipe
+  `just bundle-translations [path/to/scrollmapper/checkout]` runs the
+  data pipeline end-to-end and copies the resulting `.db.zst` files
+  into the assets directory. Bundle once, then build many times.
 
 ## Day-to-day
 
 ```sh
-just check        # what CI runs: fmt + clippy + tests
+just check        # what CI runs: fmt + clippy + tests (workspace-wide)
 just fmt          # apply rustfmt
-just lint         # clippy -D warnings
+just lint         # clippy --workspace -D warnings
 just lint-fix     # apply clippy's suggested autofixes
-just test         # cargo test --all-features
+just test         # cargo test --workspace --all-features
 just audit        # cargo audit
 just deny         # cargo deny check (license + duplicate-version + source policy)
 just baseline     # the rust-review baseline; writes target/rust-review/*.log
-just run          # cargo run --release
+just run          # cargo run -p turbo-bible --release
 just run --book JHN --chapter 3
+just data-build   # cargo run -p turbo-bible-data -- build ...
 ```
 
 If you can't / don't want to install `just`, every recipe is a thin shell
@@ -35,8 +53,8 @@ wrapper around `cargo` — copy the relevant line out of the `justfile`.
 `.github/workflows/ci.yml` runs on every push to `main` and every PR:
 
 - `cargo fmt --all -- --check`
-- `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --all-features`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
 - `cargo audit` (separate job, also runs weekly via `schedule:`)
 - `cargo deny check advisories bans licenses sources` (separate job;
   policy in `deny.toml`)
@@ -47,26 +65,25 @@ via `just check && just audit && just deny`.
 ## Tests
 
 - Unit tests live next to the code in `#[cfg(test)] mod tests` blocks.
-- Integration tests live in `tests/e2e.rs` and drive the real binary
-  over a PTY via `rexpect`. They look for
-  `~/.local/share/turbo-bible/bible.sqlite` and **skip themselves**
-  rather than fail if it isn't present, so they're fine to run on a
-  clean machine — they just won't add coverage there.
-
-To populate the DB for the e2e tests:
-
-```sh
-cargo run --release -- import
-```
+- Integration tests live in `crates/turbo-bible-tui/tests/e2e.rs` and
+  drive the real binary over a PTY via `rexpect`. Each test sets
+  `HOME` to a fresh tempdir and the TUI auto-extracts the bundled
+  translations into it — no developer-DB precondition.
+- The data pipeline has an `--ignored` end-to-end test at
+  `crates/turbo-bible-data/tests/pipeline.rs` that requires a local
+  scrollmapper checkout (point `TURBO_BIBLE_SCROLLMAPPER` at one, or
+  default to `~/git/oss/bible_databases`). Run with
+  `cargo test --workspace -- --ignored`.
 
 ## Style
 
 - Default `rustfmt` config. Run `just fmt` before pushing; CI will
   reject diffs otherwise.
 - New `#[allow(dead_code)]` markers need a one-line justification
-  comment — see `src/db.rs` / `src/theme.rs` for the pattern.
+  comment — see `crates/turbo-bible-tui/src/db.rs` /
+  `crates/turbo-bible-tui/src/theme.rs` for the pattern.
 - Errors at module boundaries flow through `anyhow::Result`; the
-  binary is the only consumer so there's no need for `thiserror`
+  binaries are the only consumers so there's no need for `thiserror`
   enums today. Use `.context(...)` to add useful frames.
 
 ## Filing issues

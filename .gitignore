@@ -4,6 +4,21 @@
 debug
 target
 
+# Data pipeline output (built per-translation .db.zst files and manifest).
+dist/
+
+# Conventional out-of-tree path for a local scrollmapper checkout the
+# data-pipeline subcommands read from.
+data/scrollmapper-checkout/
+
+# Regenerable output of `turbo-bible-data audit-licenses`. The curated
+# manifest in `data/manifest_source.toml` is the source of truth.
+data/licenses.csv
+
+# Pipeline output bundled into the TUI binary at build time. Populate
+# with `just bundle-translations`. Each .db.zst is ~4–6 MB; total ~52 MB.
+crates/turbo-bible-tui/assets/*.db.zst
+
 # VHS intermediate trace GIF written alongside docs/screenshots/*.png
 demo/_screenshots-trace.gif
 

@@ -35,14 +35,14 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       # The PTY-driven e2e tests in tests/e2e.rs skip themselves when
       # ~/.local/share/turbo-bible/bible.sqlite isn't present, so unit-only
       # invocation is fine in CI. If we ever want to run them, the importer
       # script needs to populate the DB in a CI step first.
       - name: cargo test
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features
 
   audit:
     name: cargo audit

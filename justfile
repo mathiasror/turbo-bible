@@ -6,7 +6,7 @@
 default:
     @just --list
 
-# What CI runs: fmt + clippy + tests.
+# What CI runs: fmt + clippy + tests across the whole workspace.
 check: fmt-check lint test
 
 # Format every Rust source file in place.
@@ -19,19 +19,19 @@ fmt-check:
 
 # Clippy with the same flags as CI.
 lint:
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Apply clippy's suggested autofixes (writes to disk; review before commit).
 lint-fix:
-    cargo clippy --fix --all-targets --all-features --allow-dirty -- -D warnings
+    cargo clippy --workspace --fix --all-targets --all-features --allow-dirty -- -D warnings
 
 # Unit + integration tests. PTY tests skip without a populated bible.sqlite.
 test:
-    cargo test --all-features
+    cargo test --workspace --all-features
 
 # Build a release binary.
 build:
-    cargo build --release
+    cargo build --workspace --release
 
 # cargo audit; requires `cargo install cargo-audit`.
 audit:
@@ -46,24 +46,45 @@ deny:
 # Writes per-step logs to target/rust-review/.
 baseline:
     mkdir -p target/rust-review
-    cargo build --all-targets --all-features 2>&1 | tee target/rust-review/build.log
-    cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee target/rust-review/clippy.log
-    cargo clippy --all-targets --all-features -- -W clippy::pedantic -W clippy::nursery 2>&1 | tee target/rust-review/clippy-pedantic.log
-    cargo doc --no-deps --all-features 2>&1 | tee target/rust-review/doc.log
-    cargo test --all-features --no-run 2>&1 | tee target/rust-review/test-build.log
+    cargo build --workspace --all-targets --all-features 2>&1 | tee target/rust-review/build.log
+    cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee target/rust-review/clippy.log
+    cargo clippy --workspace --all-targets --all-features -- -W clippy::pedantic -W clippy::nursery 2>&1 | tee target/rust-review/clippy-pedantic.log
+    cargo doc --workspace --no-deps --all-features 2>&1 | tee target/rust-review/doc.log
+    cargo test --workspace --all-features --no-run 2>&1 | tee target/rust-review/test-build.log
     cargo audit 2>&1 | tee target/rust-review/audit.log
     cargo tree -d 2>&1 | tee target/rust-review/tree-dupes.log
 
 # Launch the TUI with the project's default DB resolution.
 run *args:
-    cargo run --release -- {{args}}
+    cargo run -p turbo-bible --release -- {{args}}
+
+# Data pipeline shortcuts. The first positional argument points at a
+# local scrollmapper/bible_databases checkout; remaining `*args` are
+# forwarded to the subcommand (e.g. `just data-audit -- --out a.csv`).
+data-audit scrollmapper="data/scrollmapper-checkout" *args="":
+    cargo run -p turbo-bible-data -- audit-licenses --scrollmapper {{scrollmapper}} {{args}}
+
+data-build scrollmapper="data/scrollmapper-checkout" *args="":
+    cargo run -p turbo-bible-data -- build --scrollmapper {{scrollmapper}} --manifest data/manifest_source.toml {{args}}
+
+data-compress *args="":
+    cargo run -p turbo-bible-data -- compress {{args}}
+
+# Build the data pipeline output and copy *.db.zst into the TUI's
+# assets/ dir so `include_bytes!` in src/bundled.rs has fresh inputs.
+# Required before `cargo build -p turbo-bible` if assets/ is empty.
+bundle-translations scrollmapper="data/scrollmapper-checkout":
+    cargo run -p turbo-bible-data --release -- build --scrollmapper {{scrollmapper}} --manifest data/manifest_source.toml
+    cargo run -p turbo-bible-data --release -- compress
+    mkdir -p crates/turbo-bible-tui/assets
+    cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
 
 # Re-record the README demo GIF. Requires `vhs` (https://github.com/charmbracelet/vhs).
 demo:
-    cargo build --release
+    cargo build -p turbo-bible --release
     vhs demo/demo.tape
 
 # Re-render the labelled screenshots under docs/screenshots/.
 screenshots:
-    cargo build --release
+    cargo build -p turbo-bible --release
     vhs demo/screenshots.tape

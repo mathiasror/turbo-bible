@@ -1,0 +1,4 @@
+# Build artifacts go here once we add one. Today there is no build step.
+dist/
+node_modules/
+.cache/

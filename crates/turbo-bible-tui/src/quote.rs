@@ -79,18 +79,18 @@ fn day_index() -> usize {
 
 fn lookup(
     db: &Db,
-    translation: &str,
+    _translation: &str,
     book: &str,
     chapter: i64,
     verse: i64,
 ) -> Result<Option<DailyQuote>> {
     let mut stmt = db.conn().prepare_cached(
-        "SELECT v.text, b.name FROM verse v
-         JOIN book b ON b.code = v.book
-         WHERE v.translation = ?1 AND v.book = ?2 AND v.chapter = ?3 AND v.verse = ?4",
+        "SELECT v.text, bl.name FROM verse v
+         JOIN book_label bl ON bl.book = v.book
+         WHERE v.book = ?1 AND v.chapter = ?2 AND v.verse = ?3",
     )?;
     let row = stmt
-        .query_row(params![translation, book, chapter, verse], |r| {
+        .query_row(params![book, chapter, verse], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
         .ok();

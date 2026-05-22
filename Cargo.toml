@@ -1,32 +1,19 @@
-[package]
-name = "turbo-bible"
-version = "0.1.0"
+[workspace]
+resolver = "3"
+members = ["crates/turbo-bible-tui", "crates/turbo-bible-data"]
+
+[workspace.package]
 edition = "2024"
 rust-version = "1.88"
-description = "Turbo Vision–styled terminal Bible reader with FTS5 search."
 license = "MIT OR Apache-2.0"
-readme = "README.md"
 repository = "https://github.com/mathiasror/turbo-bible"
-keywords = ["bible", "tui", "ratatui", "terminal", "turbo-vision"]
-categories = ["command-line-utilities", "text-processing"]
-publish = false
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
-arboard = "3"
 clap = { version = "4", features = ["derive"] }
-crossterm = "0.29"
-etcetera = "0.8"
-ratatui = "0.30"
-rusqlite = { version = "0.32", features = ["backup", "bundled"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled", "limits"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-smallvec = "1"
 tempfile = "3"
 time = "0.3"
 toml = "0.8"
-ureq = "3"
-
-[dev-dependencies]
-proptest = "1"
-rexpect = "0.5"

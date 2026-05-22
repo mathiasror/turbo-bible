@@ -51,19 +51,12 @@ wildcards = "deny"
 # pre/post-1.0 rust-rng) coexist by design. Re-evaluate when a dep
 # bump removes one of these.
 skip = [
-    # rexpect (dev-only) → nix 0.25 → bitflags 1; ratatui-crossterm → bitflags 2.
-    { name = "bitflags",   version = "1" },
     # rusqlite → hashlink → hashbrown 0.14; ratatui-core / kasuari → 0.16;
     # toml/indexmap → 0.17. Three transitive consumers, three majors.
     { name = "hashbrown",  version = "0.14" },
     { name = "hashbrown",  version = "0.16" },
-    # ring / proptest / tempfile each pull a different getrandom major.
-    { name = "getrandom",  version = "0.2" },
+    # proptest / tempfile pull different getrandom majors.
     { name = "getrandom",  version = "0.3" },
-    # rexpect (dev-only) → quick-error 1; image → tiff → quick-error 2.
-    { name = "quick-error", version = "1" },
-    # rexpect (dev-only) → thiserror 1; ratatui/kasuari → thiserror 2.
-    { name = "thiserror",  version = "1" },
 ]
 
 # ─────────────────────────────── Sources ──────────────────────────

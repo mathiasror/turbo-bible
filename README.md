@@ -1,13 +1,22 @@
 # turbo-bible
 
-Turbo Vision–styled terminal Bible reader written in Rust. Ships three
-public-domain translations:
+Turbo Vision–styled terminal Bible reader written in Rust. Ships
+eleven public-domain (and CC0 / CC-BY) translations across seven
+languages:
 
-| Code        | Title                       | Language |
-| ----------- | --------------------------- | -------- |
-| `en-kjv`    | King James Version (1769)   | English  |
-| `nb-1930`   | Bibelen 1930 (Bokmål)       | Norwegian |
-| `es-rv1909` | Reina-Valera 1909           | Spanish  |
+| Code            | Title                                | Language   | License            |
+| --------------- | ------------------------------------ | ---------- | ------------------ |
+| `en-kjv`        | King James Version (1769)            | English    | Public Domain      |
+| `en-asv`        | American Standard Version (1901)     | English    | Public Domain      |
+| `en-ylt`        | Young's Literal Translation (1898)   | English    | Public Domain      |
+| `en-drc`        | Douay-Rheims-Challoner               | English    | Public Domain      |
+| `en-bsb`        | Berean Standard Bible                | English    | CC0-1.0            |
+| `nb-1930`       | Bibelen 1930 (Bokmål)                | Norwegian  | Public Domain      |
+| `es-rv1909`     | Reina-Valera 1909                    | Spanish    | Public Domain      |
+| `de-menge`      | Menge-Bibel (1939)                   | German     | Public Domain      |
+| `fr-crampon`    | La Bible Crampon (1923)              | French     | Public Domain      |
+| `pt-blivre`     | Bíblia Livre                         | Portuguese | CC-BY 3.0 BR       |
+| `la-clementine` | Clementine Vulgate (1592)            | Latin      | Public Domain      |
 
 ![turbo-bible demo](demo/demo.gif)
 
@@ -15,34 +24,32 @@ For a narrative walk-through of every feature, see
 [`docs/USAGE.md`](docs/USAGE.md). The keymap and config layout below are
 the reference; the guide is the tutorial.
 
-All three are imported from [`scrollmapper/bible_databases`][scrollmapper] at
-a pinned commit by `turbo-bible import`.
+All eleven translations are derived from
+[`scrollmapper/bible_databases`][scrollmapper] by the offline data
+pipeline in `crates/turbo-bible-data` and bundled into the TUI binary
+as zstd-compressed assets.
 
 [scrollmapper]: https://github.com/scrollmapper/bible_databases
 
 ## Setup
 
-Run the importer once to populate the database:
+Nothing to install — the binary embeds all eleven translations plus
+the shared cross-references DB. First launch extracts them into
+`$XDG_DATA_HOME/turbo-bible/translations/` (typically
+`~/.local/share/turbo-bible/translations/`). Re-extract at any time:
 
 ```sh
-turbo-bible import
+turbo-bible install --force
 ```
-
-It writes to `$XDG_DATA_HOME/turbo-bible/bible.sqlite` (typically
-`~/.local/share/turbo-bible/bible.sqlite`), backs up any pre-existing DB
-to `~/.local/share/turbo-bible/backups/`, caches scrollmapper downloads
-in `~/.cache/turbo-bible/scrollmapper/`, then rebuilds the FTS5 index.
-Pass `--only en-kjv` to import a subset, or `--db /custom/path.sqlite`
-to relocate.
 
 ## Run
 
 ```sh
-cargo run --release
+cargo run -p turbo-bible --release
 # Pick a translation explicitly:
-cargo run --release -- --translation nb-1930
+cargo run -p turbo-bible --release -- --translation nb-1930
 # Or jump straight into a passage:
-cargo run --release -- --book JHN --chapter 3
+cargo run -p turbo-bible --release -- --book JHN --chapter 3
 ```
 
 Translation resolution at startup:
@@ -141,9 +148,7 @@ XDG-style paths:
 | `~/.config/turbo-bible/state.toml`      | last-position bookkeeping (book/chapter/verse) — written on quit |
 | `~/.config/turbo-bible/bookmarks.toml`  | saved bookmarks |
 | `~/.config/turbo-bible/config.toml`     | user preferences (theme, keybindings, reading layout) |
-| `~/.local/share/turbo-bible/bible.sqlite` | the verse database (populated by the importer) |
-| `~/.local/share/turbo-bible/backups/`   | backups of the DB before re-imports |
-| `~/.cache/turbo-bible/scrollmapper/`    | cached downloads from scrollmapper |
+| `~/.local/share/turbo-bible/translations/` | per-translation `<code>.db` files + shared `xrefs.db` (extracted from bundled assets on first launch) |
 
 Legacy `state.json` / `bookmarks.json` under `~/.config/turbo-bible/` are
 migrated to TOML on first launch and removed.
@@ -189,18 +194,29 @@ macOS `Terminal.app` has flaky Alt-key handling; prefer iTerm2 or Ghostty.
 
 ## Layout
 
-- `src/main.rs` — arg parsing, terminal setup, main loop, mode dispatch
-- `src/db.rs` — rusqlite + prepared statements, schema, FTS5 rebuild
-- `src/render.rs` — chapter render pass (heading interleave, markers)
-- `src/nav.rs` — book/chapter walking
-- `src/search.rs` — FTS5 query, BM25 ranking, byte-offset highlights
-- `src/keys.rs` — vim sequence state machine with count prefix + user bindings
-- `src/state.rs` — `state.toml` load/save + JSON/legacy-translation migration
-- `src/config.rs` — `config.toml` schema (theme, keys, reading)
-- `src/bookmark.rs` — `bookmarks.toml` load/save
-- `src/theme.rs` — runtime-configurable CGA palette + drop-shadow primitive
-- `src/ui/translations.rs` — translation picker dialog
-- `src/ui/` — desktop, menubar, statusbar, passage view, sidebar, dialogs
+The repo is a Cargo workspace.
+
+```
+crates/
+  turbo-bible-tui/    # the TUI binary (cargo run -p turbo-bible)
+  turbo-bible-data/   # offline data pipeline (scrollmapper -> .db.zst)
+website/              # hand-authored static site (GitHub Pages, no SSG)
+```
+
+Inside `crates/turbo-bible-tui/src/`:
+
+- `main.rs` — arg parsing, terminal setup, main loop, mode dispatch
+- `db.rs` — rusqlite + prepared statements, schema, FTS5 rebuild
+- `render.rs` — chapter render pass (heading interleave, markers)
+- `nav.rs` — book/chapter walking
+- `search.rs` — FTS5 query, BM25 ranking, byte-offset highlights
+- `keys.rs` — vim sequence state machine with count prefix + user bindings
+- `state.rs` — `state.toml` load/save + JSON/legacy-translation migration
+- `config.rs` — `config.toml` schema (theme, keys, reading)
+- `bookmark.rs` — `bookmarks.toml` load/save
+- `theme.rs` — runtime-configurable CGA palette + drop-shadow primitive
+- `ui/translations.rs` — translation picker dialog
+- `ui/` — desktop, menubar, statusbar, passage view, sidebar, dialogs
 
 ## What's not in v1
 
