@@ -14,7 +14,7 @@ use std::process::Command;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
-const PINNED_COMMIT: &str = "a228a19a29099a41c196c2a310cd93e50a390e30";
+use turbo_bible::SCROLLMAPPER_COMMIT as PINNED_COMMIT;
 
 const fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_turbo-bible")

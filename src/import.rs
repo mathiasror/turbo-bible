@@ -20,9 +20,7 @@ use rusqlite::{Connection, OpenFlags, params};
 use crate::db;
 use crate::paths;
 
-/// Pinned upstream commit. Bump deliberately; verify the SHA matches a
-/// real commit on `scrollmapper/bible_databases` before changing.
-const SCROLLMAPPER_COMMIT: &str = "a228a19a29099a41c196c2a310cd93e50a390e30";
+use turbo_bible::SCROLLMAPPER_COMMIT;
 
 const SCROLLMAPPER_URL_BASE: &str =
     "https://raw.githubusercontent.com/scrollmapper/bible_databases";
