@@ -94,6 +94,12 @@ impl FootnoteDialog {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "two sections (footnotes, xrefs) + adaptive sizing + footer + \
+                  empty-state branch — all inline so the dialog stays a single \
+                  call site."
+    )]
     pub fn render(&self, outer: Rect, buf: &mut Buffer, _books: &[Book]) {
         let empty = self.footnotes.is_empty() && self.xrefs.is_empty();
         let w: u16 = if empty {

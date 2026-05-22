@@ -244,6 +244,12 @@ impl SplashView {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat keymap for splash mode — every arm is one outcome, \
+                  decomposing into per-arm helpers would just move the code \
+                  out of the dispatch's match without changing the total."
+    )]
     fn handle_normal(&mut self, key: KeyEvent) -> SplashOutcome {
         // Digit + j/k/g/G go through ListNav so the chord+count state
         // lives in one place across this view and the list dialogs.

@@ -251,6 +251,12 @@ impl Drop for TerminalGuard {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "binary entry point assembles all the loop-local state in one \
+              place; lifting any block into a helper would just move the \
+              length up one frame without making the assembly clearer."
+)]
 fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(Commands::Import(import_args)) = &args.command {
@@ -632,7 +638,7 @@ fn draw_frame(
             Dialog::Goto(d) => d.render(area, buf, &state.books),
             Dialog::Find(d) => d.render(area, buf, &state.books),
             Dialog::Footnote(d) => d.render(area, buf, &state.books),
-            Dialog::Help(d) => d.render(area, buf),
+            Dialog::Help(_) => HelpDialog::render(area, buf),
             Dialog::Bookmarks(d) => d.render(area, buf, &state.books),
             Dialog::Translations(d) => d.render(area, buf),
         }
@@ -716,8 +722,8 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 Ok(DispatchStep::Continue)
             }
         },
-        Dialog::Help(d) => {
-            if matches!(d.handle(key), HelpOutcome::Cancel) {
+        Dialog::Help(_) => {
+            if matches!(HelpDialog::handle(key), HelpOutcome::Cancel) {
                 state.dialog = Dialog::None;
             }
             Ok(DispatchStep::Continue)
@@ -818,7 +824,9 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
 }
 
 /// Direction parameter for [`LoopState::history_step`]. Internal sugar so
-/// `JumpBack` / `JumpForward` share one implementation.
+/// `JumpBack` / `JumpForward` share one implementation. `Copy` so the
+/// caller can pass it by value without `clippy::needless_pass_by_value`.
+#[derive(Debug, Clone, Copy)]
 enum HistoryDir {
     Back,
     Forward,
@@ -861,7 +869,7 @@ impl LoopState {
         Ok(())
     }
 
-    fn copy_verse(&self, ctx: &mut AppCtx) {
+    fn copy_verse(ctx: &mut AppCtx) {
         save_or_warn(
             ctx.warnings,
             "clipboard set",
@@ -869,7 +877,7 @@ impl LoopState {
         );
     }
 
-    fn toggle_visual(&mut self, cursor: i64) {
+    const fn toggle_visual(&mut self, cursor: i64) {
         self.visual_anchor = if self.visual_anchor.is_some() {
             None
         } else {
@@ -976,7 +984,7 @@ fn dispatch_reading(
         Action::OpenFootnote => state.open_footnote_dialog(ctx),
         Action::JumpBack => state.history_step(ctx, HistoryDir::Back)?,
         Action::JumpForward => state.history_step(ctx, HistoryDir::Forward)?,
-        Action::CopyVerse => state.copy_verse(ctx),
+        Action::CopyVerse => LoopState::copy_verse(ctx),
         Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
         Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
         Action::AddBookmark => state.add_bookmark(ctx),
@@ -1006,7 +1014,7 @@ fn dispatch_reading(
 /// Compute the set of bookmarked verse numbers for the given chapter.
 ///
 /// Called per draw frame (~6 Hz). The bookmark store is small (<100
-/// entries in any realistic session) so the O(n) scan + BTreeSet
+/// entries in any realistic session) so the O(n) scan + `BTreeSet`
 /// allocation here is well under the noise floor; not worth the
 /// borrow-checker contortions of a cached invalidation scheme.
 fn bookmarks_set(
@@ -1108,7 +1116,7 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
     ]
 }
 
-fn make_status(bg: &Bg, show_sidebar: bool) -> &'static [Shortcut<'static>] {
+const fn make_status(bg: &Bg, show_sidebar: bool) -> &'static [Shortcut<'static>] {
     match bg {
         Bg::Splash(_) => STATUS_SPLASH,
         Bg::Reading if show_sidebar => STATUS_READING_HIDE,
@@ -1309,7 +1317,7 @@ fn switch_translation(
     books: &mut Vec<Book>,
     translation_label: &mut String,
     code: &str,
-    pos: &mut Position,
+    pos: &Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
 ) -> Result<()> {

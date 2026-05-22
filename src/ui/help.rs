@@ -63,7 +63,7 @@ impl HelpDialog {
         Self
     }
 
-    pub const fn handle(&self, key: KeyEvent) -> HelpOutcome {
+    pub const fn handle(key: KeyEvent) -> HelpOutcome {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::F(1) => {
                 HelpOutcome::Cancel
@@ -72,7 +72,7 @@ impl HelpDialog {
         }
     }
 
-    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
+    pub fn render(outer: Rect, buf: &mut Buffer) {
         let w: u16 = outer.width.saturating_sub(6).min(64);
         let h: u16 = outer.height.saturating_sub(4).min(30);
         let area = dialog::center(outer, w, h);

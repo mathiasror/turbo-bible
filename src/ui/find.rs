@@ -97,6 +97,13 @@ impl FindDialog {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the body lays out the whole dialog inline (input row, error \
+                  row, hit rows with two-line cells, empty-state, footer); \
+                  decomposing would force callers to assemble the dialog \
+                  themselves with no gain."
+    )]
     pub fn render(&self, outer: Rect, buf: &mut Buffer, books: &[Book]) {
         let w: u16 = outer.width.saturating_sub(6).min(90);
         let h: u16 = outer.height.saturating_sub(4).min(22);

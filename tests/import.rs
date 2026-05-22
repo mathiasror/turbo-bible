@@ -16,7 +16,7 @@ use tempfile::TempDir;
 
 const PINNED_COMMIT: &str = "a228a19a29099a41c196c2a310cd93e50a390e30";
 
-fn binary_path() -> &'static str {
+const fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_turbo-bible")
 }
 
@@ -31,6 +31,11 @@ fn dev_scrollmapper_cache() -> Option<PathBuf> {
 
 #[test]
 #[ignore = "requires ~/.cache/turbo-bible/scrollmapper/ populated; run with --ignored"]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one e2e assertion per DB invariant — keeping them in a single \
+              test means one CLI invocation amortizes ~30s of import work."
+)]
 fn import_subcommand_builds_full_db() {
     let Some(cache) = dev_scrollmapper_cache() else {
         panic!(

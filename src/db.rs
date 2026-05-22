@@ -19,7 +19,7 @@ const FTS_TARGET_VERSION: &str = "2";
 /// # Errors
 /// Propagates `rusqlite::Error` when the file can't be opened RW, when
 /// the `meta` bookkeeping table can't be created, or when the FTS5
-/// rebuild fails (typically: corruption, missing FTS5 in the SQLite
+/// rebuild fails (typically: corruption, missing FTS5 in the `SQLite`
 /// build).
 pub fn ensure_fts_optimized(path: &Path) -> Result<bool> {
     let conn = Connection::open(path).with_context(|| format!("open RW {}", path.display()))?;
@@ -259,7 +259,7 @@ impl Db {
     }
 
     /// # Errors
-    /// Fails if the SQLite file at `path` can't be opened read-only or
+    /// Fails if the `SQLite` file at `path` can't be opened read-only or
     /// if `PRAGMA query_only = ON` is rejected.
     ///
     /// # Panics

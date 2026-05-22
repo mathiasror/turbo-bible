@@ -21,6 +21,12 @@ const VERSE_NUM_WIDTH: usize = 3;
 /// for the hanging indent of wrapped lines.
 const VERSE_PREFIX: usize = VERSE_NUM_WIDTH + 2;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "weaves verse/heading/marker/gutter state — splitting per concern \
+              would force the shared `out`, `headings_by_anchor`, and per-verse \
+              context across helper signatures without a meaningful gain."
+)]
 pub fn render_passage(
     p: &Passage,
     cursor_verse: i64,

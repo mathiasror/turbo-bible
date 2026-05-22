@@ -21,7 +21,7 @@ use crate::db;
 use crate::paths;
 
 /// Pinned upstream commit. Bump deliberately; verify the SHA matches a
-/// real commit on scrollmapper/bible_databases before changing.
+/// real commit on `scrollmapper/bible_databases` before changing.
 const SCROLLMAPPER_COMMIT: &str = "a228a19a29099a41c196c2a310cd93e50a390e30";
 
 const SCROLLMAPPER_URL_BASE: &str =
@@ -307,7 +307,7 @@ CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 #[derive(Debug, clap::Args)]
 pub struct ImportArgs {
-    /// Path to the SQLite DB (default: $XDG_DATA_HOME/turbo-bible/bible.sqlite).
+    /// Path to the `SQLite` DB (default: `$XDG_DATA_HOME/turbo-bible/bible.sqlite`).
     #[arg(long)]
     pub db: Option<PathBuf>,
     /// Comma-separated list of translation codes to import.
@@ -331,7 +331,7 @@ pub struct ImportArgs {
 /// Entry point dispatched from `main` when `Commands::Import` is parsed.
 ///
 /// # Errors
-/// Propagates network, filesystem, and SQLite failures. On any error,
+/// Propagates network, filesystem, and `SQLite` failures. On any error,
 /// the partially-built DB is left as-is (the caller should re-run the
 /// importer rather than launching the TUI against half-imported data).
 pub fn run(args: &ImportArgs) -> Result<()> {
@@ -680,17 +680,20 @@ fn append_suffix(p: &Path, suffix: &str) -> PathBuf {
 
 /// `YYYY-MM-DD` in UTC. Howard Hinnant's days-from-epoch → civil-date
 /// algorithm (public domain). Used only for backup filenames, so UTC
-/// vs local doesn't matter.
+/// vs local doesn't matter. The `cast_*` casts encode the algorithm's
+/// inherent sign juggling — `days` is signed (days BEFORE 1970 are
+/// negative); `doe` and `yoe` are u64 because the modular arithmetic
+/// keeps them non-negative in the valid range.
 fn today_iso() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let days = (secs / 86_400) as i64;
+    let days = (secs / 86_400).cast_signed();
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
+    let doe = (z - era * 146_097).cast_unsigned();
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
+    let y = yoe.cast_signed() + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
