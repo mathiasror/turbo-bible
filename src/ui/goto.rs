@@ -13,7 +13,7 @@ use crate::theme;
 use crate::ui::dialog;
 
 pub struct GotoDialog {
-    pub input: String,
+    input: String,
 }
 
 #[non_exhaustive]

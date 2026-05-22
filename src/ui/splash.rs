@@ -56,16 +56,17 @@ pub struct SplashView {
     books_ot: Vec<Book>,
     books_nt: Vec<Book>,
     last: Option<(Position, String)>,
-    pub filter: String,
-    pub focus: SplashColumn,
-    pub cursor_ot: usize,
-    pub cursor_nt: usize,
+    filter: String,
+    focus: SplashColumn,
+    cursor_ot: usize,
+    cursor_nt: usize,
     /// True when the cursor is on the "Continue" row above the columns.
-    pub on_continue: bool,
-    pub translation_name: String,
-    pub translation_code: String,
-    pub mode: SplashMode,
-    pub quote: Option<DailyQuote>,
+    on_continue: bool,
+    translation_name: String,
+    translation_code: String,
+    /// Read by `main::mode_tag_for` to populate the status bar's mode pill.
+    pub(crate) mode: SplashMode,
+    quote: Option<DailyQuote>,
     /// Chord + count state for `gg`, `G`, `5j`, etc. Shared with the
     /// list dialogs so the third copy of this state machine doesn't
     /// have to live here. Splash-specific keys (Ctrl-D/U/F/B,

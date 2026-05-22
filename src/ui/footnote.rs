@@ -15,16 +15,16 @@ use crate::ui::dialog;
 use crate::ui::listnav::{self, ListNav, Step};
 
 #[derive(Clone)]
-pub struct XrefItem {
-    pub target: Position,
-    pub label: String,
+struct XrefItem {
+    target: Position,
+    label: String,
 }
 
 pub struct FootnoteDialog {
-    pub verse_label: String,
-    pub footnotes: Vec<Footnote>,
-    pub xrefs: Vec<XrefItem>,
-    pub selected: usize,
+    verse_label: String,
+    footnotes: Vec<Footnote>,
+    xrefs: Vec<XrefItem>,
+    selected: usize,
     nav: ListNav,
 }
 

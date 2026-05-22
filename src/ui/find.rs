@@ -14,10 +14,10 @@ use crate::theme;
 use crate::ui::dialog;
 
 pub struct FindDialog {
-    pub input: String,
-    pub results: Vec<SearchHit>,
-    pub selected: usize,
-    pub error: Option<String>,
+    input: String,
+    results: Vec<SearchHit>,
+    selected: usize,
+    error: Option<String>,
 }
 
 #[non_exhaustive]
