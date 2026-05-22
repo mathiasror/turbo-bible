@@ -37,7 +37,10 @@ Enter
 Show
 
 # --- Launch -------------------------------------------------------------
-Type "./target/release/turbo-bible"
+# Pin the translation: with XDG_CONFIG_HOME wiped, startup falls back to
+# "first translation in DB" — which is `de-menge` alphabetically, and the
+# "love" search later in the tape would return no matches.
+Type "./target/release/turbo-bible --translation en-kjv"
 Enter
 Sleep 1500ms
 
@@ -99,8 +102,13 @@ Escape
 Sleep 350ms
 
 # --- Translations: switch to Reina-Valera 1909 (Spanish) ----------------
+# Picker opens with cursor on the current translation (en-kjv).
+# Alphabetical order: de-menge, en-asv, en-bsb, en-drc, en-kjv, en-ylt,
+# es-rv1909, … — so two Downs lands on Reina-Valera.
 Type "t"
 Sleep 700ms
+Down
+Sleep 220ms
 Down
 Sleep 350ms
 Enter
