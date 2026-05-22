@@ -13,6 +13,17 @@ use crate::search::{self, SearchHit};
 use crate::theme;
 use crate::ui::dialog;
 
+/// Each hit renders as three rows: reference, indented snippet, separator
+/// blank. The blank row in between gives the eye somewhere to rest so
+/// scanning a long list doesn't feel like a wall of text.
+const ROWS_PER_HIT: usize = 3;
+
+/// Fixed chrome above and below the hit list: 1 top blank + 1 input row +
+/// 1 hint/blank under input + 1 separator blank + 1 footer row = 5 rows
+/// that the hit list can't use. Update both this and the layout above the
+/// hits loop together.
+const CHROME_ROWS: usize = 5;
+
 pub struct FindDialog {
     input: String,
     results: Vec<SearchHit>,
@@ -166,12 +177,7 @@ impl FindDialog {
             ]));
         }
 
-        // Each result is rendered as two rows — the reference on its own line
-        // in cyan/yellow, the snippet indented underneath — separated by a
-        // blank row. This trades density for scan-ability so the eye doesn't
-        // have to walk a wall of text.
-        let rows_per_hit: usize = 3;
-        let max_hits = ((inner.height as usize).saturating_sub(5)) / rows_per_hit;
+        let max_hits = (inner.height as usize).saturating_sub(CHROME_ROWS) / ROWS_PER_HIT;
         for (i, hit) in self.results.iter().enumerate().take(max_hits) {
             let book_label = books
                 .iter()
