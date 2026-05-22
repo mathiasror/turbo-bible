@@ -214,10 +214,25 @@ struct TerminalGuard {
 impl TerminalGuard {
     fn init() -> Result<Self> {
         enable_raw_mode()?;
-        let mut out = io::stdout();
-        execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
-        let term = Terminal::new(CrosstermBackend::new(out))?;
-        Ok(Self { term, active: true })
+        let inner = || -> Result<Tty> {
+            let mut out = io::stdout();
+            execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
+            Ok(Terminal::new(CrosstermBackend::new(out))?)
+        };
+        match inner() {
+            Ok(term) => Ok(Self { term, active: true }),
+            Err(e) => {
+                // Roll back raw mode so a partial init (e.g. EnterAlternateScreen
+                // fails) doesn't leave the user's shell in cooked-off mode.
+                // LeaveAlternateScreen is best-effort: harmless when we never
+                // entered, and the alt-screen is what we'd want to leave on the
+                // post-EnterAlternateScreen failure path.
+                let mut out = io::stdout();
+                let _ = execute!(out, DisableMouseCapture, LeaveAlternateScreen);
+                let _ = disable_raw_mode();
+                Err(e)
+            }
+        }
     }
 
     const fn terminal(&mut self) -> &mut Tty {
