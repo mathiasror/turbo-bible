@@ -6,6 +6,19 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Reading view redesigned for prose flow: verse numbers sit in a left
+  gutter, the active verse is marked by a `▸` glyph plus brighter body
+  text (no full-width cyan row), consecutive verses run without a blank
+  line, the in-body chapter banner is gone (the border title already
+  carries the reference), and the frame uses a single-line border.
+- The two-line / single-line verse layout toggle has been removed:
+  `[reading] two_line_verses` and `[keys] toggle_verse_layout` are no
+  longer accepted in `config.toml` (the new gutter layout supersedes
+  both modes), and the runtime `Shift-T` binding is gone. With
+  `deny_unknown_fields`, existing configs that set either key must be
+  updated before they will parse.
+
 ### Added
 - `CHANGELOG.md`.
 - `#![deny(unsafe_code)]` at the crate root.

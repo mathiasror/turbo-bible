@@ -89,7 +89,6 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 | `M` / `F4` | Bookmarks |
 | `b` | toggle bookmark on cursor verse (or visual selection) |
 | `v` / `V` | enter / exit visual selection mode |
-| `T` | toggle two-line / single-line verse layout |
 | `Tab` | toggle References sidebar |
 | `y` | copy current verse + reference to clipboard |
 | `F1` | help |
@@ -155,7 +154,6 @@ migrated to TOML on first launch and removed.
 default_translation = "en-kjv"
 
 [reading]
-two_line_verses  = true   # initial layout (T to toggle)
 show_sidebar     = true   # initial (Tab to toggle)
 show_daily_quote = true   # splash "verse of the day" on/off
 max_width        = 80     # reading pane max width in cols

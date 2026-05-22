@@ -100,15 +100,8 @@ sidebar, gets bookmarked when you press `b`, and is the target of `y`
 `Ctrl-F`/`Ctrl-B` page the view without moving the cursor, while `j`/`k`
 move the cursor (and may scroll the view to keep it on screen).
 
-Two layout knobs:
-
-- `T` toggles between a **two-line** layout (verse number on its own line,
-  body below — easier to scan) and a **single-line** layout (number then
-  body, denser).
-- `Tab` toggles the sidebar.
-
-Both knobs respect the `[reading] two_line_verses` and `show_sidebar`
-defaults from `config.toml`.
+- `Tab` toggles the sidebar — respects the `[reading] show_sidebar`
+  default from `config.toml`.
 
 ## Moving around
 
@@ -300,7 +293,6 @@ you want a solid look without dither, set them equal.
 
 ```toml
 [reading]
-two_line_verses  = true   # T toggles at runtime
 show_sidebar     = true   # Tab toggles at runtime
 show_daily_quote = true   # splash verse-of-the-day on/off
 max_width        = 80     # cap reading pane width in cols

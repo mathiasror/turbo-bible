@@ -16,7 +16,6 @@ pub struct PassageView<'a> {
     pub cursor_verse: i64,
     pub selection: Option<(i64, i64)>,
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
-    pub two_line_verses: bool,
 }
 
 impl Widget for PassageView<'_> {
@@ -24,12 +23,12 @@ impl Widget for PassageView<'_> {
         theme::draw_shadow(buf, area);
 
         let title = format!(
-            " {} {} \u{2550}\u{2550} {} ",
+            " {} {} \u{2500}\u{2500} {} ",
             self.passage.book_name, self.passage.chapter, self.passage.translation
         );
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Double)
+            .border_type(BorderType::Plain)
             .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
@@ -54,7 +53,6 @@ impl Widget for PassageView<'_> {
             self.selection,
             self.bookmarked,
             inner.width,
-            self.two_line_verses,
         );
         let cursor_line = crate::render::line_index_for_verse(&rendered, self.cursor_verse);
         let viewport = inner.height as usize;
