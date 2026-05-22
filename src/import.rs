@@ -725,28 +725,12 @@ fn append_suffix(p: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// `YYYY-MM-DD` in UTC. Howard Hinnant's days-from-epoch → civil-date
-/// algorithm (public domain). Used only for backup filenames, so UTC
-/// vs local doesn't matter. The `cast_*` casts encode the algorithm's
-/// inherent sign juggling — `days` is signed (days BEFORE 1970 are
-/// negative); `doe` and `yoe` are u64 because the modular arithmetic
-/// keeps them non-negative in the valid range.
+/// `YYYY-MM-DD` in UTC. Used only for backup filenames, so UTC vs local
+/// doesn't matter. The `time` crate is already in the dep graph via
+/// `ratatui-widgets`, so depending on it directly here is essentially free.
 fn today_iso() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let days = (secs / 86_400).cast_signed();
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097).cast_unsigned();
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe.cast_signed() + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
+    let d = time::OffsetDateTime::now_utc().date();
+    format!("{:04}-{:02}-{:02}", d.year(), u8::from(d.month()), d.day())
 }
 
 #[cfg(test)]
