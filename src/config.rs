@@ -11,7 +11,6 @@
 //! keymap = "vim"
 //!
 //! [reading]
-//! two_line_verses    = true
 //! show_sidebar       = true
 //! show_daily_quote   = true
 //! max_width          = 80
@@ -86,8 +85,6 @@ pub struct InputConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReadingConfig {
-    /// Two-line layout per verse (number on its own line) vs single-line.
-    pub two_line_verses: bool,
     /// Show the chapter-outline sidebar to the right of the passage.
     pub show_sidebar: bool,
     /// Show the "verse of the day" block on the splash screen.
@@ -99,7 +96,6 @@ pub struct ReadingConfig {
 impl Default for ReadingConfig {
     fn default() -> Self {
         Self {
-            two_line_verses: true,
             show_sidebar: true,
             show_daily_quote: true,
             max_width: 80,
@@ -199,7 +195,6 @@ pub struct KeysConfig {
     pub copy_verse: Vec<KeyBind>,
     pub toggle_sidebar: Vec<KeyBind>,
     pub toggle_visual: Vec<KeyBind>,
-    pub toggle_verse_layout: Vec<KeyBind>,
     pub add_bookmark: Vec<KeyBind>,
     pub jump_back: Vec<KeyBind>,
     pub jump_forward: Vec<KeyBind>,
@@ -361,10 +356,42 @@ pub fn load() -> Config {
             return Config::default();
         }
     };
-    toml::from_str(&txt).unwrap_or_else(|e| {
+    let (migrated, dropped) = migrate_legacy(&txt);
+    for key in &dropped {
+        eprintln!("warning: config.toml: removed key `{key}` ignored (see CHANGELOG)");
+    }
+    toml::from_str(&migrated).unwrap_or_else(|e| {
         eprintln!("config.toml: {e}; using defaults");
         Config::default()
     })
+}
+
+/// Strip lines that assign to keys we've removed in past versions, so
+/// `deny_unknown_fields` doesn't reject the entire file (and silently
+/// reset every other customization) when the user upgrades. Returns the
+/// rewritten text plus the list of dropped key names for warning output.
+///
+/// Line-based on purpose: handling multi-line array values would need a
+/// real TOML rewriter. Our own [`save`] serializes one binding per
+/// inline array, so the common cases fit one line.
+fn migrate_legacy(txt: &str) -> (String, Vec<String>) {
+    const LEGACY_KEYS: &[&str] = &["two_line_verses", "toggle_verse_layout"];
+    let mut out = String::with_capacity(txt.len());
+    let mut dropped = Vec::new();
+    for line in txt.lines() {
+        let key = line
+            .trim_start()
+            .split(|c: char| c.is_whitespace() || c == '=')
+            .next()
+            .unwrap_or("");
+        if LEGACY_KEYS.contains(&key) {
+            dropped.push(key.to_string());
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    (out, dropped)
 }
 
 /// # Errors
@@ -458,7 +485,7 @@ max_width = 100
         .unwrap();
         assert_eq!(cfg.default_translation.as_deref(), Some("nb-1930"));
         assert_eq!(cfg.reading.max_width, 100);
-        assert!(cfg.reading.two_line_verses); // default kept
+        assert!(cfg.reading.show_sidebar); // default kept
         assert_eq!(cfg.theme.blue.b, 0xaa); // default kept
     }
 
@@ -501,6 +528,64 @@ quit = ["NotAKey"]
             !err.to_string().is_empty(),
             "expected an error for invalid key name"
         );
+    }
+
+    #[test]
+    fn migrate_legacy_drops_removed_keys_and_preserves_others() {
+        // The exact shape `to_string_pretty` produces from older builds,
+        // with one legacy key in [reading] and one in [keys].
+        let input = r#"default_translation = "nb-1930"
+
+[reading]
+two_line_verses = true
+show_sidebar = true
+max_width = 100
+
+[keys]
+toggle_verse_layout = ["T"]
+quit = ["Ctrl-q"]
+"#;
+        let (out, dropped) = migrate_legacy(input);
+        assert_eq!(dropped, vec!["two_line_verses", "toggle_verse_layout"]);
+        assert!(!out.contains("two_line_verses"));
+        assert!(!out.contains("toggle_verse_layout"));
+        // Other content survives — including the section headers and
+        // sibling keys that share the section.
+        assert!(out.contains("default_translation = \"nb-1930\""));
+        assert!(out.contains("show_sidebar = true"));
+        assert!(out.contains("max_width = 100"));
+        assert!(out.contains("quit = [\"Ctrl-q\"]"));
+
+        // And the migrated text parses cleanly under deny_unknown_fields.
+        let cfg: Config = toml::from_str(&out).expect("migrated config should parse");
+        assert_eq!(cfg.default_translation.as_deref(), Some("nb-1930"));
+        assert_eq!(cfg.reading.max_width, 100);
+        assert_eq!(cfg.keys.quit.len(), 1);
+    }
+
+    #[test]
+    fn migrate_legacy_ignores_lookalike_substrings() {
+        // Comments and string values that contain the legacy key name as
+        // a substring must not be dropped.
+        let input = r#"# two_line_verses used to be configurable
+default_translation = "two_line_verses_demo"
+"#;
+        let (out, dropped) = migrate_legacy(input);
+        assert!(dropped.is_empty(), "got dropped keys: {dropped:?}");
+        assert!(out.contains("# two_line_verses used to be configurable"));
+        assert!(out.contains("two_line_verses_demo"));
+    }
+
+    #[test]
+    fn migrate_legacy_is_noop_on_clean_file() {
+        let input = r#"default_translation = "en-kjv"
+
+[reading]
+show_sidebar = true
+"#;
+        let (out, dropped) = migrate_legacy(input);
+        assert!(dropped.is_empty());
+        assert_eq!(out.trim_end(), input.trim_end());
     }
 
     #[test]
