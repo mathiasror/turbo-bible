@@ -25,12 +25,11 @@ pub struct Frame<'a> {
     pub menu_title: &'a str,
     pub status: &'a [statusbar::Shortcut<'a>],
     pub status_mode: &'a str,
-    pub passage: Option<&'a Passage>,
+    pub passage: &'a Passage,
     pub cursor_verse: i64,
     pub selection: Option<(i64, i64)>,
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
     pub show_sidebar: bool,
-    pub two_line_verses: bool,
     /// Maximum width (cols) of the reading pane. Centered if terminal wider.
     pub max_reading_width: u16,
 }
@@ -40,25 +39,22 @@ impl Frame<'_> {
         let (menu_area, body_area, status_area) = split(area);
         menubar::render(self.menu_title, menu_area, buf);
         desktop::render(body_area, buf);
-        if let Some(p) = self.passage {
-            let (reading, sidebar_rect) =
-                body_layout(body_area, self.show_sidebar, self.max_reading_width);
-            passage::PassageView {
-                passage: p,
+        let (reading, sidebar_rect) =
+            body_layout(body_area, self.show_sidebar, self.max_reading_width);
+        passage::PassageView {
+            passage: self.passage,
+            cursor_verse: self.cursor_verse,
+            selection: self.selection,
+            bookmarked: self.bookmarked,
+        }
+        .render(reading, buf);
+        if let Some(sb) = sidebar_rect {
+            sidebar::SidebarView {
+                passage: self.passage,
                 cursor_verse: self.cursor_verse,
                 selection: self.selection,
-                bookmarked: self.bookmarked,
-                two_line_verses: self.two_line_verses,
             }
-            .render(reading, buf);
-            if let Some(sb) = sidebar_rect {
-                sidebar::SidebarView {
-                    passage: p,
-                    cursor_verse: self.cursor_verse,
-                    selection: self.selection,
-                }
-                .render(sb, buf);
-            }
+            .render(sb, buf);
         }
         statusbar::render(self.status, status_area, buf, self.status_mode);
     }

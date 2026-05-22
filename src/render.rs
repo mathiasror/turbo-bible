@@ -240,7 +240,9 @@ fn rl_blank() -> RenderedLine {
 /// fill is flush right (no terminal default bg bleeding through gaps after
 /// short wrapped lines).
 pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
-    let pad_style = Style::new().fg(theme::bright_white()).bg(theme::blue());
+    // Padding is space-only, so fg has no visual effect; bg alone communicates
+    // the intent ("fill the trailing gap with the pane background").
+    let pad_style = Style::new().bg(theme::blue());
     lines
         .iter()
         .map(|rl| {

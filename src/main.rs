@@ -181,7 +181,6 @@ struct LoopState {
     visual_anchor: Option<i64>,
     show_sidebar: bool,
     max_reading_width: u16,
-    verse_layout_two_line: bool,
     keys: KeyState,
 }
 
@@ -547,7 +546,6 @@ impl LoopState {
             visual_anchor: None,
             show_sidebar: config.reading.show_sidebar,
             max_reading_width: config.reading.max_width,
-            verse_layout_two_line: config.reading.two_line_verses,
             keys,
         }
     }
@@ -596,7 +594,6 @@ fn draw_frame(
                     &state.bg,
                     &state.dialog,
                     state.visual_anchor.is_some(),
-                    state.verse_layout_two_line,
                 );
                 crate::ui::statusbar::render(
                     status,
@@ -617,7 +614,6 @@ fn draw_frame(
                     &state.bg,
                     &state.dialog,
                     state.visual_anchor.is_some(),
-                    state.verse_layout_two_line,
                 );
                 let selection = state.visual_anchor.map(|a| {
                     let c = cursor_verse;
@@ -627,12 +623,11 @@ fn draw_frame(
                     menu_title: &menu_title,
                     status,
                     status_mode: &mode_tag,
-                    passage: Some(passage),
+                    passage,
                     cursor_verse,
                     selection,
                     bookmarked: &bookmarked_in_chapter,
                     show_sidebar: state.show_sidebar,
-                    two_line_verses: state.verse_layout_two_line,
                     max_reading_width: state.max_reading_width,
                 }
                 .render(area, buf);
@@ -982,7 +977,6 @@ fn dispatch_reading(
         Action::JumpForward => state.history_step(ctx, HistoryDir::Forward)?,
         Action::CopyVerse => state.copy_verse(ctx),
         Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
-        Action::ToggleVerseLayout => state.verse_layout_two_line = !state.verse_layout_two_line,
         Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
         Action::AddBookmark => state.add_bookmark(ctx),
         Action::OpenBookmarks => state.open_bookmarks_dialog(),
@@ -1030,7 +1024,7 @@ fn bookmarks_set(
     out
 }
 
-fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, two_line: bool) -> Cow<'static, str> {
+fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> Cow<'static, str> {
     match dialog {
         Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
         Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
@@ -1043,16 +1037,13 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, two_line: bool) -> Cow<'
                 crate::ui::splash::SplashMode::Normal => Cow::Borrowed("-- NORMAL --"),
                 crate::ui::splash::SplashMode::Filter => Cow::Borrowed("-- FILTER --"),
             },
-            // Reading view: include the verse-layout marker so the user can
-            // tell 1L from 2L without counting blank lines between verses.
-            // Four reading-view variants are enumerated as &'static literals
-            // so this path also stays allocation-free.
-            Bg::Reading => match (visual, two_line) {
-                (true, true) => Cow::Borrowed("-- VISUAL \u{00B7} 2L --"),
-                (true, false) => Cow::Borrowed("-- VISUAL \u{00B7} 1L --"),
-                (false, true) => Cow::Borrowed("-- NORMAL \u{00B7} 2L --"),
-                (false, false) => Cow::Borrowed("-- NORMAL \u{00B7} 1L --"),
-            },
+            Bg::Reading => {
+                if visual {
+                    Cow::Borrowed("-- VISUAL --")
+                } else {
+                    Cow::Borrowed("-- NORMAL --")
+                }
+            }
         },
     }
 }
@@ -1079,7 +1070,7 @@ const STATUS_SPLASH: &[Shortcut<'static>] = &[
 const STATUS_READING_HIDE: &[Shortcut<'static>] = &reading_shortcuts("Hide");
 const STATUS_READING_REFS: &[Shortcut<'static>] = &reading_shortcuts("Refs");
 
-const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 9] {
+const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
     [
         Shortcut {
             key: "F1",
@@ -1100,10 +1091,6 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 9] {
         Shortcut {
             key: "v",
             action: "Select",
-        },
-        Shortcut {
-            key: "T",
-            action: "Layout",
         },
         Shortcut {
             key: "Tab",
@@ -1267,7 +1254,6 @@ fn apply_action(
         | Action::AddBookmark
         | Action::OpenBookmarks
         | Action::OpenTranslations
-        | Action::ToggleVerseLayout
         | Action::SearchNext
         | Action::SearchPrev => Ok(false),
     }
