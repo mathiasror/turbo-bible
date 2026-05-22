@@ -6,6 +6,7 @@
       "Bash(git commit *)",
       "Bash(cargo fmt)",
       "Bash(cargo fmt --all -- --check)",
+      "Bash(cargo check *)",
       "Bash(cargo clippy *)",
       "Bash(cargo test *)",
       "Bash(cargo audit)",
@@ -18,6 +19,21 @@
       "Bash(just audit)",
       "Bash(just deny)",
       "Bash(just baseline)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // \"\"' | { read -r f; case \"$f\" in *.rs) cargo check --all-targets --all-features --message-format=short;; esac; }",
+            "timeout": 60,
+            "statusMessage": "cargo check"
+          }
+        ]
+      }
     ]
   }
 }
