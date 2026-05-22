@@ -7,6 +7,8 @@
 //! Today the entire surface is one constant. Resist the temptation
 //! to grow it: every `pub` here lands in the rustdoc on the lib
 //! target and on docs.rs once the crate is published.
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 /// Pinned `scrollmapper/bible_databases` commit.
 ///

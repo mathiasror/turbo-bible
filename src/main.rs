@@ -7,7 +7,7 @@
 //!
 //! [`README.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/README.md
 //! [`docs/USAGE.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/docs/USAGE.md
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod bookmark;
 mod config;
