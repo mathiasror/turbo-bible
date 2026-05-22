@@ -697,7 +697,10 @@ fn close_with_jump(state: &mut LoopState, ctx: &mut AppCtx, p: Position) -> Resu
 
 fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Result<DispatchStep> {
     match &mut state.dialog {
-        Dialog::None => Ok(DispatchStep::Continue),
+        // Guarded by `dispatch_key`: this function is only entered when
+        // `state.dialog` is non-None. Crash loudly if that invariant breaks
+        // rather than silently swallowing the keystroke.
+        Dialog::None => unreachable!("dispatch_dialog called with Dialog::None"),
         Dialog::Goto(d) => match d.handle(key, &state.books) {
             GotoOutcome::Continue => Ok(DispatchStep::Continue),
             GotoOutcome::Cancel => {
