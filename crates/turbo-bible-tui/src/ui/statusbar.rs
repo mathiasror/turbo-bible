@@ -24,17 +24,21 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
     // VISUAL gets a high-contrast yellow pill so the eye doesn't have to read
     // the four letters — the colour shift alone signals mode change. Other
     // modes share the standard cyan pill.
-    let mode_style = if mode_tag.contains("VISUAL") {
-        Style::new()
-            .fg(theme::black())
-            .bg(theme::yellow())
-            .add_modifier(Modifier::BOLD)
+    let pill_bg = if mode_tag.contains("VISUAL") {
+        theme::yellow()
     } else {
-        Style::new()
-            .fg(theme::black())
-            .bg(theme::cyan())
-            .add_modifier(Modifier::BOLD)
+        theme::cyan()
     };
+    let mode_style = Style::new()
+        .fg(theme::black())
+        .bg(pill_bg)
+        .add_modifier(Modifier::BOLD);
+    // Bevel cells: ▌ fills the left half of its cell with a bright_white
+    // highlight, ▐ fills the right half with a dark_grey shadow; the
+    // remaining half of each cell stays in the pill bg, so the pair reads
+    // as a raised period pill catching light from the upper-left.
+    let bevel_left = Style::new().fg(theme::bright_white()).bg(pill_bg);
+    let bevel_right = Style::new().fg(theme::dark_grey()).bg(pill_bg);
 
     for x in area.left()..area.right() {
         let cell = &mut buf[(x, area.y)];
@@ -49,17 +53,20 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
         spans.push(Span::styled(format!(" {}  ", s.action), base));
     }
 
-    // Right-align the mode tag.
+    // Right-align the mode tag, wrapped in a two-cell bevel (▌ + ▐).
     if !mode_tag.is_empty() {
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         let mode_text = format!(" {mode_tag} ");
+        let pill_width = mode_text.chars().count() + 2;
         let pad = (area.width as usize)
             .saturating_sub(used)
-            .saturating_sub(mode_text.chars().count());
+            .saturating_sub(pill_width);
         if pad > 0 {
             spans.push(Span::styled(" ".repeat(pad), base));
         }
+        spans.push(Span::styled("\u{258C}", bevel_left));
         spans.push(Span::styled(mode_text, mode_style));
+        spans.push(Span::styled("\u{2590}", bevel_right));
     }
 
     Paragraph::new(Line::from(spans))

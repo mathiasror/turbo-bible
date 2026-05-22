@@ -116,7 +116,7 @@ impl FootnoteDialog {
         };
         let area = dialog::center(outer, w, h);
         let title = format!("Notes for {}", self.verse_label);
-        let inner = dialog::draw_dialog(area, &title, buf);
+        let inner = dialog::draw_modal_dialog(outer, area, &title, buf);
 
         let bg = Style::new().bg(theme::blue());
         let label = Style::new().fg(theme::bright_white()).bg(theme::blue());

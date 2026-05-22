@@ -479,14 +479,29 @@ impl SplashView {
         } else {
             format!(" {} ", self.filter)
         };
+        // Mode pill bevel: bright_white left + dark_grey right edge cells
+        // give the pill a raised look. The pill's own bg fills the rest of
+        // each bevel cell so the highlight reads as a soft rim.
+        let pill_bg = styles.mode.bg.unwrap_or_else(theme::cyan);
+        let bevel_left = Style::new().fg(theme::bright_white()).bg(pill_bg);
+        let bevel_right = Style::new().fg(theme::dark_grey()).bg(pill_bg);
+        // Input field "sunken" edges: dark sliver on the left rim, bright
+        // sliver on the right rim. Mirrors the bevel direction so an input
+        // reads as inset where a pill reads as raised.
+        let input_bg = styles.filter.bg.unwrap_or_else(theme::cyan);
+        let input_edge_left = Style::new().fg(theme::dark_grey()).bg(input_bg);
+        let input_edge_right = Style::new().fg(theme::bright_white()).bg(input_bg);
         let mut filter_row = vec![
             Span::styled("  ", styles.bg),
+            Span::styled("\u{258C}", bevel_left),
             Span::styled(mode_label, styles.mode),
+            Span::styled("\u{2590}", bevel_right),
             Span::styled("  ", styles.bg),
+            Span::styled("\u{258F}", input_edge_left),
             Span::styled(filter_display.clone(), styles.filter),
         ];
         let used_filter: usize =
-            2 + mode_label.chars().count() + 2 + filter_display.chars().count();
+            2 + 1 + mode_label.chars().count() + 1 + 2 + 1 + filter_display.chars().count();
         let cursor_extra = if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
                 "\u{2588}",
@@ -496,9 +511,11 @@ impl SplashView {
         } else {
             0
         };
-        if (used_filter + cursor_extra) < inner_w {
+        filter_row.push(Span::styled("\u{2595}", input_edge_right));
+        let trailing_edge = 1;
+        if (used_filter + cursor_extra + trailing_edge) < inner_w {
             filter_row.push(Span::styled(
-                " ".repeat(inner_w - used_filter - cursor_extra),
+                " ".repeat(inner_w - used_filter - cursor_extra - trailing_edge),
                 styles.bg,
             ));
         }

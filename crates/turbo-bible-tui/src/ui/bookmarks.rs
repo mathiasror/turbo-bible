@@ -108,7 +108,7 @@ impl BookmarksDialog {
         let w: u16 = outer.width.saturating_sub(6).min(80);
         let h: u16 = outer.height.saturating_sub(4).min(24);
         let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_dialog(area, "Bookmarks", buf);
+        let inner = dialog::draw_modal_dialog(outer, area, "Bookmarks", buf);
 
         let bg = Style::new().bg(theme::blue());
         let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());

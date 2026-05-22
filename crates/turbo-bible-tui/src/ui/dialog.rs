@@ -10,6 +10,16 @@ use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
 use crate::theme;
 
+/// Paint a modal dialog over a dimmed-dither backdrop. Use this for any
+/// foreground popup that should visually own the screen (Goto, Find,
+/// footnote / xref popup, Help, Translations, Bookmarks). The splash
+/// uses [`draw_dialog`] directly because it IS the home screen, not a
+/// modal layered above other content.
+pub fn draw_modal_dialog(outer: Rect, area: Rect, title: &str, buf: &mut Buffer) -> Rect {
+    theme::draw_modal_backdrop(buf, outer);
+    draw_dialog(area, title, buf)
+}
+
 pub fn draw_dialog(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
     theme::draw_shadow(buf, area);
 

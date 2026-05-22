@@ -119,7 +119,7 @@ impl FindDialog {
         let w: u16 = outer.width.saturating_sub(6).min(90);
         let h: u16 = outer.height.saturating_sub(4).min(22);
         let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_dialog(area, "Find", buf);
+        let inner = dialog::draw_modal_dialog(outer, area, "Find", buf);
 
         let bg = Style::new().bg(theme::blue());
         let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
@@ -141,10 +141,17 @@ impl FindDialog {
 
         let mut lines: Vec<Line<'static>> = Vec::with_capacity(inner.height as usize);
         lines.push(blank());
+        // Sunken-cell edges: dark sliver on the left rim, bright sliver
+        // on the right rim. Matches the Goto input so both dialogs share
+        // the same period inset look.
+        let edge_left = Style::new().fg(theme::dark_grey()).bg(theme::cyan());
+        let edge_right = Style::new().fg(theme::bright_white()).bg(theme::cyan());
         lines.push(Line::from(vec![
             Span::styled("  Find: ", label),
+            Span::styled("\u{258F}", edge_left),
             Span::styled(self.input.clone(), input_style),
             Span::styled("\u{2588}", input_style.fg(theme::bright_white())),
+            Span::styled("\u{2595}", edge_right),
         ]));
         // Empty-state hint under the input — only shown before the user types.
         // Matches the Goto dialog's pattern so the two commands feel symmetric.

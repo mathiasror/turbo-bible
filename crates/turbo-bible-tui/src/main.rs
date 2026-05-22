@@ -1036,7 +1036,21 @@ fn dispatch_reading(
         return Ok(DispatchStep::Continue);
     };
     match action {
-        Action::OpenGoto => state.dialog = Dialog::Goto(GotoDialog::new()),
+        Action::OpenGoto => {
+            // Pre-fill with the current reference so `Enter` is a no-op
+            // "stay here" and a quick edit (e.g. bumping chapter or verse)
+            // costs only a few keystrokes.
+            let book_name = state
+                .books
+                .iter()
+                .find(|b| b.code == ctx.pos.book)
+                .map_or(ctx.pos.book.clone(), |b| b.name.clone());
+            state.dialog = Dialog::Goto(GotoDialog::with_position(
+                &book_name,
+                ctx.pos.chapter,
+                *ctx.cursor_verse,
+            ));
+        }
         Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new()),
         Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
         Action::OpenFootnote => state.open_footnote_dialog(ctx),

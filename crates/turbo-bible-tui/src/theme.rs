@@ -48,6 +48,25 @@ pub fn menubar_style() -> Style {
     Style::new().fg(black()).bg(light_grey())
 }
 
+/// Paint a Turbo Vision–style dimmed dither across the entire `outer` rect.
+/// Used as a modal backdrop so dialogs visually own the screen and the
+/// reading-pane frame underneath stops competing for attention. The `▒`
+/// glyph + dark_grey-on-black palette matches the existing desktop dither
+/// so the overlay reads as period chrome, not a modern dim.
+pub fn draw_modal_backdrop(buf: &mut Buffer, outer: Rect) {
+    let buf_area = buf.area;
+    let style = Style::new().fg(dark_grey()).bg(black());
+    let x_end = outer.right().min(buf_area.right());
+    let y_end = outer.bottom().min(buf_area.bottom());
+    for y in outer.top()..y_end {
+        for x in outer.left()..x_end {
+            let cell = &mut buf[(x, y)];
+            cell.set_symbol("\u{2592}");
+            cell.set_style(style);
+        }
+    }
+}
+
 /// Paint a drop shadow on the cells immediately to the right and below `rect`.
 /// Uses solid dark cells so the shadow reads cleanly at modern font weights.
 pub fn draw_shadow(buf: &mut Buffer, rect: Rect) {

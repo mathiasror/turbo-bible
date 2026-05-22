@@ -40,41 +40,43 @@ pub fn render_passage(
         .fg(theme::bright_white())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    // Verse number: yellow+bold for idle verses. On the cursor verse we swap
-    // to bright_white+bold so the number visually leads into the brighter
-    // prose body below; on a non-cursor verse that's bookmarked, idle yellow
-    // is still distinct from the verse-text foreground.
-    let verse_num_style = |on_cursor: bool| {
-        let fg = if on_cursor {
-            theme::bright_white()
-        } else {
-            theme::yellow()
-        };
-        Style::new()
-            .fg(fg)
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD)
-    };
-    // Three-tier body brightness ladder so the cursor doesn't disappear
-    // inside a long visual selection: idle = light_grey, selection =
-    // bright_white, cursor = bright_white + BOLD. The cursor's bolder
-    // weight reads as a focus even when the entire pane is selected.
-    let verse_text_style = |is_cursor: bool, in_sel: bool| {
-        let fg = if is_cursor || in_sel {
-            theme::bright_white()
-        } else {
-            theme::light_grey()
-        };
-        let mut s = Style::new().fg(fg).bg(theme::blue());
+    // Three-tier row palette, period-correct Turbo Vision:
+    //   idle:                  blue pane bg, light_grey body, yellow num
+    //   in selection (no cur): light_grey bg, black body, black BOLD num — the
+    //                          classic TV "selected list item / selected text"
+    //                          look (reverse-video on dialog grey)
+    //   cursor:                cyan bg, bright_white BOLD body, yellow BOLD
+    //                          num — the brightest row anywhere in the pane
+    let verse_num_style = |is_cursor: bool, in_selection: bool| {
         if is_cursor {
-            s = s.add_modifier(Modifier::BOLD);
+            Style::new()
+                .fg(theme::yellow())
+                .bg(theme::cyan())
+                .add_modifier(Modifier::BOLD)
+        } else if in_selection {
+            Style::new()
+                .fg(theme::black())
+                .bg(theme::light_grey())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new()
+                .fg(theme::yellow())
+                .bg(theme::blue())
+                .add_modifier(Modifier::BOLD)
         }
-        s
     };
-    let marker_style = Style::new()
-        .fg(theme::yellow())
-        .bg(theme::blue())
-        .add_modifier(Modifier::BOLD);
+    let verse_text_style = |is_cursor: bool, in_sel: bool| {
+        if is_cursor {
+            Style::new()
+                .fg(theme::bright_white())
+                .bg(theme::cyan())
+                .add_modifier(Modifier::BOLD)
+        } else if in_sel {
+            Style::new().fg(theme::black()).bg(theme::light_grey())
+        } else {
+            Style::new().fg(theme::light_grey()).bg(theme::blue())
+        }
+    };
 
     // Pre-bucket headings by `before_verse`.
     let mut headings_by_anchor: std::collections::BTreeMap<i64, Vec<&crate::db::Heading>> =
@@ -119,20 +121,46 @@ pub fn render_passage(
 
         let in_selection = selection.is_some_and(|(s, e)| v.number >= s && v.number <= e);
         let is_cursor_verse = v.number == cursor_verse;
-        let on_cursor = is_cursor_verse || in_selection;
-        // Gutter glyph (1 col): cursor wins, then selection bar, then bookmark
-        // star, else blank. Styled in cyan/yellow on the pane bg so the column
-        // reads as a quiet accent rather than a row-wide highlight.
+        // Per-verse row bg: cyan for the cursor's full-row highlight,
+        // light_grey for the rest of a visual selection (period-correct TV
+        // selection), blue elsewhere. Gutter, number, body, marker and
+        // right-edge padding all share this bg so each row reads as one
+        // continuous bar.
+        let row_bg = if is_cursor_verse {
+            theme::cyan()
+        } else if in_selection {
+            theme::light_grey()
+        } else {
+            theme::blue()
+        };
+        // Markers (ᶠ / ˣ) ride the row bg. Cursor row keeps yellow accent;
+        // selection row uses black to match the inverted body text — dark_grey
+        // on light_grey was too low-contrast to spot footnote/xref glyphs at
+        // the end of a selected verse.
+        let marker_fg = if in_selection && !is_cursor_verse {
+            theme::black()
+        } else {
+            theme::yellow()
+        };
+        let marker_style = Style::new()
+            .fg(marker_fg)
+            .bg(row_bg)
+            .add_modifier(Modifier::BOLD);
+        // Gutter glyph (1 col): cursor's ▸ in bright_white reads as a
+        // pointer, not a number-tone accent. Selection rows leave the
+        // gutter blank — the row fill already marks the extent, and a
+        // ▎ tick on top reads as redundant clutter. Bookmark star and
+        // idle space unchanged.
         let (gutter_glyph, gutter_style) = if is_cursor_verse {
             (
                 "\u{25B8}",
                 Style::new()
-                    .fg(theme::cyan())
-                    .bg(theme::blue())
+                    .fg(theme::bright_white())
+                    .bg(theme::cyan())
                     .add_modifier(Modifier::BOLD),
             )
         } else if in_selection {
-            ("\u{258E}", Style::new().fg(theme::cyan()).bg(theme::blue()))
+            (" ", Style::new().bg(theme::light_grey()))
         } else if bookmarked.contains(&v.number) {
             (
                 "\u{2605}",
@@ -188,6 +216,17 @@ pub fn render_passage(
             if !tail.is_empty() {
                 spans.push(Span::styled(tail.to_string(), marker_style));
             }
+            // Highlighted rows (cursor or in-selection) pad to the full
+            // wrap width so the row fill runs unbroken to the pane's right
+            // edge — otherwise the highlight stops at the last word and
+            // the row reads as a ragged tag instead of a clean bar.
+            if is_cursor_verse || in_selection {
+                let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let pad = (wrap_width as usize).saturating_sub(used);
+                if pad > 0 {
+                    spans.push(Span::styled(" ".repeat(pad), body_style));
+                }
+            }
             out.push(RenderedLine {
                 line: Line::from(spans),
                 verse: v.number,
@@ -197,7 +236,7 @@ pub fn render_passage(
         push_line(
             vec![
                 Span::styled(gutter_glyph.to_string(), gutter_style),
-                Span::styled(num_str, verse_num_style(on_cursor)),
+                Span::styled(num_str, verse_num_style(is_cursor_verse, in_selection)),
             ],
             first,
         );
@@ -273,7 +312,6 @@ mod render_tests {
     use std::collections::BTreeSet;
 
     const CURSOR_GLYPH: &str = "\u{25B8}";
-    const SELECTION_GLYPH: &str = "\u{258E}";
     const BOOKMARK_GLYPH: &str = "\u{2605}";
 
     fn passage_with(verses: Vec<Verse>, headings: Vec<Heading>) -> Passage {
@@ -352,7 +390,10 @@ mod render_tests {
     }
 
     #[test]
-    fn selection_glyph_appears_on_non_cursor_selected_rows() {
+    fn selection_gutter_is_blank_while_cursor_keeps_arrow() {
+        // Selection rows leave the gutter blank — the light_grey row fill
+        // already marks the extent, so a separate ▎ tick on top reads as
+        // clutter. The cursor inside the selection still shows ▸.
         let p = passage_with(
             vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma"), v(4, "delta")],
             vec![],
@@ -361,17 +402,93 @@ mod render_tests {
         let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, 80);
         assert_eq!(
             line_for_verse(&lines, 2).line.spans[0].content.as_ref(),
-            SELECTION_GLYPH,
+            " ",
         );
         assert_eq!(
             line_for_verse(&lines, 3).line.spans[0].content.as_ref(),
-            SELECTION_GLYPH,
+            " ",
         );
-        // Cursor verse inside the selection still shows the cursor glyph.
         assert_eq!(
             line_for_verse(&lines, 4).line.spans[0].content.as_ref(),
             CURSOR_GLYPH,
         );
+    }
+
+    #[test]
+    fn cursor_row_has_full_width_cyan_fill() {
+        // Cursor verse should render with a continuous cyan row fill: the
+        // gutter, verse-number column, body text and trailing pad all share
+        // the cyan bg so the highlight reads as one horizontal bar. Other
+        // verses keep the pane's blue bg.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 2, None, &bookmarked, 40);
+
+        let cursor_line = line_for_verse(&lines, 2);
+        for (i, span) in cursor_line.line.spans.iter().enumerate() {
+            assert_eq!(
+                span.style.bg,
+                Some(theme::cyan()),
+                "cursor row span #{i} ({:?}) must sit on cyan bg for the row fill to be continuous",
+                span.content,
+            );
+        }
+        // The row fill must extend to the full wrap width — otherwise the
+        // highlight ends raggedly mid-line.
+        let row_width: usize = cursor_line
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum();
+        assert_eq!(
+            row_width, 40,
+            "cursor row should pad to the full wrap width (40), got {row_width}",
+        );
+
+        // Idle verse keeps the standard pane bg on every span.
+        let idle_line = line_for_verse(&lines, 1);
+        for span in &idle_line.line.spans {
+            assert_eq!(
+                span.style.bg,
+                Some(theme::blue()),
+                "non-cursor row spans must stay on blue bg",
+            );
+        }
+    }
+
+    #[test]
+    fn selection_rows_use_light_grey_row_fill() {
+        // Visual-selection non-cursor verses get a continuous light_grey
+        // row fill — the classic Turbo Vision "selected item" look. The
+        // cursor inside the selection keeps the brighter cyan fill so the
+        // focus is unambiguous.
+        let p = passage_with(
+            vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma"), v(4, "delta")],
+            vec![],
+        );
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, 40);
+
+        let row_bg = |verse: i64| {
+            line_for_verse(&lines, verse).line.spans[0]
+                .style
+                .bg
+                .expect("span must have a bg")
+        };
+        assert_eq!(row_bg(2), theme::light_grey(), "selected non-cursor");
+        assert_eq!(row_bg(3), theme::light_grey(), "selected non-cursor");
+        assert_eq!(row_bg(4), theme::cyan(), "cursor verse keeps cyan fill");
+        assert_eq!(row_bg(1), theme::blue(), "idle row stays on pane bg");
+
+        // Selection rows pad to full wrap width, same as the cursor row.
+        let used: usize = line_for_verse(&lines, 2)
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum();
+        assert_eq!(used, 40, "selection row must fill the wrap width");
     }
 
     #[test]

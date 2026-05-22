@@ -14,6 +14,12 @@ use crate::ui::dialog;
 
 pub struct GotoDialog {
     input: String,
+    /// True while the field still holds an unmodified pre-fill (set by
+    /// [`with_position`]). The first character typed replaces the whole
+    /// pre-fill, mirroring the "selected text" behavior of GUI forms:
+    /// `Enter`-without-edits stays put, typing fresh starts a new
+    /// reference, and Backspace begins editing the pre-fill in place.
+    prefilled: bool,
 }
 
 #[non_exhaustive]
@@ -34,6 +40,17 @@ impl GotoDialog {
     pub const fn new() -> Self {
         Self {
             input: String::new(),
+            prefilled: false,
+        }
+    }
+
+    /// Open with the field pre-populated to the current reference. Lets
+    /// `Enter` act as "stay here" and turns "edit the chapter/verse" into
+    /// a few keystrokes rather than typing the whole reference from scratch.
+    pub fn with_position(book_name: &str, chapter: i64, verse: i64) -> Self {
+        Self {
+            input: format!("{book_name} {chapter}:{verse}"),
+            prefilled: true,
         }
     }
 
@@ -52,9 +69,14 @@ impl GotoDialog {
             }
             KeyCode::Backspace => {
                 self.input.pop();
+                self.prefilled = false;
                 GotoOutcome::Continue
             }
             KeyCode::Char(c) => {
+                if self.prefilled {
+                    self.input.clear();
+                    self.prefilled = false;
+                }
                 self.input.push(c);
                 GotoOutcome::Continue
             }
@@ -66,7 +88,7 @@ impl GotoDialog {
         let w: u16 = 60;
         let h: u16 = 9;
         let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_dialog(area, "Goto reference", buf);
+        let inner = dialog::draw_modal_dialog(outer, area, "Goto reference", buf);
 
         let preview = parse_reference(&self.input, books).map_or_else(
             || "\u{2192} (type a book and chapter)".into(),
@@ -91,12 +113,19 @@ impl GotoDialog {
             .fg(theme::black())
             .bg(theme::bright_white())
             .add_modifier(Modifier::BOLD);
+        // Sunken-cell edges around the input field: dark sliver on the left
+        // suggests a recessed rim, bright sliver on the right catches the
+        // light. The pair gives the field an inset feel without needing a
+        // second row of chrome.
+        let edge_left = Style::new().fg(theme::dark_grey()).bg(theme::cyan());
+        let edge_right = Style::new().fg(theme::bright_white()).bg(theme::cyan());
 
         // Empty-state placeholder shown inside the field — disappears the
         // moment the user starts typing. Faster to read than the hint below.
         let placeholder_style = Style::new().fg(theme::dark_grey()).bg(theme::cyan());
         let typed_len = self.input.chars().count();
         let mut input_spans: Vec<Span<'static>> = Vec::new();
+        input_spans.push(Span::styled("\u{258F}", edge_left));
         if self.input.is_empty() {
             input_spans.push(Span::styled(" ".to_string(), input_style));
             input_spans.push(Span::styled("\u{2588}", cursor_style));
@@ -106,10 +135,13 @@ impl GotoDialog {
             input_spans.push(Span::styled("\u{2588}", cursor_style));
         }
         let placeholder_len = if self.input.is_empty() { 9 } else { 0 };
-        let pad = (inner.width as usize).saturating_sub(typed_len + 2 + 12 + placeholder_len);
+        // Account for the typed text + leading space + cursor + placeholder +
+        // the two edge cells (2 + 12 = leading "  " indent + " Reference: ").
+        let pad = (inner.width as usize).saturating_sub(typed_len + 2 + 12 + placeholder_len + 2);
         if pad > 0 {
             input_spans.push(Span::styled(" ".repeat(pad), input_style));
         }
+        input_spans.push(Span::styled("\u{2595}", edge_right));
         let blank = Span::styled(
             " ".repeat(inner.width as usize),
             Style::new().bg(theme::blue()),
@@ -280,6 +312,61 @@ mod tests {
                 full_name: None,
             },
         ]
+    }
+
+    #[test]
+    fn with_position_prefills_input_and_parses_back() {
+        // `Enter`-without-edits has to be a no-op jump: the pre-filled
+        // string must parse back into the same book/chapter/verse it was
+        // built from. This pins the round-trip so future formatting tweaks
+        // can't silently break the "stay here" interaction.
+        let d = GotoDialog::with_position("Matteus", 5, 3);
+        assert_eq!(d.input, "Matteus 5:3");
+        let p = parse_reference(&d.input, &books()).expect("must parse back");
+        assert_eq!(p.book, "MAT");
+        assert_eq!(p.chapter, 5);
+        assert_eq!(p.verse, Some(3));
+    }
+
+    #[test]
+    fn first_keystroke_replaces_prefilled_input() {
+        // Pre-fill is conceptually "selected" — typing a fresh reference
+        // must replace it in one keystroke. Without this, the e2e
+        // ":John 3:16" flow would land on the wrong book because the
+        // pre-fill would be silently appended to.
+        let mut d = GotoDialog::with_position("Matteus", 5, 3);
+        let bs = books();
+        d.handle(
+            KeyEvent::new(KeyCode::Char('J'), crossterm::event::KeyModifiers::NONE),
+            &bs,
+        );
+        // After the first char, the pre-fill is gone and only the new
+        // character remains. Subsequent chars append normally.
+        assert_eq!(d.input, "J");
+        d.handle(
+            KeyEvent::new(KeyCode::Char('H'), crossterm::event::KeyModifiers::NONE),
+            &bs,
+        );
+        assert_eq!(d.input, "JH");
+    }
+
+    #[test]
+    fn backspace_edits_prefilled_input_in_place() {
+        // Backspace from a pre-fill should chip away at it (not wipe
+        // wholesale), so a "bump the verse" flow is just a few keystrokes.
+        let mut d = GotoDialog::with_position("Matteus", 5, 3);
+        let bs = books();
+        d.handle(
+            KeyEvent::new(KeyCode::Backspace, crossterm::event::KeyModifiers::NONE),
+            &bs,
+        );
+        assert_eq!(d.input, "Matteus 5:");
+        // And typing now appends rather than replacing.
+        d.handle(
+            KeyEvent::new(KeyCode::Char('7'), crossterm::event::KeyModifiers::NONE),
+            &bs,
+        );
+        assert_eq!(d.input, "Matteus 5:7");
     }
 
     #[test]
