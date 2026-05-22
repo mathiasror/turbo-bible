@@ -252,19 +252,37 @@ impl Db {
         &self.translation
     }
 
-    /// Bare setter. Mutates the active translation field without touching
-    /// any cached state, books list, or current passage — so the [`Db`]
-    /// is in an inconsistent state on its own. The `_unchecked` suffix
-    /// is a contract: callers must follow up with the queries (books,
-    /// label, passage) that re-anchor the reader, and must roll back on
-    /// failure. Today the only caller is `switch_translation` in
-    /// `main.rs`, which holds both halves of that contract.
+    /// Atomically swap the active translation to `code` and return the
+    /// books / label / passage for the new translation. On any error,
+    /// the previous translation is restored before returning, so a
+    /// failed swap is observably a no-op from the caller's point of view.
     ///
-    /// `pub(crate)` because the unsafety contract isn't something a
-    /// library consumer should ever take on; if a second caller appears,
-    /// extract the swap into [`Db`] itself.
-    pub(crate) fn set_translation_unchecked(&mut self, code: String) {
-        self.translation = code;
+    /// The caller still owns the in-memory copies of books/label/passage
+    /// and must update them on success; this method only re-anchors
+    /// `self.translation` and probes the DB. Cursor clamping is also the
+    /// caller's job — verse counts can differ between translations.
+    ///
+    /// # Errors
+    /// Fails if any of `list_books`, `translation_label`, or `load_passage`
+    /// errors under the new translation.
+    pub fn try_switch_translation(
+        &mut self,
+        code: &str,
+        book: &str,
+        chapter: i64,
+    ) -> Result<(Vec<Book>, String, Passage)> {
+        let prev = std::mem::replace(&mut self.translation, code.to_string());
+        let probe = (|| -> Result<_> {
+            Ok((
+                self.list_books()?,
+                self.translation_label()?,
+                self.load_passage(book, chapter)?,
+            ))
+        })();
+        if probe.is_err() {
+            self.translation = prev;
+        }
+        probe
     }
 
     /// # Errors

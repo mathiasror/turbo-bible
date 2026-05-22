@@ -1374,38 +1374,20 @@ fn switch_translation(
     passage: &mut Passage,
     cursor_verse: &mut i64,
 ) -> Result<()> {
-    // Atomic swap: probe the new translation against `db` with its
-    // translation field temporarily set to `code`. If any inner call
-    // fails, restore the previous translation so the reader stays
-    // consistent with itself.
-    let prev = db.translation().to_string();
-    db.set_translation_unchecked(code.to_string());
-    let probe = (|| -> Result<(Vec<Book>, String, Passage)> {
-        Ok((
-            db.list_books()?,
-            db.translation_label()?,
-            db.load_passage(&pos.book, pos.chapter)?,
-        ))
-    })();
-    match probe {
-        Ok((new_books, new_label, new_passage)) => {
-            *books = new_books;
-            *translation_label = new_label;
-            *passage = new_passage;
-            // Clamp the cursor — a different translation may have fewer
-            // verses for this chapter (rare in our three editions, but
-            // defensive).
-            let max = passage.verses.last().map_or(1, |v| v.number);
-            if *cursor_verse > max {
-                *cursor_verse = max.max(1);
-            }
-            Ok(())
-        }
-        Err(e) => {
-            db.set_translation_unchecked(prev);
-            Err(e)
-        }
+    // The atomic swap (with rollback on probe failure) lives on Db itself.
+    // Here we own the in-memory mirrors; if the probe succeeds, copy the
+    // new values across and clamp the cursor — verse counts can differ
+    // between translations (rare in our three editions, but defensive).
+    let (new_books, new_label, new_passage) =
+        db.try_switch_translation(code, &pos.book, pos.chapter)?;
+    *books = new_books;
+    *translation_label = new_label;
+    *passage = new_passage;
+    let max = passage.verses.last().map_or(1, |v| v.number);
+    if *cursor_verse > max {
+        *cursor_verse = max.max(1);
     }
+    Ok(())
 }
 
 fn persist_default_translation(code: &str) -> Result<()> {
