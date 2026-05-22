@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Weekly heartbeat so RustSec advisories landing mid-week get caught
+  # before the next merge. Only the `audit` + `deny` jobs actually rely
+  # on this; the `check` job is a no-op-on-cron pass-through.
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays 06:00 UTC
 
 env:
   CARGO_TERM_COLOR: always
@@ -47,3 +52,16 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # `bans` and `sources` catch supply-chain drift the audit job
+          # can't see (duplicate-version sprawl, unexpected git deps,
+          # unallowed licenses on a new transitive). `advisories` is
+          # belt-and-braces alongside `audit` above.
+          command: check advisories bans licenses sources

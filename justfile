@@ -37,6 +37,11 @@ build:
 audit:
     cargo audit
 
+# cargo deny: license, bans, sources, advisories policy in deny.toml.
+# Requires `cargo install cargo-deny`.
+deny:
+    cargo deny check
+
 # Run the full lint+audit+test baseline the rust-review skill uses.
 # Writes per-step logs to target/rust-review/.
 baseline:

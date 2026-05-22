@@ -8,6 +8,7 @@
 - `just` task runner — `cargo install just` or
   `brew install just`. Optional but convenient.
 - `cargo-audit` for the audit recipe — `cargo install cargo-audit`.
+- `cargo-deny` for the license / bans / sources policy — `cargo install cargo-deny`.
 - To populate `bible.sqlite` from scrollmapper, run `turbo-bible import`
   (network required).
 
@@ -20,6 +21,7 @@ just lint         # clippy -D warnings
 just lint-fix     # apply clippy's suggested autofixes
 just test         # cargo test --all-features
 just audit        # cargo audit
+just deny         # cargo deny check (license + duplicate-version + source policy)
 just baseline     # the rust-review baseline; writes target/rust-review/*.log
 just run          # cargo run --release
 just run --book JHN --chapter 3
@@ -35,10 +37,12 @@ wrapper around `cargo` — copy the relevant line out of the `justfile`.
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo test --all-features`
-- `cargo audit` (separate job)
+- `cargo audit` (separate job, also runs weekly via `schedule:`)
+- `cargo deny check advisories bans licenses sources` (separate job;
+  policy in `deny.toml`)
 
 Pull requests need to be green before merge. The same gate runs locally
-via `just check`.
+via `just check && just audit && just deny`.
 
 ## Tests
 

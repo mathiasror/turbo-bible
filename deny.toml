@@ -1,0 +1,73 @@
+# cargo-deny policy. Run via `cargo deny check` locally (after
+# `cargo install cargo-deny`); the same command runs in CI.
+#
+# Three things this catches that `cargo audit` alone doesn't:
+#   1. License drift — a new dep with a license outside the allowlist
+#      forces a deliberate review.
+#   2. Duplicate-version sprawl — every entry in `bans.skip` below is
+#      a known/accepted duplicate; anything else `--warn`s.
+#   3. Unexpected sources — only crates.io is allow-listed, so a future
+#      git/path/registry dep is flagged at review time.
+
+[graph]
+all-features = true
+
+# ─────────────────────────── Advisories ────────────────────────────
+# `cargo audit` is the primary gate (CI runs it separately, including
+# on a weekly cron); `cargo deny check advisories` is a belt-and-braces
+# duplicate that also covers yanked crates.
+[advisories]
+yanked = "deny"
+ignore = []
+
+# ───────────────────────────── Licenses ───────────────────────────
+# Allowlist; anything outside this requires a deliberate addition.
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # BSL-1.0 is OSI-approved and FSF-Free; arboard's Windows backend
+    # (clipboard-win, error-code) uses it. Permissive, no copyleft.
+    "BSL-1.0",
+    # CDLA-Permissive-2.0 is the Linux Foundation's permissive data
+    # license; webpki-roots distributes Mozilla's CA bundle under it.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+
+# ─────────────────────────────── Bans ─────────────────────────────
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# Acceptable duplicates. Each entry documents *why* the duplicate
+# exists — typically because a dev-dep (rexpect) hasn't upgraded its
+# transitives, or because two ecosystems (sync vs async hashing,
+# pre/post-1.0 rust-rng) coexist by design. Re-evaluate when a dep
+# bump removes one of these.
+skip = [
+    # rexpect (dev-only) → nix 0.25 → bitflags 1; ratatui-crossterm → bitflags 2.
+    { name = "bitflags",   version = "1" },
+    # rusqlite → hashlink → hashbrown 0.14; ratatui-core / kasuari → 0.16;
+    # toml/indexmap → 0.17. Three transitive consumers, three majors.
+    { name = "hashbrown",  version = "0.14" },
+    { name = "hashbrown",  version = "0.16" },
+    # ring / proptest / tempfile each pull a different getrandom major.
+    { name = "getrandom",  version = "0.2" },
+    { name = "getrandom",  version = "0.3" },
+    # rexpect (dev-only) → quick-error 1; image → tiff → quick-error 2.
+    { name = "quick-error", version = "1" },
+    # rexpect (dev-only) → thiserror 1; ratatui/kasuari → thiserror 2.
+    { name = "thiserror",  version = "1" },
+]
+
+# ─────────────────────────────── Sources ──────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
