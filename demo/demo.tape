@@ -29,20 +29,21 @@ Set WindowBar    Colorful
 Set WindowBarSize 36
 
 # --- Setup (hidden) -----------------------------------------------------
+# Launch the binary inside the Hide block so recording starts with the
+# splash already mounted — no shell prompt or `./target/...` typing flashes
+# in the final gif. Pin the translation: with XDG_CONFIG_HOME wiped, startup
+# falls back to "first translation in DB" — which is `de-menge`
+# alphabetically, and the "love" search later in the tape would return no
+# matches.
 Hide
 Type "export XDG_CONFIG_HOME=$(mktemp -d)"
 Enter
 Type "clear"
 Enter
-Show
-
-# --- Launch -------------------------------------------------------------
-# Pin the translation: with XDG_CONFIG_HOME wiped, startup falls back to
-# "first translation in DB" — which is `de-menge` alphabetically, and the
-# "love" search later in the tape would return no matches.
 Type "./target/release/turbo-bible --translation en-kjv"
 Enter
 Sleep 1500ms
+Show
 
 # --- Splash: filterable book picker -------------------------------------
 Sleep 800ms
