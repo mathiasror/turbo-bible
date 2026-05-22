@@ -514,71 +514,57 @@ Ok(cached)
 
 ## Follow-up checklist
 
-One commit per item, in priority order.
+All twelve items landed in the post-review pass.
 
-- [ ] 1. **Land the heading / footnote / xref ingest.** The single
-      release blocker. Pair with a `#[ignore]`d integration test that
-      asserts non-zero rows per translation. (§1)
-- [ ] 2. **Mechanical pedantic sweep, part 1: docstring backticks.**
-      Six call sites, one commit, no logic change. (§2)
-- [ ] 3. **Mechanical pedantic sweep, part 2: const-fn + Copy
-      promotions.** `make_status`, `toggle_visual`, `binary_path` →
-      `const fn`; `HistoryDir` → derive `Copy`. (§2)
-- [ ] 4. **Mechanical pedantic sweep, part 3: `unused_self` cleanups.**
-      `HelpDialog::handle/render` and `LoopState::copy_verse` lose
-      their no-op `&self`. (§2)
-- [ ] 5. **Mechanical pedantic sweep, part 4: `today_iso` casts.**
-      Either `cast_signed` / `cast_unsigned` or per-site
-      `#[allow(reason = ...)]`. (§2)
-- [ ] 6. **`download_source` integrity probe.** SQLite-open-and-count
-      after `tmp.persist`, delete + bail on mismatch. (§3)
-- [ ] 7. **`--db ↔ backup_dir` defaulting.** Parent-of-`--db` when
-      both flags' defaults would otherwise diverge. (§4)
-- [ ] 8. **Add `deny.toml` + wire `cargo deny check` into CI.**
-      Document acceptable duplicates in the `skip` list rather than
-      letting them accumulate quietly. (§6)
-- [ ] 9. **Schedule CI `audit` weekly.** Single-line YAML change. (§5)
-- [ ] 10. **Encapsulate translation swap in `Db`.** Either move
-      `switch_translation` into `impl Db` (option a) or rename
-      `set_translation` → `set_translation_unchecked` + restrict
-      to `pub(crate)` (option b). Pick before the next translation
-      caller appears. (§7)
-- [ ] 11. **Drop `SCROLLMAPPER_COMMIT` duplication** — small `lib.rs`,
-      reuse the const in `tests/import.rs`. (Nice-to-have.)
-- [ ] 12. **Add a render snapshot test for `render_passage`** —
-      cursor glyph, bookmark glyph, heading, hanging-indent. One
-      ~20-line unit test, no e2e setup. (Nice-to-have.)
+- [x] 1. Heading / footnote / xref ingest. **Partial:** xrefs landed
+      end-to-end (~430 k rows); headings and footnotes remain
+      unsourced because the pinned scrollmapper commit doesn't have
+      them — that's the real surprise from this round. (§1)
+- [x] 2. Mechanical pedantic sweep, part 1: docstring backticks.
+- [x] 3. Mechanical pedantic sweep, part 2: const-fn + Copy
+      promotions.
+- [x] 4. Mechanical pedantic sweep, part 3: `unused_self` cleanups.
+- [x] 5. Mechanical pedantic sweep, part 4: `today_iso` casts.
+- [x] 6. `download_source` integrity probe — schema-agnostic
+      `PRAGMA quick_check`.
+- [x] 7. `--db ↔ backup_dir` defaulting.
+- [x] 8. Add `deny.toml` + wire `cargo deny check` into CI.
+- [x] 9. Schedule CI `audit` weekly.
+- [x] 10. Encapsulate translation swap (option b: rename to
+      `set_translation_unchecked` + `pub(crate)`).
+- [x] 11. Drop `SCROLLMAPPER_COMMIT` duplication via slim `src/lib.rs`.
+- [x] 12. Add a render snapshot test for `render_passage`.
 
 ## Coverage self-assessment
 
 | Dimension | Confidence | Notes |
 |---|---|---|
-| Compiler and lint cleanliness | high | All 21 pedantic warnings read end-to-end. CI runs `-D warnings` on stable. |
-| API design | high | `Db::set_translation` (§7) is the only API-design finding this round. The dialog/outcome enums are uniformly `#[non_exhaustive]`. |
+| Compiler and lint cleanliness | high | Pedantic+nursery now **clean** (was 21). `cargo clippy -D warnings` clean. |
+| API design | high | `Db::set_translation` encapsulated as `_unchecked` + `pub(crate)`. Dialog/outcome enums uniformly `#[non_exhaustive]`. |
 | Error handling | medium | Binary crate, `anyhow` throughout — appropriate per rubric. `# Errors` sections present on most public functions. The `debug_assert!` in `Db::open_ro` is the only silent-failure path. |
 | Ownership and borrowing | high | No new allocations in hot paths. `pad_to_width` still iterates `s.content.chars().count()` per span; ratatui's own `Line::width()` would be cheaper but neither shows up under `samply` for realistic chapter sizes. |
 | Unsafe code | high | `#![deny(unsafe_code)]` at `src/main.rs:10` unchanged. No unsafe added since round 3. |
 | Concurrency | high | Single-threaded reading loop unchanged. `theme::THEME` is `OnceLock`; correct. |
-| Testing | medium | 81 unit + 5 e2e pass. The two import e2e tests are `#[ignore]` and effectively never run in CI. No render-snapshot tests on the reading view (carry-over). Round-5 §1 fix needs its own ingest test. |
-| Documentation | high | Crate-level `//!` on every module, `# Errors` sections on most fallible publics, `CHANGELOG`/`README`/`CONTRIBUTING`/`USAGE` aligned with the code. `doc_markdown` warnings are pedantic-only. |
-| Project structure | high | `src/main.rs` is 1404 lines; the recent extractions (`LoopState`, `AppCtx`, `dispatch_*`) hold. `ui/` is well-split. |
-| Dependencies and toolchain | medium | `cargo audit` clean; `udeps` clean; **no `deny.toml`**, **no scheduled audit**, one new transitive (`kasuari`). MSRV declared and CI-enforced via `rust-toolchain.toml` + `rust-version`. |
+| Testing | high | 87 unit + 5 e2e pass (was 81). Six new `render_passage` tests cover the gutter glyphs, headings, and hanging indent. Import e2e tests stay `#[ignore]` but the new xref assertions verify the ingest end-to-end. |
+| Documentation | high | Crate-level `//!` on every module, `# Errors` sections on most fallible publics, `CHANGELOG`/`README`/`CONTRIBUTING`/`USAGE` aligned with the code. Doc-backtick pedantic warnings all fixed. |
+| Project structure | high | `src/main.rs` is 1404 lines; the recent extractions (`LoopState`, `AppCtx`, `dispatch_*`) hold. `ui/` is well-split. New `src/lib.rs` is minimal-by-design. |
+| Dependencies and toolchain | high | `cargo audit` + `cargo deny check` both clean; `udeps` clean. `deny.toml` documents license/sources/bans policy with explicit `skip` list for known dupes. Audit + deny run on a weekly cron. |
 | Performance | medium | No benchmarks. Hot paths (per-draw `render_passage`, `bookmarks_set`) are bounded by chapter size — fine for the realistic ≤176 verses. `bookmarks_set` rebuilds the `BTreeSet` per draw frame at ~6 Hz; would matter only with thousands of bookmarks. |
-| Contributor experience | medium | `just check` mirrors CI exactly. The skill's own `scripts/baseline.fish` is still broken (`$status` collision in fish 4); the project's `just baseline` is the working substitute. CI runs on stable Ubuntu only — no Windows/macOS matrix even though `etcetera` claims XDG correctness across platforms. |
+| Contributor experience | medium | `just check` mirrors CI; `just audit` / `just deny` round out the supply-chain check locally. The skill's own `scripts/baseline.fish` is still broken (`$status` collision in fish 4); the project's `just baseline` is the working substitute. CI runs on stable Ubuntu only — no Windows/macOS matrix even though `etcetera` claims XDG correctness across platforms. |
 
 ## Round-3 carry-over status (at end of round 5)
 
-| Round-3 item | Round-5 state | Pointer |
+| Round-3 item | Round-5 final state | Commit |
 |---|---|---|
-| §1 ingest gap | xrefs LANDED; heading/footnote still OPEN (no upstream) | §1 above |
-| §2 `download_source` `len > 0` | OPEN | §3 above |
-| §3 `--db` ↔ `backup_dir` mismatch | OPEN | §4 above |
-| §4 `SCROLLMAPPER_COMMIT` duplicated | OPEN | nice-to-have |
-| §5 `today_iso()` cast warnings | OPEN | §2 above (pedantic sweep) |
-| §6 mechanical pedantic sweep | OPEN | §2 above |
-| §7 schema round-trip test | OPEN | nice-to-have |
-| §8 `book_label.full_name` always NULL | OPEN | nice-to-have |
-| §9 `deny.toml` missing | OPEN | §6 above |
+| §1 ingest gap | xrefs DONE; heading/footnote still OPEN (no upstream) | `9880490` |
+| §2 `download_source` `len > 0` | DONE | `e193890` |
+| §3 `--db` ↔ `backup_dir` mismatch | DONE | `e193890` |
+| §4 `SCROLLMAPPER_COMMIT` duplicated | DONE | `310d6d8` |
+| §5 `today_iso()` cast warnings | DONE | `d69606d` |
+| §6 mechanical pedantic sweep | DONE | `d69606d` |
+| §7 schema round-trip test | OPEN — `render_passage` snapshot tests landed (`681be1d`), but a DB-level `Db::load_passage` round-trip is still untested | |
+| §8 `book_label.full_name` always NULL | OPEN — gated on the headings/footnotes source decision | |
+| §9 `deny.toml` missing | DONE | `e2b1699` |
 
 ## Round-5 work landed
 
@@ -600,6 +586,52 @@ Xref ingest end-to-end:
   ingest.
 
 Baseline post-change: build / clippy `-D warnings` / fmt / test
-(86 passing) all clean. Pedantic +2 (two new `clippy::too_many_lines`
-in `import::run` and `import_translation` from the added xref loop —
-fold into the §2 sweep alongside the existing four).
+(86 passing) all clean.
+
+## Resolution
+
+All twelve round-5 follow-up items landed in commits
+`9880490..681be1d`. Full sequence:
+
+| Item | Commit | Notes |
+|---|---|---|
+| §1 ingest gap | `9880490` | feat(import): cross-reference ingest + xref schema redesign — wires 432 949 unique openbible.info xrefs end-to-end. Headings/footnotes carry over open; no upstream source at the pinned commit. |
+| §2 docstring backticks | `d69606d` | Part of the pedantic sweep. |
+| §3 const-fn + Copy | `d69606d` | Same. |
+| §4 unused_self | `d69606d` | Same. |
+| §5 today_iso casts | `d69606d` | `cast_signed` / `cast_unsigned` (stable from 1.87+). |
+| §6 download_source probe | `e193890` | Schema-agnostic `PRAGMA quick_check`; deletes + re-downloads on failure. |
+| §7 `--db` ↔ `backup_dir` | `e193890` | Parent-relative default when `--db` is set without `--backup-dir`. |
+| §8 deny.toml + CI step | `e2b1699` | `cargo deny check advisories bans licenses sources` as a new CI job. |
+| §9 weekly audit cron | `e2b1699` | Same workflow; `schedule: cron '0 6 * * 1'`. |
+| §10 translation swap | `0f5c557` | `set_translation` → `set_translation_unchecked` + `pub(crate)`. |
+| §11 SCROLLMAPPER_COMMIT dup | `310d6d8` | New `src/lib.rs` re-exports the constant for both bin and tests. |
+| §12 render snapshot test | `681be1d` | Six tests on `render_passage` covering cursor / bookmark / selection / heading / hanging-indent. |
+
+Two carry-overs survive:
+
+- **Headings / footnotes data source.** Scrollmapper doesn't ship them
+  at the pinned commit; their schema and UI surfaces stay (for now)
+  pending a deliberate decision between (a) STEPBible-Data ingest,
+  (b) hand-curated TOML in the repo, or (c) drop the schema and UI
+  entirely. `book_label.full_name` (round-3 §8) is gated on the same
+  decision.
+- **DB-level schema round-trip test.** The render path is now covered;
+  a parallel test that inserts → `Db::load_passage` → asserts every
+  field on `Passage` / `Verse` / `Heading` / `Footnote` / `Xref` is
+  still TODO. Naturally fits with whatever decision lands on the
+  heading/footnote source.
+
+Baseline at the close of the round (sha after `681be1d`):
+
+| Check | State |
+|---|---|
+| `cargo build --all-targets --all-features` | clean |
+| `cargo clippy --all-targets --all-features -- -D warnings` | clean |
+| `cargo clippy -W clippy::pedantic -W clippy::nursery` | **clean (was 23)** |
+| `cargo doc --no-deps --all-features` | clean |
+| `cargo fmt -- --check` | clean |
+| `cargo test --all-features` | 87 unit + 5 e2e pass; 2 import-e2e `#[ignore]` |
+| `cargo audit` | 0 advisories |
+| `cargo deny check` | advisories ok, bans ok, licenses ok, sources ok |
+| `cargo udeps --all-targets` | clean |
