@@ -27,7 +27,6 @@ pub fn render_passage(
     selection: Option<(i64, i64)>,
     bookmarked: &std::collections::BTreeSet<i64>,
     wrap_width: u16,
-    two_line_verses: bool,
 ) -> Vec<RenderedLine> {
     let mut out: Vec<RenderedLine> = Vec::new();
 
@@ -35,38 +34,36 @@ pub fn render_passage(
         .fg(theme::bright_white())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    let cursor_bg = theme::cyan();
+    // Verse number: yellow+bold for idle verses. On the cursor verse we swap
+    // to bright_white+bold so the number visually leads into the brighter
+    // prose body below; on a non-cursor verse that's bookmarked, idle yellow
+    // is still distinct from the verse-text foreground.
     let verse_num_style = |on_cursor: bool| {
-        let mut s = Style::new()
-            .fg(theme::yellow())
-            .add_modifier(Modifier::BOLD);
-        s = if on_cursor {
-            s.bg(cursor_bg)
+        let fg = if on_cursor {
+            theme::bright_white()
         } else {
-            s.bg(theme::blue())
+            theme::yellow()
         };
-        s
+        Style::new()
+            .fg(fg)
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD)
     };
-    // Non-cursor body text uses a softer fg so the cursor line is the only
-    // bright-white prose on the page — easier on the eyes during a long
-    // reading session, and the cursor stands out more without louder bg.
+    // Two-tier body brightness ladder. Cursor + visual selection both read as
+    // "active" prose (bright_white); the gutter glyph carries the
+    // cursor-vs-range distinction.
     let verse_text_style = |on_cursor: bool| {
-        if on_cursor {
-            Style::new().fg(theme::bright_white()).bg(cursor_bg)
+        let fg = if on_cursor {
+            theme::bright_white()
         } else {
-            Style::new().fg(theme::light_grey()).bg(theme::blue())
-        }
+            theme::light_grey()
+        };
+        Style::new().fg(fg).bg(theme::blue())
     };
-    let marker_style = |on_cursor: bool| {
-        let s = Style::new()
-            .fg(theme::yellow())
-            .add_modifier(Modifier::BOLD);
-        if on_cursor {
-            s.bg(cursor_bg)
-        } else {
-            s.bg(theme::blue())
-        }
-    };
+    let marker_style = Style::new()
+        .fg(theme::yellow())
+        .bg(theme::blue())
+        .add_modifier(Modifier::BOLD);
 
     // Pre-bucket headings by `before_verse`.
     let mut headings_by_anchor: std::collections::BTreeMap<i64, Vec<&crate::db::Heading>> =
@@ -78,23 +75,10 @@ pub fn render_passage(
             .push(h);
     }
 
-    // Chapter banner. The rule underneath the heading anchors verse 1 to it
-    // without a trailing blank line (which used to read as a missing verse 0).
+    // Single blank above the first verse so verse 1 doesn't sit flush against
+    // the top border. The border title already shows `Book Chapter ── Trans`,
+    // so we don't repeat the chapter banner in the body.
     out.push(rl_blank());
-    out.push(RenderedLine {
-        line: Line::from(Span::styled(
-            format!("{} {}", p.book_name, p.chapter),
-            heading_style,
-        )),
-        verse: 0,
-    });
-    out.push(RenderedLine {
-        line: Line::from(Span::styled(
-            "─".repeat(p.book_name.len() + p.chapter.to_string().len() + 1),
-            Style::new().fg(theme::cyan()).bg(theme::blue()),
-        )),
-        verse: 0,
-    });
 
     for v in &p.verses {
         // Any headings that anchor before this verse get printed here.
@@ -106,17 +90,14 @@ pub fn render_passage(
                 if h.style == "r" {
                     continue;
                 }
-                let style = heading_style;
                 if !emitted {
-                    // Already a blank line from the previous verse; don't
-                    // double it before the heading.
                     if !out.last().is_none_or(is_blank) {
                         out.push(rl_blank());
                     }
                     emitted = true;
                 }
                 out.push(RenderedLine {
-                    line: Line::from(Span::styled(h.text.clone(), style)),
+                    line: Line::from(Span::styled(h.text.clone(), heading_style)),
                     verse: 0,
                 });
             }
@@ -128,22 +109,31 @@ pub fn render_passage(
         let in_selection = selection.is_some_and(|(s, e)| v.number >= s && v.number <= e);
         let is_cursor_verse = v.number == cursor_verse;
         let on_cursor = is_cursor_verse || in_selection;
-        // The gutter glyph: cursor wins (so the active verse is always
-        // unambiguous, especially in a visual range), bookmark next, else
-        // blank.
-        let gutter = if is_cursor_verse {
-            "\u{25B8}"
+        // Gutter glyph (1 col): cursor wins, then selection bar, then bookmark
+        // star, else blank. Styled in cyan/yellow on the pane bg so the column
+        // reads as a quiet accent rather than a row-wide highlight.
+        let (gutter_glyph, gutter_style) = if is_cursor_verse {
+            (
+                "\u{25B8}",
+                Style::new()
+                    .fg(theme::cyan())
+                    .bg(theme::blue())
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else if in_selection {
+            (
+                "\u{258E}",
+                Style::new().fg(theme::cyan()).bg(theme::blue()),
+            )
         } else if bookmarked.contains(&v.number) {
-            "\u{2605}"
+            (
+                "\u{2605}",
+                Style::new().fg(theme::yellow()).bg(theme::blue()),
+            )
         } else {
-            " "
+            (" ", Style::new().bg(theme::blue()))
         };
-        let num_str = format!(
-            "{}{:>width$}",
-            gutter,
-            v.number,
-            width = VERSE_NUM_WIDTH - 1
-        );
+        let num_str = format!("{:>width$}  ", v.number, width = VERSE_NUM_WIDTH - 1);
 
         let mut markers = String::new();
         if v.footnote_count > 0 {
@@ -164,8 +154,6 @@ pub fn render_passage(
         }
         if !markers.is_empty() {
             let glyph = format!(" {markers}");
-            // Try to fit the marker on the last line; if not, push to a new
-            // wrapped line.
             let last_len = chunks.last().map_or(0, |s| s.chars().count());
             if last_len + glyph.chars().count() <= body_w {
                 if let Some(last) = chunks.last_mut() {
@@ -176,51 +164,41 @@ pub fn render_passage(
             }
         }
 
-        // In two-line mode, emit the verse number on its own line, then the
-        // text wrapped + indented under it.
-        if two_line_verses {
-            out.push(RenderedLine {
-                line: Line::from(vec![Span::styled(
-                    format!("{num_str}  "),
-                    verse_num_style(on_cursor),
-                )]),
-                verse: v.number,
-            });
-        }
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            if i == 0 && !two_line_verses {
-                spans.push(Span::styled(
-                    format!("{num_str}  "),
-                    verse_num_style(on_cursor),
-                ));
-            } else {
-                // Hanging indent — keep the gutter styled like text so the
-                // cursor highlight (if any) reads as a coherent block.
-                spans.push(Span::styled(
-                    " ".repeat(VERSE_PREFIX),
-                    verse_text_style(on_cursor),
-                ));
-            }
-            // Split the marker tail back out so it gets the marker style.
+        // First chunk owns the verse-number prefix; later chunks indent
+        // under it. Splitting the loop lets us move `num_str` into the
+        // first span instead of cloning it.
+        let body_style = verse_text_style(on_cursor);
+        let mut push_line = |prefix: Vec<Span<'static>>, chunk: &str| {
+            let mut spans = prefix;
             let (body, tail) = match chunk.rfind(' ') {
                 Some(pos) if chunk[pos + 1..].chars().all(is_marker_glyph) => {
                     (&chunk[..pos], &chunk[pos..])
                 }
-                _ => (chunk.as_str(), ""),
+                _ => (chunk, ""),
             };
-            spans.push(Span::styled(body.to_string(), verse_text_style(on_cursor)));
+            spans.push(Span::styled(body.to_string(), body_style));
             if !tail.is_empty() {
-                spans.push(Span::styled(tail.to_string(), marker_style(on_cursor)));
+                spans.push(Span::styled(tail.to_string(), marker_style));
             }
             out.push(RenderedLine {
                 line: Line::from(spans),
                 verse: v.number,
             });
+        };
+        let (first, rest) = chunks.split_first().expect("chunks is non-empty above");
+        push_line(
+            vec![
+                Span::styled(gutter_glyph.to_string(), gutter_style),
+                Span::styled(num_str, verse_num_style(on_cursor)),
+            ],
+            first,
+        );
+        for chunk in rest {
+            push_line(
+                vec![Span::styled(" ".repeat(VERSE_PREFIX), body_style)],
+                chunk,
+            );
         }
-        // Breathing room between verses.
-        out.push(rl_blank());
     }
 
     out
@@ -253,15 +231,11 @@ fn rl_blank() -> RenderedLine {
     }
 }
 
-/// Pad/extend every line to the given width with the verse-text style so the
-/// blue background fills the window cleanly (no terminal default bg bleeding
-/// through). The cursor / selection rows extend their cyan highlight all the
-/// way to the right margin so they read as a contiguous selected list item
-/// (matching how two-line mode already behaved).
+/// Pad every line to the given width with the pane background so the blue
+/// fill is flush right (no terminal default bg bleeding through gaps after
+/// short wrapped lines).
 pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
-    let cursor_bg = theme::cyan();
-    let blue_bg = Style::new().fg(theme::bright_white()).bg(theme::blue());
-    let cursor_pad = Style::new().fg(theme::bright_white()).bg(cursor_bg);
+    let pad_style = Style::new().fg(theme::bright_white()).bg(theme::blue());
     lines
         .iter()
         .map(|rl| {
@@ -272,14 +246,9 @@ pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
                 .map(|s| s.content.chars().count())
                 .sum();
             let mut spans = rl.line.spans.clone();
-            // `used` is a char-count of styled spans; a single rendered line
-            // can't exceed `u16::MAX` columns in any sane terminal.
             let used_u16 = u16::try_from(used).unwrap_or(u16::MAX);
             if used_u16 < width {
                 let pad = (width as usize).saturating_sub(used);
-                let is_cursor_row =
-                    rl.line.spans.last().and_then(|s| s.style.bg) == Some(cursor_bg);
-                let pad_style = if is_cursor_row { cursor_pad } else { blue_bg };
                 spans.push(Span::styled(" ".repeat(pad), pad_style));
             }
             Line::from(spans)
