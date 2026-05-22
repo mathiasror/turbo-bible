@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "Bash(sqlite3 *)",
+      "Bash(git commit *)",
+      "Bash(cargo fmt)",
+      "Bash(cargo fmt --all -- --check)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(cargo audit)",
+      "Bash(cargo deny *)",
+      "Bash(cargo tree *)",
+      "Bash(just check)",
+      "Bash(just fmt)",
+      "Bash(just lint)",
+      "Bash(just test)",
+      "Bash(just audit)",
+      "Bash(just deny)",
+      "Bash(just baseline)"
+    ]
+  }
+}

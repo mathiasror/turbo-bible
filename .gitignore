@@ -17,6 +17,14 @@ demo/_screenshots-trace.gif
 # Contains mutation testing data
 **/mutants.out*/
 
+# Output of the /rust-review skill — point-in-time artifact, regenerated
+# each run. Baseline logs already live under target/rust-review/.
+rust-review.md
+
+# Per-user Claude Code settings — keep team-shared rules in
+# .claude/settings.json (tracked) instead.
+.claude/settings.local.json
+
 # rustc will dump stack traces when hitting an internal compiler error to PWD
 rustc-ice-*.txt
 
