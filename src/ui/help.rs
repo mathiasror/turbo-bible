@@ -27,6 +27,37 @@ enum Row {
 }
 use Row::{Entry, Section};
 
+/// Canonical, source-of-truth help table. Lifted to module scope so a
+/// unit test can walk it and assert removed keys (e.g. `T`) don't sneak
+/// back in.
+const ROWS: &[Row] = &[
+    Section("Movement"),
+    Entry("j  k  ↓ ↑", "next / previous verse"),
+    Entry("h  l  ← →", "previous / next chapter"),
+    Entry("[b  ]b", "previous / next book"),
+    Entry("Ctrl-D  Ctrl-U", "half-page down / up"),
+    Entry("Ctrl-F  Ctrl-B  Space", "page down / up"),
+    Entry("gg  G", "first / last verse"),
+    Entry("5j   10G", "count prefix (Vim-style)"),
+    Entry("Ctrl-O  Ctrl-I", "jump back / forward in history"),
+    Section("Selection & bookmarks"),
+    Entry("v  V", "enter / exit visual selection"),
+    Entry("b", "toggle bookmark on cursor / range"),
+    Entry("y", "copy current verse to clipboard"),
+    Section("Reading view"),
+    Entry("Tab", "toggle References sidebar"),
+    Entry("K", "footnote / cross-ref popup"),
+    Section("Dialogs"),
+    Entry("F1", "this help"),
+    Entry("F2  :", "Goto reference  (e.g. John 3:16)"),
+    Entry("F3  /", "Find  (FTS5 search)"),
+    Entry("n  N", "repeat last find forward / backward"),
+    Entry("F4  M", "Bookmarks"),
+    Entry("F5  t", "Translations"),
+    Section("Quit"),
+    Entry("q  Esc  ZZ  ZQ  :q", "quit"),
+];
+
 impl HelpDialog {
     pub const fn new() -> Self {
         Self
@@ -58,39 +89,10 @@ impl HelpDialog {
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
 
-        let rows: &[Row] = &[
-            Section("Movement"),
-            Entry("j  k  ↓ ↑", "next / previous verse"),
-            Entry("h  l  ← →", "previous / next chapter"),
-            Entry("[b  ]b", "previous / next book"),
-            Entry("Ctrl-D  Ctrl-U", "half-page down / up"),
-            Entry("Ctrl-F  Ctrl-B  Space", "page down / up"),
-            Entry("gg  G", "first / last verse"),
-            Entry("5j   10G", "count prefix (Vim-style)"),
-            Entry("Ctrl-O  Ctrl-I", "jump back / forward in history"),
-            Section("Selection & bookmarks"),
-            Entry("v  V", "enter / exit visual selection"),
-            Entry("b", "toggle bookmark on cursor / range"),
-            Entry("y", "copy current verse to clipboard"),
-            Section("Reading view"),
-            Entry("Tab", "toggle References sidebar"),
-            Entry("T", "toggle two-line / single-line layout"),
-            Entry("K", "footnote / cross-ref popup"),
-            Section("Dialogs"),
-            Entry("F1", "this help"),
-            Entry("F2  :", "Goto reference  (e.g. John 3:16)"),
-            Entry("F3  /", "Find  (FTS5 search)"),
-            Entry("n  N", "repeat last find forward / backward"),
-            Entry("F4  M", "Bookmarks"),
-            Entry("F5  t", "Translations"),
-            Section("Quit"),
-            Entry("q  Esc  ZZ  ZQ  :q", "quit"),
-        ];
-
         let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
 
         let mut lines: Vec<Line<'static>> = Vec::new();
-        for row in rows {
+        for row in ROWS {
             match row {
                 Section(name) => {
                     lines.push(Line::from(vec![
@@ -126,5 +128,33 @@ impl HelpDialog {
         ]));
 
         Paragraph::new(lines).style(bg).render(inner, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tokens that have been removed from the runtime keymap. If you remove
+    /// a binding from `src/keys.rs`, add it here so the help table can't
+    /// silently lag behind.
+    const REMOVED_KEYS: &[&str] = &["T"];
+
+    #[test]
+    fn help_table_does_not_list_removed_keys() {
+        for row in ROWS {
+            if let Entry(keys, desc) = row {
+                for token in keys.split(|c: char| c.is_whitespace() || c == ',') {
+                    let token = token.trim();
+                    if token.is_empty() {
+                        continue;
+                    }
+                    assert!(
+                        !REMOVED_KEYS.contains(&token),
+                        "help row `{keys}` (= {desc}) still references removed key `{token}`",
+                    );
+                }
+            }
+        }
     }
 }
