@@ -82,6 +82,12 @@ pub fn search(db: &Db, translation: &str, input: &str, limit: usize) -> Result<V
 
 /// Strip the `\x01`/`\x02` delimiters that `highlight()` injects and emit the
 /// byte ranges (over the cleaned text) where each match sits.
+///
+/// The returned ranges are sorted by start offset and adjacent/overlapping
+/// ranges are merged. Callers can iterate the slice without re-sorting. The
+/// merge step relies on FTS5's `highlight()` emitting matches in textual
+/// order — which it does — so the input scan only needs to look at the
+/// previous range, not the entire `merged` vector.
 pub fn parse_highlighted(s: &str) -> (String, Vec<(usize, usize)>) {
     let mut text = String::with_capacity(s.len());
     let mut hits: Vec<(usize, usize)> = Vec::new();
