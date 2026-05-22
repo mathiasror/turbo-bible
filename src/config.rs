@@ -65,7 +65,7 @@ pub struct Config {
 #[serde(rename_all = "lowercase")]
 pub enum Keymap {
     /// Full vim layer: hjkl, gg/G, n/N, counts (5j), chords (gg, [b, ZZ),
-    /// `:` and `/` ex-commands, ZZ/ZQ, single-letter shortcuts (y, v, b, K, T).
+    /// `:` and `/` ex-commands, ZZ/ZQ, single-letter shortcuts (y, v, b, K).
     #[default]
     Vim,
     /// Subtractive profile. Drops vim-only letter keys, chords, and counts.

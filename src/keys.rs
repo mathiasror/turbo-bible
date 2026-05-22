@@ -7,7 +7,7 @@
 //!     Tab, Enter, Space, `/` (find), `q` (quit). The pager-style baseline
 //!     that every reader-shaped TUI shares.
 //!   * **Vim** — gated by [`Keymap::Vim`]. Letter keys (hjkl, gg/G, n/N, K,
-//!     y, v/V, b, T, M, t, ZZ/ZQ), `:` ex-commands, counts, and chord
+//!     y, v/V, b, M, t, ZZ/ZQ), `:` ex-commands, counts, and chord
 //!     starters (`g`, `[`, `]`, `Z`).
 //!
 //! User-configured single-key triggers from `config.toml` are checked first
@@ -50,7 +50,6 @@ pub enum Action {
     AddBookmark,
     OpenBookmarks,
     OpenTranslations,
-    ToggleVerseLayout,
     /// Repeat the last `/`-search forward (canonical order). No-op when no
     /// query has been entered yet. Vim-layer only.
     SearchNext,
@@ -109,7 +108,6 @@ impl KeyState {
         push(&keys.copy_verse, Action::CopyVerse);
         push(&keys.toggle_sidebar, Action::ToggleSidebar);
         push(&keys.toggle_visual, Action::ToggleVisual);
-        push(&keys.toggle_verse_layout, Action::ToggleVerseLayout);
         push(&keys.add_bookmark, Action::AddBookmark);
         push(&keys.jump_back, Action::JumpBack);
         push(&keys.jump_forward, Action::JumpForward);
@@ -281,7 +279,6 @@ impl KeyState {
             (KeyCode::Char('y'), false, true) => Resolve::Action(Action::CopyVerse),
             (KeyCode::Char('v' | 'V'), false, true) => Resolve::Action(Action::ToggleVisual),
             (KeyCode::Char('b'), false, true) => Resolve::Action(Action::AddBookmark),
-            (KeyCode::Char('T'), false, true) => Resolve::Action(Action::ToggleVerseLayout),
             (KeyCode::Char('M'), false, true) => Resolve::Action(Action::OpenBookmarks),
             (KeyCode::Char('t'), false, true) => Resolve::Action(Action::OpenTranslations),
             (KeyCode::Char('n'), false, true) => Resolve::Action(Action::SearchNext),
