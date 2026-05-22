@@ -8,8 +8,9 @@
 //! to grow it: every `pub` here lands in the rustdoc on the lib
 //! target and on docs.rs once the crate is published.
 
-/// Pinned `scrollmapper/bible_databases` commit. Single source of
-/// truth for both the importer (`src/import.rs`) and the integration
-/// test (`tests/import.rs`); bump deliberately, verify the SHA matches
-/// a real commit before changing.
+/// Pinned `scrollmapper/bible_databases` commit.
+///
+/// Single source of truth for both the importer (`src/import.rs`) and
+/// the integration test (`tests/import.rs`); bump deliberately, verify
+/// the SHA matches a real commit before changing.
 pub const SCROLLMAPPER_COMMIT: &str = "a228a19a29099a41c196c2a310cd93e50a390e30";

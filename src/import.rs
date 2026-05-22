@@ -459,8 +459,9 @@ fn download_source(file: &str, cache_dir: &Path, url_subdir: &str) -> Result<Pat
         format!(
             "downloaded {} but it failed SQLite quick_check — \
              likely a partial download or upstream corruption; \
-             delete the file under {cache_dir:?} and retry",
+             delete the file under {} and retry",
             cached.display(),
+            cache_dir.display(),
         )
     })?;
     Ok(cached)
