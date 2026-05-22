@@ -49,16 +49,21 @@ pub fn render_passage(
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD)
     };
-    // Two-tier body brightness ladder. Cursor + visual selection both read as
-    // "active" prose (bright_white); the gutter glyph carries the
-    // cursor-vs-range distinction.
-    let verse_text_style = |on_cursor: bool| {
-        let fg = if on_cursor {
+    // Three-tier body brightness ladder so the cursor doesn't disappear
+    // inside a long visual selection: idle = light_grey, selection =
+    // bright_white, cursor = bright_white + BOLD. The cursor's bolder
+    // weight reads as a focus even when the entire pane is selected.
+    let verse_text_style = |is_cursor: bool, in_sel: bool| {
+        let fg = if is_cursor || in_sel {
             theme::bright_white()
         } else {
             theme::light_grey()
         };
-        Style::new().fg(fg).bg(theme::blue())
+        let mut s = Style::new().fg(fg).bg(theme::blue());
+        if is_cursor {
+            s = s.add_modifier(Modifier::BOLD);
+        }
+        s
     };
     let marker_style = Style::new()
         .fg(theme::yellow())
@@ -167,7 +172,7 @@ pub fn render_passage(
         // First chunk owns the verse-number prefix; later chunks indent
         // under it. Splitting the loop lets us move `num_str` into the
         // first span instead of cloning it.
-        let body_style = verse_text_style(on_cursor);
+        let body_style = verse_text_style(is_cursor_verse, in_selection);
         let mut push_line = |prefix: Vec<Span<'static>>, chunk: &str| {
             let mut spans = prefix;
             let (body, tail) = match chunk.rfind(' ') {
