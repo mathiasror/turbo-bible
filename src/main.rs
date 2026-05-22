@@ -1299,7 +1299,7 @@ fn repeat_search(
     cursor_verse: i64,
     forward: bool,
 ) -> Option<Position> {
-    let mut hits = search::search(db, db.translation(), query, 1000).ok()?;
+    let mut hits = search::search(db, db.translation(), query, search::REPEAT_LIMIT).ok()?;
     if hits.is_empty() {
         return None;
     }
