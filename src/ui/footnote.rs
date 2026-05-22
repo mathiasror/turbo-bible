@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::db::{Book, Footnote, Xref};
+use crate::db::{Footnote, Xref};
 use crate::nav::Position;
 use crate::theme;
 use crate::ui::dialog;
@@ -100,7 +100,7 @@ impl FootnoteDialog {
                   empty-state branch — all inline so the dialog stays a single \
                   call site."
     )]
-    pub fn render(&self, outer: Rect, buf: &mut Buffer, _books: &[Book]) {
+    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
         let empty = self.footnotes.is_empty() && self.xrefs.is_empty();
         let w: u16 = if empty {
             outer.width.saturating_sub(6).min(50)

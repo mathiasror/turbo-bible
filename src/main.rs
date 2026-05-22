@@ -652,7 +652,7 @@ fn draw_frame(
             Dialog::None => {}
             Dialog::Goto(d) => d.render(area, buf, &state.books),
             Dialog::Find(d) => d.render(area, buf, &state.books),
-            Dialog::Footnote(d) => d.render(area, buf, &state.books),
+            Dialog::Footnote(d) => d.render(area, buf),
             Dialog::Help(_) => HelpDialog::render(area, buf),
             Dialog::Bookmarks(d) => d.render(area, buf, &state.books),
             Dialog::Translations(d) => d.render(area, buf),
