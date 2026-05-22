@@ -52,9 +52,24 @@ fn legacy_state_path() -> Result<PathBuf> {
 }
 
 fn parse_any(txt: &str) -> Option<LegacyState> {
-    toml::from_str::<LegacyState>(txt)
-        .ok()
-        .or_else(|| serde_json::from_str::<LegacyState>(txt).ok())
+    // Try TOML first (modern format). If that fails, fall through to JSON
+    // (v1 legacy `state.json`). Only when both fail do we warn — a TOML
+    // file that doesn't parse as JSON, or vice versa, is the common case
+    // and shouldn't surface a confusing error.
+    match toml::from_str::<LegacyState>(txt) {
+        Ok(s) => Some(s),
+        Err(toml_err) => match serde_json::from_str::<LegacyState>(txt) {
+            Ok(s) => Some(s),
+            Err(json_err) => {
+                eprintln!(
+                    "warning: state file unparsable \
+                     (TOML: {toml_err}; JSON: {json_err}); \
+                     falling back to no saved position"
+                );
+                None
+            }
+        },
+    }
 }
 
 /// Load state, hoist a legacy `default_translation` value into `config` if
@@ -222,9 +237,11 @@ chapter = 3
     }
 
     #[test]
-    fn migrate_silently_drops_garbage_state() {
-        // A malformed state.toml should not poison the loaded config —
-        // load_with_migration returns (None, config) so the binary launches.
+    fn migrate_drops_garbage_state() {
+        // A malformed state.toml must not poison the loaded config —
+        // load_with_migration returns (None, config) so the binary still
+        // launches. The unparsable text also triggers an eprintln warning
+        // (verified separately); here we only assert behavior.
         let (state, _) = migrate(Some("not valid state"), empty_config());
         assert!(state.is_none());
     }
