@@ -123,17 +123,60 @@ pub struct Heading {
 
 #[derive(Debug, Clone)]
 pub struct Footnote {
+    #[expect(
+        dead_code,
+        reason = "roadmap: keyed by a future xref-joining ingest. The column \
+                  stays in the schema; the Rust field stays so a future loader \
+                  doesn't need to re-thread it through every caller."
+    )]
     pub id: String,
     pub verse_osis: String,
-    pub kind: String, // 'f' or 'x'
+    pub kind: String, // 'f' or 'x' — historical; today only 'f' is ingested
     pub body: String,
-    pub refs: Vec<Xref>,
 }
 
+/// One openbible.info cross-reference: source verse (always in the
+/// current passage's book/chapter) → target verse-range. The upstream
+/// data is translation-independent (pure OSIS) but [`Db::load_xrefs`]
+/// joins `book_label` for the active translation so `to_book_abbrev`
+/// is ready for the UI without a follow-up lookup.
 #[derive(Debug, Clone)]
 pub struct Xref {
-    pub target_osis: String,
-    pub label: String,
+    pub from_verse: i64,
+    pub to_book: String,
+    /// Localized abbreviation for `to_book` under the active translation
+    /// (e.g. `"Rom"` for `en-kjv`, `"Rom"` / `"Romerne"` for `nb-1930`).
+    /// Falls back to `to_book` (the OSIS code) when no label row exists.
+    pub to_book_abbrev: String,
+    pub to_chapter: i64,
+    pub to_verse_start: i64,
+    pub to_verse_end: i64,
+    #[expect(
+        dead_code,
+        reason = "Drives the load-order ORDER BY votes DESC so consumers \
+                  see top-ranked xrefs first; the value isn't read directly \
+                  today but stays on the struct so a future \"show vote score\" \
+                  UI affordance doesn't need a schema change."
+    )]
+    pub votes: i64,
+}
+
+impl Xref {
+    /// Human-readable target reference, e.g. `"Rom 8:28"` or `"1 Cor 13:1-3"`.
+    #[must_use]
+    pub fn target_label(&self) -> String {
+        if self.to_verse_start == self.to_verse_end {
+            format!(
+                "{} {}:{}",
+                self.to_book_abbrev, self.to_chapter, self.to_verse_start
+            )
+        } else {
+            format!(
+                "{} {}:{}-{}",
+                self.to_book_abbrev, self.to_chapter, self.to_verse_start, self.to_verse_end,
+            )
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +189,9 @@ pub struct Passage {
     pub verses: Vec<Verse>,
     pub headings: Vec<Heading>,
     pub footnotes: Vec<Footnote>,
+    /// Sorted by `from_verse` then `votes` DESC, so the UI can slice per
+    /// cursor verse with `binary_search_by_key` and trust the order.
+    pub xrefs: Vec<Xref>,
 }
 
 pub struct Db {
@@ -303,18 +349,20 @@ impl Db {
         };
 
         let verses = {
-            // v.osis_id is used by the correlated subqueries server-side but
-            // not projected into the Rust struct.
+            // Footnotes are translation-scoped (today's `footnote` table is
+            // unpopulated, so `fn` is always 0); xrefs are global, so the
+            // xref count joins on book/chapter/verse without a translation
+            // predicate.
             let mut stmt = self.conn.prepare_cached(
                 "SELECT v.verse, v.text,
                         COALESCE((SELECT COUNT(*) FROM footnote f
                                    WHERE f.translation=v.translation
                                      AND f.verse_osis=v.osis_id
                                      AND f.kind='f'), 0) AS fn,
-                        COALESCE((SELECT COUNT(*) FROM footnote f
-                                   WHERE f.translation=v.translation
-                                     AND f.verse_osis=v.osis_id
-                                     AND f.kind='x'), 0) AS xn
+                        COALESCE((SELECT COUNT(*) FROM xref x
+                                   WHERE x.from_book=v.book
+                                     AND x.from_chapter=v.chapter
+                                     AND x.from_verse=v.verse), 0) AS xn
                  FROM verse v
                  WHERE v.translation=?1 AND v.book=?2 AND v.chapter=?3
                  ORDER BY v.verse",
@@ -347,6 +395,7 @@ impl Db {
         };
 
         let footnotes = self.load_footnotes(book, chapter)?;
+        let xrefs = self.load_xrefs(book, chapter)?;
 
         Ok(Passage {
             translation: self.translation.clone(),
@@ -357,59 +406,67 @@ impl Db {
             verses,
             headings,
             footnotes,
+            xrefs,
         })
     }
 
     fn load_footnotes(&self, book: &str, chapter: i64) -> Result<Vec<Footnote>> {
+        // The `footnote` table is currently unpopulated — there's no
+        // upstream source in the pinned scrollmapper commit. The schema
+        // and loader stay so a future ingest can light the K-popup
+        // body without further plumbing.
         let prefix = format!("{book}.{chapter}.");
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, verse_osis, kind, body FROM footnote
              WHERE translation=?1 AND verse_osis LIKE ?2 || '%'
              ORDER BY id",
         )?;
-        let mut footnotes: Vec<Footnote> = stmt
+        let footnotes: Vec<Footnote> = stmt
             .query_map(params![self.translation, prefix], |r| {
                 Ok(Footnote {
                     id: r.get(0)?,
                     verse_osis: r.get(1)?,
                     kind: r.get(2)?,
                     body: r.get(3)?,
-                    refs: Vec::new(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
+        Ok(footnotes)
+    }
 
-        if footnotes.is_empty() {
-            return Ok(footnotes);
-        }
-
-        // `position` is used only for the server-side ORDER BY; the Rust
-        // struct doesn't need it.
-        let mut xref_stmt = self.conn.prepare_cached(
-            "SELECT footnote_id, target_osis, label FROM xref
-             WHERE translation=?1 AND footnote_id IN (
-                 SELECT id FROM footnote
-                 WHERE translation=?1 AND verse_osis LIKE ?2 || '%'
-             )
-             ORDER BY footnote_id, position",
+    fn load_xrefs(&self, book: &str, chapter: i64) -> Result<Vec<Xref>> {
+        // LEFT JOIN to_book's label table for the active translation so
+        // the UI can render localized abbreviations without holding the
+        // full `books` list. Falls back to the OSIS code when a label is
+        // missing (a partial-import edge case rather than expected steady-
+        // state).
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT x.from_verse,
+                    x.to_book,
+                    COALESCE(bl.abbreviation, x.to_book) AS to_abbrev,
+                    x.to_chapter,
+                    x.to_verse_start,
+                    x.to_verse_end,
+                    x.votes
+             FROM xref x
+             LEFT JOIN book_label bl
+               ON bl.book = x.to_book AND bl.translation = ?3
+             WHERE x.from_book = ?1 AND x.from_chapter = ?2
+             ORDER BY x.from_verse, x.votes DESC",
         )?;
-        let xref_rows: Vec<(String, Xref)> = xref_stmt
-            .query_map(params![self.translation, prefix], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    Xref {
-                        target_osis: r.get(1)?,
-                        label: r.get(2)?,
-                    },
-                ))
+        let xrefs: Vec<Xref> = stmt
+            .query_map(params![book, chapter, self.translation], |r| {
+                Ok(Xref {
+                    from_verse: r.get(0)?,
+                    to_book: r.get(1)?,
+                    to_book_abbrev: r.get(2)?,
+                    to_chapter: r.get(3)?,
+                    to_verse_start: r.get(4)?,
+                    to_verse_end: r.get(5)?,
+                    votes: r.get(6)?,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-
-        for (fn_id, xref) in xref_rows {
-            if let Some(fn_) = footnotes.iter_mut().find(|f| f.id == fn_id) {
-                fn_.refs.push(xref);
-            }
-        }
-        Ok(footnotes)
+        Ok(xrefs)
     }
 }

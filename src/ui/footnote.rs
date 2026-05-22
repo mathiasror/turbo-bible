@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::db::{Book, Footnote};
+use crate::db::{Book, Footnote, Xref};
 use crate::nav::Position;
 use crate::theme;
 use crate::ui::dialog;
@@ -18,7 +18,6 @@ use crate::ui::listnav::{self, ListNav, Step};
 pub struct XrefItem {
     pub target: Position,
     pub label: String,
-    pub footnote_idx: usize,
 }
 
 pub struct FootnoteDialog {
@@ -37,19 +36,18 @@ pub enum FootnoteOutcome {
 }
 
 impl FootnoteDialog {
-    pub fn new(verse_label: String, footnotes: Vec<Footnote>) -> Self {
-        let mut xrefs = Vec::new();
-        for (fi, fn_) in footnotes.iter().enumerate() {
-            for xr in &fn_.refs {
-                if let Some(pos) = parse_osis(&xr.target_osis) {
-                    xrefs.push(XrefItem {
-                        target: pos,
-                        label: xr.label.clone(),
-                        footnote_idx: fi,
-                    });
-                }
-            }
-        }
+    pub fn new(verse_label: String, footnotes: Vec<Footnote>, xrefs: Vec<Xref>) -> Self {
+        let xrefs: Vec<XrefItem> = xrefs
+            .into_iter()
+            .map(|x| XrefItem {
+                label: x.target_label(),
+                target: Position {
+                    book: x.to_book,
+                    chapter: x.to_chapter,
+                    verse: Some(x.to_verse_start),
+                },
+            })
+            .collect();
         Self {
             verse_label,
             footnotes,
@@ -97,7 +95,7 @@ impl FootnoteDialog {
     }
 
     pub fn render(&self, outer: Rect, buf: &mut Buffer, _books: &[Book]) {
-        let empty = self.footnotes.is_empty();
+        let empty = self.footnotes.is_empty() && self.xrefs.is_empty();
         let w: u16 = if empty {
             outer.width.saturating_sub(6).min(50)
         } else {
@@ -135,8 +133,9 @@ impl FootnoteDialog {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(blank());
 
-        // Footnote bodies.
-        for (fi, fn_) in self.footnotes.iter().enumerate() {
+        // Footnote bodies (currently always empty — the schema is in place
+        // but no upstream source populates the table at the pinned commit).
+        for fn_ in &self.footnotes {
             let kind = if fn_.kind == "x" {
                 "Cross-ref"
             } else {
@@ -150,27 +149,30 @@ impl FootnoteDialog {
                 Span::styled("    ", bg),
                 Span::styled(fn_.body.clone(), body_style),
             ]));
-            // Cross-refs inside this note as selectable items.
-            for (xi, xref) in self
-                .xrefs
-                .iter()
-                .enumerate()
-                .filter(|(_, x)| x.footnote_idx == fi)
-            {
+            lines.push(blank());
+        }
+
+        // Cross-references (from `xref` table, openbible.info dataset).
+        if !self.xrefs.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  ", bg),
+                Span::styled("Cross-references:".to_string(), header_style),
+            ]));
+            for (xi, xref) in self.xrefs.iter().enumerate() {
                 let style = if xi == self.selected { sel } else { xref_color };
                 lines.push(Line::from(vec![
-                    Span::styled("      \u{2192} ", label),
+                    Span::styled("    \u{2192} ", label),
                     Span::styled(xref.label.clone(), style),
                 ]));
             }
             lines.push(blank());
         }
 
-        if self.footnotes.is_empty() {
+        if empty {
             lines.push(Line::from(vec![
                 Span::styled("  ", bg),
                 Span::styled(
-                    "(no footnotes on this verse)",
+                    "(no notes or cross-references on this verse)",
                     Style::new()
                         .fg(theme::light_grey())
                         .bg(theme::blue())
@@ -211,19 +213,4 @@ impl FootnoteDialog {
 
         Paragraph::new(lines).style(bg).render(inner, buf);
     }
-}
-
-/// OSIS string "BOOK.CHAP[.VERSE]" → Position. Returns None on parse error.
-pub fn parse_osis(s: &str) -> Option<Position> {
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let chapter: i64 = parts[1].parse().ok()?;
-    let verse: Option<i64> = parts.get(2).and_then(|v| v.parse().ok());
-    Some(Position {
-        book: parts[0].to_string(),
-        chapter,
-        verse,
-    })
 }

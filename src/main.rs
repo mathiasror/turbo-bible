@@ -590,11 +590,8 @@ fn draw_frame(
                     ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
                     buf,
                 );
-                let mode_tag = mode_tag_for(
-                    &state.bg,
-                    &state.dialog,
-                    state.visual_anchor.is_some(),
-                );
+                let mode_tag =
+                    mode_tag_for(&state.bg, &state.dialog, state.visual_anchor.is_some());
                 crate::ui::statusbar::render(
                     status,
                     ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
@@ -610,11 +607,8 @@ fn draw_frame(
                 s.render(body, buf);
             }
             Bg::Reading => {
-                let mode_tag = mode_tag_for(
-                    &state.bg,
-                    &state.dialog,
-                    state.visual_anchor.is_some(),
-                );
+                let mode_tag =
+                    mode_tag_for(&state.bg, &state.dialog, state.visual_anchor.is_some());
                 let selection = state.visual_anchor.map(|a| {
                     let c = cursor_verse;
                     if a <= c { (a, c) } else { (c, a) }
@@ -840,11 +834,18 @@ impl LoopState {
             .filter(|fn_| fn_.verse_osis == target)
             .cloned()
             .collect();
+        let xrefs: Vec<_> = ctx
+            .passage
+            .xrefs
+            .iter()
+            .filter(|x| x.from_verse == *ctx.cursor_verse)
+            .cloned()
+            .collect();
         let label = format!(
             "{} {}:{}",
             ctx.passage.book_abbrev, ctx.pos.chapter, *ctx.cursor_verse
         );
-        self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes));
+        self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes, xrefs));
     }
 
     fn history_step(&mut self, ctx: &mut AppCtx, dir: HistoryDir) -> Result<()> {

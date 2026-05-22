@@ -11,6 +11,12 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 use crate::db::{Heading, Passage};
 use crate::theme;
 
+/// Maximum xref rows in the sidebar per cursor verse. The K-popup ("Notes")
+/// is the place to scan a long xref list; the sidebar's job is the top few
+/// by openbible vote so it doesn't push the parallel passage / footnotes
+/// off-screen on a heavily-referenced verse (e.g. JHN 3:16 has ~27).
+const SIDEBAR_XREF_CAP: usize = 8;
+
 pub struct SidebarView<'a> {
     pub passage: &'a Passage,
     pub cursor_verse: i64,
@@ -110,7 +116,7 @@ fn build_lines(
         .filter(|fn_| fn_.verse_osis == cursor_osis)
         .collect();
 
-    // 2) Footnotes
+    // 2) Footnotes (table currently unpopulated — see db::load_footnotes).
     let f_notes: Vec<_> = notes.iter().filter(|n| n.kind == "f").collect();
     if !f_notes.is_empty() {
         lines.push(Line::from(Span::styled(" Footnotes", header)));
@@ -123,26 +129,27 @@ fn build_lines(
         }
     }
 
-    // 3) Cross-references (collected from BOTH `x` and `f` notes)
-    let mut xrefs: Vec<(String, String)> = Vec::new(); // (label, target_osis)
-    for n in &notes {
-        for x in &n.refs {
-            xrefs.push((x.label.clone(), x.target_osis.clone()));
-        }
-    }
+    // 3) Cross-references for this verse. Capped by SIDEBAR_XREF_CAP; the
+    // load order is votes-DESC so we keep the highest-ranked xrefs. The
+    // K-popup ("Notes") shows the full list.
+    let xrefs: Vec<&crate::db::Xref> = p
+        .xrefs
+        .iter()
+        .filter(|x| x.from_verse == cursor_verse)
+        .take(SIDEBAR_XREF_CAP)
+        .collect();
     if !xrefs.is_empty() {
         lines.push(Line::from(Span::styled(" Cross-references", header)));
-        for (label, target) in xrefs {
+        for x in &xrefs {
             lines.push(Line::from(vec![
                 Span::styled("   \u{2192} ", body),
-                Span::styled(label, xref_style),
-                Span::styled(format!("  ({target})"), dim),
+                Span::styled(x.target_label(), xref_style),
             ]));
         }
         lines.push(Line::from(Span::styled("", bg)));
     }
 
-    if notes.is_empty() && current_parallel(p, cursor_verse).is_none() {
+    if notes.is_empty() && xrefs.is_empty() && current_parallel(p, cursor_verse).is_none() {
         lines.push(Line::from(Span::styled(
             " (nothing for this verse)",
             Style::new()

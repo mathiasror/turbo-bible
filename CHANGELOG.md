@@ -18,8 +18,27 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
   both modes), and the runtime `Shift-T` binding is gone. With
   `deny_unknown_fields`, existing configs that set either key must be
   updated before they will parse.
+- **Cross-reference schema redesigned and now populated.** The `xref`
+  table was previously footnote-coupled (`translation`,
+  `footnote_id`, `position`, `target_osis`, `label`) and never
+  populated; it's now keyed by source verse with a normalized
+  target-range layout (`from_book`, `from_chapter`, `from_verse`,
+  `to_book`, `to_chapter`, `to_verse_start`, `to_verse_end`,
+  `votes`). **Existing installations must re-run `turbo-bible import`
+  to pick up the new schema**; an old DB will error on first chapter
+  load.
 
 ### Added
+- **Cross-reference ingest.** `turbo-bible import` now also downloads
+  `scrollmapper/bible_databases`'s
+  `formats/sqlite/extras/cross_references_0..6.db` (openbible.info
+  data), dedupes the symmetric `A→B`/`B→A` pairs through the new
+  `xref` PK, and lands ~430 000 unique cross-references. The
+  reference sidebar's "Cross-references" section is now live; the
+  K-popup ("Notes") shows the full xref list for the cursor verse
+  ordered by openbible vote. Headings and footnotes remain
+  unsourced (no upstream data at the pinned commit) and their UI
+  surfaces stay inert pending a future source.
 - `CHANGELOG.md`.
 - `#![deny(unsafe_code)]` at the crate root.
 - `History` jump stack is now bounded at 100 entries; long sessions no

@@ -27,6 +27,11 @@ const SCROLLMAPPER_COMMIT: &str = "a228a19a29099a41c196c2a310cd93e50a390e30";
 const SCROLLMAPPER_URL_BASE: &str =
     "https://raw.githubusercontent.com/scrollmapper/bible_databases";
 
+/// Number of `cross_references_{n}.db` shards in `formats/sqlite/extras/`.
+/// Scrollmapper splits the openbible.info xref dump alphabetically by source
+/// book across 7 files; we need all of them for full per-verse coverage.
+const XREF_SHARDS: usize = 7;
+
 struct Source {
     code: &'static str,
     file: &'static str,
@@ -277,17 +282,25 @@ CREATE TABLE footnote (
 CREATE INDEX footnote_verse_idx
     ON footnote(translation, verse_osis);
 
+-- Cross-references are translation-independent: they live entirely in
+-- terms of OSIS book codes and (book, chapter, verse) coordinates, sourced
+-- from scrollmapper's openbible.info extras. `votes` is the openbible
+-- crowd-sourced strength score (higher = more authoritative); the UI
+-- truncates to the top N per source verse.
 CREATE TABLE xref (
-    translation TEXT NOT NULL,
-    footnote_id TEXT NOT NULL,
-    position    INTEGER NOT NULL,
-    target_osis TEXT NOT NULL,
-    label       TEXT NOT NULL,
-    PRIMARY KEY (translation, footnote_id, position),
-    FOREIGN KEY (translation, footnote_id)
-        REFERENCES footnote(translation, id) ON DELETE CASCADE
+    from_book       TEXT NOT NULL REFERENCES book(code),
+    from_chapter    INTEGER NOT NULL,
+    from_verse      INTEGER NOT NULL,
+    to_book         TEXT NOT NULL REFERENCES book(code),
+    to_chapter      INTEGER NOT NULL,
+    to_verse_start  INTEGER NOT NULL,
+    to_verse_end    INTEGER NOT NULL,
+    votes           INTEGER NOT NULL,
+    PRIMARY KEY (from_book, from_chapter, from_verse,
+                 to_book, to_chapter, to_verse_start, to_verse_end)
 );
-CREATE INDEX xref_target_idx ON xref(translation, target_osis);
+CREATE INDEX xref_from_idx
+    ON xref(from_book, from_chapter, from_verse, votes DESC);
 
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
@@ -355,9 +368,21 @@ pub fn run(args: &ImportArgs) -> Result<()> {
 
     let mut src_paths = Vec::with_capacity(selected.len());
     for source in &selected {
-        let p = download_source(source.file, &cache_dir)
+        let p = download_source(source.file, &cache_dir, "formats/sqlite")
             .with_context(|| format!("download {}", source.file))?;
         src_paths.push(p);
+    }
+
+    // The xref shards are global (translation-independent) so they're
+    // downloaded once regardless of `--only`. The 7 shards split source
+    // books alphabetically; we need all of them for full per-verse
+    // coverage.
+    let mut xref_paths: Vec<PathBuf> = Vec::with_capacity(XREF_SHARDS);
+    for i in 0..XREF_SHARDS {
+        let file = format!("cross_references_{i}.db");
+        let p = download_source(&file, &cache_dir, "formats/sqlite/extras")
+            .with_context(|| format!("download {file}"))?;
+        xref_paths.push(p);
     }
 
     recreate_schema(&db_path)?;
@@ -380,6 +405,8 @@ pub fn run(args: &ImportArgs) -> Result<()> {
                 .with_context(|| format!("import {}", source.code))?;
             println!("imported {}: {n} verses", source.code);
         }
+        let xref_count = import_cross_refs(&tx, &xref_paths).context("import cross-references")?;
+        println!("imported {xref_count} cross-references");
         tx.commit()?;
     } // conn drops here, releasing the file lock
 
@@ -391,13 +418,13 @@ pub fn run(args: &ImportArgs) -> Result<()> {
     Ok(())
 }
 
-fn download_source(file: &str, cache_dir: &Path) -> Result<PathBuf> {
+fn download_source(file: &str, cache_dir: &Path, url_subdir: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(cache_dir)?;
     let cached = cache_dir.join(format!("{SCROLLMAPPER_COMMIT}-{file}"));
     if cached.exists() && std::fs::metadata(&cached)?.len() > 0 {
         return Ok(cached);
     }
-    let url = format!("{SCROLLMAPPER_URL_BASE}/{SCROLLMAPPER_COMMIT}/formats/sqlite/{file}");
+    let url = format!("{SCROLLMAPPER_URL_BASE}/{SCROLLMAPPER_COMMIT}/{url_subdir}/{file}");
     println!("download {url}");
 
     let mut tmp = tempfile::NamedTempFile::new_in(cache_dir)?;
@@ -520,6 +547,83 @@ fn import_translation(
             text
         ])?;
         count += 1;
+    }
+    Ok(count)
+}
+
+/// Scrollmapper's xref dataset spells numbered book names with Arabic
+/// numerals (`1 John`, `2 Corinthians`) and the Apocalypse as plain
+/// `Revelation`; the per-translation files use Roman numerals (`I John`)
+/// and `Revelation of John`. This variant table covers the deltas so the
+/// xref importer can reach OSIS codes without allocating a String per
+/// row. Looked up *before* falling back to the main name map.
+#[rustfmt::skip]
+const SCROLLMAPPER_XREF_NAME_VARIANTS: &[(&str, &str)] = &[
+    ("1 Chronicles", "1CH"), ("2 Chronicles", "2CH"),
+    ("1 Corinthians", "1CO"), ("2 Corinthians", "2CO"),
+    ("1 John", "1JN"), ("2 John", "2JN"), ("3 John", "3JN"),
+    ("1 Kings", "1KI"), ("2 Kings", "2KI"),
+    ("1 Peter", "1PE"), ("2 Peter", "2PE"),
+    ("1 Samuel", "1SA"), ("2 Samuel", "2SA"),
+    ("1 Thessalonians", "1TH"), ("2 Thessalonians", "2TH"),
+    ("1 Timothy", "1TI"), ("2 Timothy", "2TI"),
+    ("Revelation", "REV"),
+];
+
+fn lookup_osis_xref(name: &str) -> Option<&'static str> {
+    SCROLLMAPPER_XREF_NAME_VARIANTS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, o)| *o)
+        .or_else(|| lookup_osis(name))
+}
+
+fn import_cross_refs(tx: &rusqlite::Transaction<'_>, shard_paths: &[PathBuf]) -> Result<u64> {
+    let mut insert = tx.prepare_cached(
+        "INSERT OR IGNORE INTO xref
+           (from_book, from_chapter, from_verse,
+            to_book, to_chapter, to_verse_start, to_verse_end, votes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?;
+    let mut count: u64 = 0;
+    for shard in shard_paths {
+        let src = Connection::open_with_flags(shard, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let mut stmt = src.prepare(
+            "SELECT from_book, from_chapter, from_verse,
+                    to_book, to_chapter, to_verse_start, to_verse_end, votes
+             FROM cross_references",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let from_name: String = row.get(0)?;
+            let from_chapter: i64 = row.get(1)?;
+            let from_verse: i64 = row.get(2)?;
+            let to_name: String = row.get(3)?;
+            let to_chapter: i64 = row.get(4)?;
+            let to_verse_start: i64 = row.get(5)?;
+            let to_verse_end: i64 = row.get(6)?;
+            let votes: i64 = row.get(7)?;
+            // Skip rows whose book names we don't recognize. The Protestant
+            // 66 covers everything in the shards we sampled, but defending
+            // here means a future scrollmapper bump that introduces
+            // deuterocanonical entries downgrades silently instead of
+            // corrupting the FK.
+            let (Some(from), Some(to)) = (lookup_osis_xref(&from_name), lookup_osis_xref(&to_name))
+            else {
+                continue;
+            };
+            let rows = insert.execute(params![
+                from,
+                from_chapter,
+                from_verse,
+                to,
+                to_chapter,
+                to_verse_start,
+                to_verse_end,
+                votes,
+            ])?;
+            count += rows as u64;
+        }
     }
     Ok(count)
 }

@@ -126,10 +126,7 @@ pub fn render_passage(
                     .add_modifier(Modifier::BOLD),
             )
         } else if in_selection {
-            (
-                "\u{258E}",
-                Style::new().fg(theme::cyan()).bg(theme::blue()),
-            )
+            ("\u{258E}", Style::new().fg(theme::cyan()).bg(theme::blue()))
         } else if bookmarked.contains(&v.number) {
             (
                 "\u{2605}",

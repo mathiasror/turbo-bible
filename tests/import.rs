@@ -115,6 +115,54 @@ fn import_subcommand_builds_full_db() {
         )
         .unwrap();
     assert_eq!(jhn_nb, "Johannes");
+
+    // Cross-references: captured from a real import on 2026-05-22 against
+    // the pinned commit. Raw scrollmapper rows are symmetric pairs, so the
+    // PK-dedupe halves the row count. Pinning the exact number guards
+    // against (a) the upstream changing under the same SHA and (b) a
+    // future code change accidentally re-introducing duplicates.
+    let xref_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM xref", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(xref_count, 432_949);
+
+    let xref_books: i64 = conn
+        .query_row("SELECT COUNT(DISTINCT from_book) FROM xref", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(xref_books, 66);
+
+    // John 3:16 is a high-density xref source — used in the rust-review
+    // bring-up. If this drops to zero, the openbible name normalization
+    // (Arabic vs Roman numerals, "Revelation" vs "Revelation of John")
+    // has regressed.
+    let jhn_3_16: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM xref \
+             WHERE from_book='JHN' AND from_chapter=3 AND from_verse=16",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        jhn_3_16 >= 20,
+        "JHN 3:16 has only {jhn_3_16} xrefs; expected >= 20"
+    );
+
+    // The top xref for JHN 3:16 is Romans 5:8 in the openbible data
+    // (vote count 871 in this commit). Pinning it makes a "the votes
+    // ordering broke" regression noisy.
+    let top_target_book: String = conn
+        .query_row(
+            "SELECT to_book FROM xref \
+             WHERE from_book='JHN' AND from_chapter=3 AND from_verse=16 \
+             ORDER BY votes DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(top_target_book, "ROM");
 }
 
 #[test]
