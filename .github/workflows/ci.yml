@@ -1,9 +1,16 @@
 name: CI
 
 on:
+  # Docs/website/demo-only changes don't affect the Rust build, so skip
+  # the whole workflow for them (paths-ignore fires only when *every*
+  # changed file matches — a mixed PR that also touches Cargo.toml still
+  # runs). `schedule` ignores path filters, so the weekly audit/deny
+  # safety net below is unaffected. The website ships via pages.yml.
   push:
     branches: [main]
+    paths-ignore: ['website/**', 'docs/**', 'demo/**', '**/*.md']
   pull_request:
+    paths-ignore: ['website/**', 'docs/**', 'demo/**', '**/*.md']
   workflow_dispatch:
   # Weekly heartbeat so RustSec advisories landing mid-week get caught
   # before the next merge. Only the `audit` + `deny` jobs actually rely
@@ -29,12 +36,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The generated assets only change when the scrollmapper ref, the
+      # data-pipeline crate, the manifest source, or the lockfile change.
+      # On a hit we skip both the (slow) scrollmapper clone and the
+      # pipeline run below — the whole assets/ dir is restored intact, so
+      # the cached manifest.json stays paired with the .db.zst it was
+      # generated against (the pipeline isn't bit-deterministic, so they
+      # must travel together).
+      - name: Cache translation assets
+        id: assets-cache
+        uses: actions/cache@v4
+        with:
+          path: crates/turbo-bible-tui/assets
+          key: tb-assets-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
+
       - name: Clone scrollmapper at pinned ref
+        if: steps.assets-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: scrollmapper/bible_databases
           ref: ${{ env.SCROLLMAPPER_REF }}
           path: data/scrollmapper-checkout
+          # The build only reads formats/json/*.json and
+          # formats/sqlite/extras/cross_references_*.db; sparse-checkout
+          # skips the bulk of this large data repo. `git rev-parse HEAD`
+          # (recorded into each .db) still works — .git stays intact.
+          sparse-checkout: |
+            formats/json
+            formats/sqlite/extras
+          sparse-checkout-cone-mode: true
 
       # The toolchain is pinned by rust-toolchain.toml; we add rustfmt + clippy
       # which the default profile in that file already includes.
@@ -45,6 +75,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Bundle translations into TUI assets/
+        if: steps.assets-cache.outputs.cache-hit != 'true'
         # build.rs reads assets/manifest.json; bundled.rs embeds only
         # en-kjv. Always copy the freshly-built manifest alongside the
         # .db.zst — the data pipeline isn't bit-deterministic across
@@ -70,6 +101,11 @@ jobs:
 
   audit:
     name: cargo audit
+    # The `deny` job below already runs `check advisories` against the
+    # same RustSec DB on every PR, so the standalone audit (which builds
+    # cargo-audit from source, ~3 min) only earns its keep as the weekly
+    # heartbeat + on-demand. Skip it on push/pull_request.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
