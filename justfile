@@ -95,3 +95,7 @@ screenshots:
 # Re-render website/og-image.png (the social card). Requires Pillow (`pip install pillow`).
 og-image:
     python3 demo/og-image.py
+
+# Re-render website/apple-touch-icon.png (the 180x180 home-screen icon). Requires Pillow.
+apple-touch-icon:
+    python3 demo/apple-touch-icon.py

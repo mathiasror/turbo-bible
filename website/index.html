@@ -6,14 +6,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <!-- ============= SEO ============= -->
-<meta name="description" content="Turbo Bible is an offline, keyboard-driven Bible reader for the terminal. Written in Rust. Vim keybindings, instant full-text search, eleven translations across seven languages, every cross-reference, zero telemetry.">
+<meta name="description" content="Offline, keyboard-driven Bible reader for the terminal. Written in Rust — Vim keybindings, instant full-text search, 11 translations, every cross-reference.">
 <meta name="author" content="Turbo Bible">
 <meta name="theme-color" content="#0000aa">
+<meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://turbo.bible/">
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Turbo Bible">
+<meta property="og:locale" content="en_US">
 <meta property="og:title" content="Turbo Bible — The Bible. In your terminal.">
 <meta property="og:description" content="An offline, keyboard-driven Bible reader for the terminal. Written in Rust. Vim keybindings, instant search, every translation God didn't copyright, zero telemetry.">
 <meta property="og:url" content="https://turbo.bible/">
@@ -30,28 +32,56 @@
 
 <!-- Favicon: inline SVG, TB monogram on CGA blue -->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'&gt;&lt;rect width='64' height='64' fill='%230000aa'/&gt;&lt;rect x='4' y='4' width='56' height='56' fill='none' stroke='%23ffffff' stroke-width='2'/&gt;&lt;text x='32' y='42' font-family='monospace' font-weight='900' font-size='30' fill='%23ffff55' text-anchor='middle' stroke='%23ffffff' stroke-width='1.5'&gt;TB&lt;/text&gt;&lt;/svg&gt;">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 
-<!-- JSON-LD: SoftwareApplication -->
+<!-- JSON-LD: SoftwareApplication + WebSite -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Turbo Bible",
-  "applicationCategory": "UtilitiesApplication",
-  "operatingSystem": "Linux, macOS, Windows",
-  "description": "A keyboard-driven Bible reader for the terminal, written in Rust. Vim keybindings, instant full-text search, eleven translations across seven languages, every cross-reference, offline-first, zero telemetry.",
-  "url": "https://turbo.bible/",
-  "image": "https://turbo.bible/og-image.png",
-  "license": [
-    "https://opensource.org/licenses/MIT",
-    "https://www.apache.org/licenses/LICENSE-2.0"
-  ],
-  "programmingLanguage": "Rust",
-  "offers": {
-    "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "USD"
-  }
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Turbo Bible",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "Linux, macOS, Windows",
+      "description": "A keyboard-driven Bible reader for the terminal, written in Rust. Vim keybindings, instant full-text search, eleven translations across seven languages, every cross-reference, offline-first, zero telemetry.",
+      "url": "https://turbo.bible/",
+      "image": "https://turbo.bible/og-image.png",
+      "screenshot": "https://turbo.bible/og-image.png",
+      "softwareVersion": "0.1",
+      "downloadUrl": "https://turbo.bible/install.sh",
+      "softwareHelp": "https://github.com/mathiasror/turbo-bible#readme",
+      "license": [
+        "https://opensource.org/licenses/MIT",
+        "https://www.apache.org/licenses/LICENSE-2.0"
+      ],
+      "programmingLanguage": "Rust",
+      "featureList": [
+        "Vim keybindings",
+        "Instant full-text search",
+        "Eleven translations across seven languages",
+        "Cross-references",
+        "Offline-first, zero telemetry"
+      ],
+      "author": {
+        "@type": "Person",
+        "name": "Mathias Rørvik"
+      },
+      "sameAs": "https://github.com/mathiasror/turbo-bible",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "name": "Turbo Bible",
+      "url": "https://turbo.bible/",
+      "inLanguage": "en",
+      "description": "Turbo Vision–styled terminal Bible reader written in Rust."
+    }
+  ]
 }
 </script>
 
@@ -112,10 +142,11 @@
     <div class="title">Live demo</div>
     <span class="right-tag">search · jump · read</span>
 
-    <video class="demo-video" autoplay loop muted playsinline
+    <video class="demo-video" width="1200" height="720" autoplay loop muted playsinline
            aria-label="Turbo Bible: full-text search for &quot;love&quot;, then jump to 1 John 4:18 in the reading view">
       <source src="demo.webm" type="video/webm">
       <img src="https://raw.githubusercontent.com/mathiasror/turbo-bible/main/demo/demo.gif"
+           width="1200" height="720" loading="lazy"
            alt="Turbo Bible demo: searching for &quot;love&quot; and jumping to 1 John 4:18">
     </video>
 

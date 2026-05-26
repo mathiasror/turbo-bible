@@ -21,3 +21,7 @@ Open `index.html` in a browser. There's no dev server.
 `og-image.png` (the 1200x630 social card referenced by the OG/Twitter
 meta tags) is generated, not hand-edited — regenerate with `just
 og-image` (source: `demo/og-image.py`, needs Pillow).
+
+`apple-touch-icon.png` (the 180x180 home-screen icon, a raster twin of
+the inline-SVG favicon) is likewise generated — regenerate with `just
+apple-touch-icon` (source: `demo/apple-touch-icon.py`, needs Pillow).
