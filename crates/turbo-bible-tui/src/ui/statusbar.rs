@@ -27,7 +27,7 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
     let pill_bg = if mode_tag.contains("VISUAL") {
         theme::yellow()
     } else {
-        theme::cyan()
+        theme::mode_pill_bg()
     };
     let mode_style = Style::new()
         .fg(theme::black())
@@ -46,21 +46,45 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
         cell.set_style(base);
     }
 
-    let mut spans: Vec<Span> = Vec::with_capacity(items.len() * 3 + 1);
-    spans.push(Span::styled(" ", base));
+    // Reserve the trailing mode pill FIRST, then fit as many shortcuts as the
+    // remaining width allows — dropping whole entries from the end. This keeps
+    // the mode tag from ever being clipped: the old layout appended the pill
+    // last, so a long shortcut list truncated "-- NORMAL --" down to "-- N".
+    let total = area.width as usize;
+    let mode_text = if mode_tag.is_empty() {
+        String::new()
+    } else {
+        format!(" {mode_tag} ")
+    };
+    // Pill = ▌ bevel + mode_text + ▐ bevel.
+    let pill_width = if mode_tag.is_empty() {
+        0
+    } else {
+        mode_text.chars().count() + 2
+    };
+    let keys_budget = total.saturating_sub(pill_width);
+
+    let mut spans: Vec<Span> = Vec::with_capacity(items.len() * 3 + 4);
+    let mut used = 0usize;
+    if keys_budget > 0 {
+        spans.push(Span::styled(" ", base));
+        used += 1;
+    }
     for s in items {
+        // " " (in the key span's trailing format) + key + " action  ":
+        // key + action + 3 cells.
+        let entry_w = s.key.chars().count() + s.action.chars().count() + 3;
+        if used + entry_w > keys_budget {
+            break; // elide this entry (and the rest) to protect the pill
+        }
         spans.push(Span::styled(s.key.to_string(), key));
         spans.push(Span::styled(format!(" {}  ", s.action), base));
+        used += entry_w;
     }
 
     // Right-align the mode tag, wrapped in a two-cell bevel (▌ + ▐).
     if !mode_tag.is_empty() {
-        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-        let mode_text = format!(" {mode_tag} ");
-        let pill_width = mode_text.chars().count() + 2;
-        let pad = (area.width as usize)
-            .saturating_sub(used)
-            .saturating_sub(pill_width);
+        let pad = keys_budget.saturating_sub(used);
         if pad > 0 {
             spans.push(Span::styled(" ".repeat(pad), base));
         }

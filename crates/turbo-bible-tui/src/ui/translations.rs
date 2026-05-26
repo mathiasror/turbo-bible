@@ -1,7 +1,9 @@
-//! Translations picker dialog (t / F5). Lists every translation the
-//! binary knows about; installed entries show a ✓ marker, downloadable
-//! ones show the compressed size. Enter on an installed translation
-//! swaps; Enter on a downloadable one triggers a fetch first.
+//! Translations picker dialog (t / F5). Lists every translation the binary
+//! knows about. Each row carries a `[*]`/`[ ]` install-state box and a `»`
+//! marker on the currently-active translation (distinct from the `▸` focus
+//! cursor); downloadable rows also show the compressed size. Enter on an
+//! installed translation swaps; Enter on a downloadable one triggers a fetch
+//! first.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
@@ -30,6 +32,9 @@ pub struct PickerEntry {
 pub struct TranslationsDialog {
     items: Vec<PickerEntry>,
     cursor: usize,
+    /// Code of the translation the user is currently reading — marked `»`,
+    /// distinct from the `▸` focus cursor.
+    active: String,
     nav: ListNav,
 }
 
@@ -50,6 +55,7 @@ impl TranslationsDialog {
         Self {
             items,
             cursor,
+            active: current.to_string(),
             nav: ListNav::default(),
         }
     }
@@ -112,11 +118,11 @@ impl TranslationsDialog {
             .add_modifier(Modifier::BOLD);
         let sel = Style::new()
             .fg(theme::bright_white())
-            .bg(theme::cyan())
+            .bg(theme::list_focus_bg())
             .add_modifier(Modifier::BOLD);
         let sel_hint = Style::new()
             .fg(theme::yellow())
-            .bg(theme::cyan())
+            .bg(theme::list_focus_bg())
             .add_modifier(Modifier::BOLD);
 
         let inner_w = inner.width as usize;
@@ -140,13 +146,16 @@ impl TranslationsDialog {
             let scroll = (self.cursor + 1).saturating_sub(visible);
             for (i, t) in self.items.iter().enumerate().skip(scroll).take(visible) {
                 let on = i == self.cursor;
-                let mark = if on {
-                    "  \u{25B8} "
-                } else if t.installed {
-                    "  \u{2713} "
+                // Gutter: ▸ focus cursor, » currently-active translation
+                // (independent of the cursor), and a [*]/[ ] install box.
+                let focus_mark = if on { "\u{25B8}" } else { " " };
+                let active_mark = if t.code == self.active {
+                    "\u{00BB}"
                 } else {
-                    "    "
+                    " "
                 };
+                let install = if t.installed { "[*]" } else { "[ ]" };
+                let mark = format!(" {focus_mark}{active_mark} {install} ");
                 let code_w = 14usize;
                 let lang_w = 4usize;
                 let code_field = format!("{:<w$}", t.code, w = code_w);

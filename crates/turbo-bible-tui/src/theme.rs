@@ -25,6 +25,15 @@ pub fn blue() -> Color {
 pub fn cyan() -> Color {
     theme().cyan.to_color()
 }
+pub fn bright_cyan() -> Color {
+    theme().bright_cyan.to_color()
+}
+pub fn teal() -> Color {
+    theme().teal.to_color()
+}
+pub fn input_teal() -> Color {
+    theme().input_teal.to_color()
+}
 pub fn bright_white() -> Color {
     theme().bright_white.to_color()
 }
@@ -44,6 +53,35 @@ pub fn black() -> Color {
     theme().black.to_color()
 }
 
+// --- Semantic role slots (the Color Hierarchy) -----------------------------
+// Four distinct cyan/teal roles, named so each call site reads by intent and a
+// retheme of one role can't silently collapse into another. Ordered by
+// luminance: selection (loudest) > list focus > cursor row > input well.
+
+/// Visual-mode selection range — the loudest "active right now" slab.
+pub fn selection_bg() -> Color {
+    bright_cyan()
+}
+/// Focused row in a list dialog (bookmarks, translations, find results,
+/// splash book picker).
+pub fn list_focus_bg() -> Color {
+    cyan()
+}
+/// Cursor-verse fill in the reading pane (normal mode) — toned down from the
+/// list-focus slab so scripture dominates, still findable when scanning.
+pub fn cursor_row_bg() -> Color {
+    teal()
+}
+/// Editable input-field background (Goto, Find, splash filter).
+pub fn input_field_bg() -> Color {
+    input_teal()
+}
+/// Vim mode-pill background for NORMAL and dialog tags. VISUAL/FILTER use
+/// `yellow()` for a louder shift; this keeps the calm modes on the CGA cyan.
+pub fn mode_pill_bg() -> Color {
+    cyan()
+}
+
 pub fn menubar_style() -> Style {
     Style::new().fg(black()).bg(light_grey())
 }
@@ -57,8 +95,12 @@ pub fn draw_modal_backdrop(buf: &mut Buffer, outer: Rect) {
     let buf_area = buf.area;
     let style = Style::new().fg(dark_grey()).bg(black());
     let x_end = outer.right().min(buf_area.right());
-    let y_end = outer.bottom().min(buf_area.bottom());
-    for y in outer.top()..y_end {
+    // Leave the top menu bar and bottom status bar uncovered so the modal
+    // floats over the desktop — period-correct Turbo Vision — rather than
+    // blanking the whole screen. The dialog is centred within this body band.
+    let y_start = outer.top().saturating_add(1);
+    let y_end = outer.bottom().min(buf_area.bottom()).saturating_sub(1);
+    for y in y_start..y_end {
         for x in outer.left()..x_end {
             let cell = &mut buf[(x, y)];
             cell.set_symbol("\u{2592}");

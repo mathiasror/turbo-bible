@@ -3,7 +3,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
@@ -26,6 +26,23 @@ impl Widget for PassageView<'_> {
             " {} {} \u{2500}\u{2500} {} ",
             self.passage.book_name, self.passage.chapter, self.passage.translation
         );
+        // Mode pill on the title row, mirroring the splash NORMAL/FILTER pills:
+        // VISUAL is loud (yellow), NORMAL subdued (the standard mode cyan). The
+        // reading view is where mode matters most, so it gets a permanent cue.
+        let visual = self.selection.is_some();
+        let (pill_text, pill_bg) = if visual {
+            ("[ VISUAL ]", theme::yellow())
+        } else {
+            ("[ NORMAL ]", theme::mode_pill_bg())
+        };
+        let pill = Line::from(Span::styled(
+            pill_text,
+            Style::new()
+                .fg(theme::black())
+                .bg(pill_bg)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .right_aligned();
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
@@ -34,6 +51,7 @@ impl Widget for PassageView<'_> {
                 title,
                 Style::new().fg(theme::bright_white()).bg(theme::blue()),
             )))
+            .title(pill)
             .style(Style::new().bg(theme::blue()));
 
         let inner = block.inner(area);

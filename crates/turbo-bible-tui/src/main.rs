@@ -20,6 +20,7 @@ mod manifest;
 mod nav;
 mod paths;
 mod quote;
+mod reference;
 mod render;
 mod search;
 mod state;
@@ -634,8 +635,12 @@ fn draw_frame(
                     ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
                     buf,
                 );
-                let mode_tag =
-                    mode_tag_for(&state.bg, &state.dialog, state.visual_anchor.is_some());
+                let mode_tag = mode_tag_for(
+                    &state.bg,
+                    &state.dialog,
+                    state.visual_anchor.is_some(),
+                    state.show_sidebar,
+                );
                 crate::ui::statusbar::render(
                     status,
                     ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
@@ -651,8 +656,12 @@ fn draw_frame(
                 s.render(body, buf);
             }
             Bg::Reading => {
-                let mode_tag =
-                    mode_tag_for(&state.bg, &state.dialog, state.visual_anchor.is_some());
+                let mode_tag = mode_tag_for(
+                    &state.bg,
+                    &state.dialog,
+                    state.visual_anchor.is_some(),
+                    state.show_sidebar,
+                );
                 let selection = state.visual_anchor.map(|a| {
                     let c = cursor_verse;
                     if a <= c { (a, c) } else { (c, a) }
@@ -676,7 +685,7 @@ fn draw_frame(
             Dialog::Goto(d) => d.render(area, buf, &state.books),
             Dialog::Find(d) => d.render(area, buf, &state.books),
             Dialog::Footnote(d) => d.render(area, buf),
-            Dialog::Help(_) => HelpDialog::render(area, buf),
+            Dialog::Help(d) => d.render(area, buf),
             Dialog::Bookmarks(d) => d.render(area, buf, &state.books),
             Dialog::Translations(d) => d.render(area, buf),
         }
@@ -763,8 +772,8 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 Ok(DispatchStep::Continue)
             }
         },
-        Dialog::Help(_) => {
-            if matches!(HelpDialog::handle(key), HelpOutcome::Cancel) {
+        Dialog::Help(d) => {
+            if matches!(d.handle(key), HelpOutcome::Cancel) {
                 state.dialog = Dialog::None;
             }
             Ok(DispatchStep::Continue)
@@ -868,11 +877,11 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
         SplashOutcome::Continue => Ok(DispatchStep::Continue),
         SplashOutcome::Quit => Ok(DispatchStep::Quit),
         SplashOutcome::OpenGoto => {
-            state.dialog = Dialog::Goto(GotoDialog::new());
+            state.dialog = Dialog::Goto(GotoDialog::new(ctx.db.translation()));
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenFind => {
-            state.dialog = Dialog::Find(FindDialog::new());
+            state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation()));
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenBook(p) => {
@@ -1098,9 +1107,10 @@ fn dispatch_reading(
                 &book_name,
                 ctx.pos.chapter,
                 *ctx.cursor_verse,
+                ctx.db.translation(),
             ));
         }
-        Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new()),
+        Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation())),
         Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
         Action::OpenFootnote => state.open_footnote_dialog(ctx),
         Action::JumpBack => state.history_step(ctx, HistoryDir::Back)?,
@@ -1154,7 +1164,7 @@ fn build_bookmarks_set(
     out
 }
 
-fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> Cow<'static, str> {
+fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, show_sidebar: bool) -> Cow<'static, str> {
     match dialog {
         Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
         Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
@@ -1167,11 +1177,14 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> Cow<'static, str> {
                 crate::ui::splash::SplashMode::Normal => Cow::Borrowed("-- NORMAL --"),
                 crate::ui::splash::SplashMode::Filter => Cow::Borrowed("-- FILTER --"),
             },
+            // NOREFS is a persistent cue that the sidebar is toggled off, so
+            // the reading area looking different on return is self-explained.
             Bg::Reading => {
-                if visual {
-                    Cow::Borrowed("-- VISUAL --")
+                let base = if visual { "VISUAL" } else { "NORMAL" };
+                if show_sidebar {
+                    Cow::Owned(format!("-- {base} --"))
                 } else {
-                    Cow::Borrowed("-- NORMAL --")
+                    Cow::Owned(format!("-- {base} | NOREFS --"))
                 }
             }
         },

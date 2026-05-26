@@ -18,6 +18,9 @@
 //! [theme]
 //! blue         = "#0000aa"
 //! cyan         = "#00aaaa"
+//! bright_cyan  = "#55ffff"
+//! teal         = "#006a6a"
+//! input_teal   = "#005f5f"
 //! bright_white = "#ffffff"
 //! light_grey   = "#aaaaaa"
 //! dark_grey    = "#555555"
@@ -110,6 +113,12 @@ impl Default for ReadingConfig {
 pub struct ThemeConfig {
     pub blue: HexColor,
     pub cyan: HexColor,
+    /// Brightest cyan — visual-mode selection range only (the loudest slab).
+    pub bright_cyan: HexColor,
+    /// Darker teal — reading cursor-verse fill (toned down from `cyan`).
+    pub teal: HexColor,
+    /// Darkest teal — editable input-field wells (Goto / Find / splash filter).
+    pub input_teal: HexColor,
     pub bright_white: HexColor,
     pub light_grey: HexColor,
     pub dark_grey: HexColor,
@@ -125,6 +134,9 @@ impl Default for ThemeConfig {
         Self {
             blue: HexColor::new(0, 0, 170),
             cyan: HexColor::new(0, 170, 170),
+            bright_cyan: HexColor::new(85, 255, 255), // #55ffff CGA bright cyan
+            teal: HexColor::new(0, 106, 106),         // #006a6a cursor row
+            input_teal: HexColor::new(0, 95, 95),     // #005f5f input wells
             bright_white: HexColor::new(255, 255, 255),
             light_grey: HexColor::new(170, 170, 170),
             dark_grey: HexColor::new(85, 85, 85),

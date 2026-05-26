@@ -87,14 +87,14 @@ fn build_lines(
     // can see how many verses they have selected without doing arithmetic.
     let verse_label = match selection {
         Some((s, e)) if s != e => format!(
-            " {} {}:{}-{}  ({} verses)",
-            p.book_abbrev,
-            p.chapter,
-            s,
-            e,
+            " {}  ({} verses)",
+            crate::reference::format_range(&p.book_abbrev, p.chapter, s, e, &p.translation),
             e - s + 1
         ),
-        _ => format!(" {} {}:{}", p.book_abbrev, p.chapter, cursor_verse),
+        _ => format!(
+            " {}",
+            crate::reference::format(&p.book_abbrev, p.chapter, cursor_verse, &p.translation)
+        ),
     };
     lines.push(Line::from(Span::styled(verse_label, accent)));
     lines.push(Line::from(Span::styled("", bg)));

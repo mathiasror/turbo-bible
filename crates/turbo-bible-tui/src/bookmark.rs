@@ -49,11 +49,14 @@ impl Bookmark {
     #[must_use]
     pub fn reference_label(&self, book_name: &str) -> String {
         if self.start_verse == self.end_verse {
-            format!("{} {}:{}", book_name, self.chapter, self.start_verse)
+            crate::reference::format(book_name, self.chapter, self.start_verse, &self.translation)
         } else {
-            format!(
-                "{} {}:{}-{}",
-                book_name, self.chapter, self.start_verse, self.end_verse
+            crate::reference::format_range(
+                book_name,
+                self.chapter,
+                self.start_verse,
+                self.end_verse,
+                &self.translation,
             )
         }
     }

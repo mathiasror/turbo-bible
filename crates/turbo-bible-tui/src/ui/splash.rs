@@ -375,7 +375,6 @@ impl SplashView {
         let styles = RenderStyles::new(self.mode);
         let inner_w = inner.width as usize;
         let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(blank_line(inner_w, styles.bg));
 
         self.render_title(&styles, inner_w, inner.height as usize, &mut lines);
         self.render_quote(&styles, inner_w, &mut lines);
@@ -391,7 +390,7 @@ impl SplashView {
             &entries_nt,
             &mut lines,
         );
-        self.render_footer(&styles, &entries_ot, &entries_nt, &mut lines);
+        self.render_footer(&styles, inner_w, &entries_ot, &entries_nt, &mut lines);
 
         Paragraph::new(lines).style(styles.bg).render(inner, buf);
     }
@@ -427,7 +426,6 @@ impl SplashView {
                 styles.title,
             ));
         }
-        lines.push(blank_line(inner_w, styles.bg));
         lines.push(center_padded(
             inner_w,
             styles.bg,
@@ -449,8 +447,15 @@ impl SplashView {
         if let Some(last) = body_lines.last_mut() {
             *last = format!("{last}\u{201D}");
         }
+        // The daily verse is the second-strongest element after the title —
+        // bold it so it doesn't read at the same weight as the book picker.
         for body_line in &body_lines {
-            lines.push(center_padded(inner_w, styles.bg, body_line, styles.label));
+            lines.push(center_padded(
+                inner_w,
+                styles.bg,
+                body_line,
+                styles.label.add_modifier(Modifier::BOLD),
+            ));
         }
         lines.push(center_padded(
             inner_w,
@@ -482,13 +487,13 @@ impl SplashView {
         // Mode pill bevel: bright_white left + dark_grey right edge cells
         // give the pill a raised look. The pill's own bg fills the rest of
         // each bevel cell so the highlight reads as a soft rim.
-        let pill_bg = styles.mode.bg.unwrap_or_else(theme::cyan);
+        let pill_bg = styles.mode.bg.unwrap_or_else(theme::mode_pill_bg);
         let bevel_left = Style::new().fg(theme::bright_white()).bg(pill_bg);
         let bevel_right = Style::new().fg(theme::dark_grey()).bg(pill_bg);
         // Input field "sunken" edges: dark sliver on the left rim, bright
         // sliver on the right rim. Mirrors the bevel direction so an input
         // reads as inset where a pill reads as raised.
-        let input_bg = styles.filter.bg.unwrap_or_else(theme::cyan);
+        let input_bg = styles.filter.bg.unwrap_or_else(theme::input_field_bg);
         let input_edge_left = Style::new().fg(theme::dark_grey()).bg(input_bg);
         let input_edge_right = Style::new().fg(theme::bright_white()).bg(input_bg);
         let mut filter_row = vec![
@@ -559,12 +564,14 @@ impl SplashView {
         let (ot_label, nt_label) = testament_labels(&self.translation_code);
         let ot_header = format!(" {}  ({}) ", ot_label, entries_ot.len());
         let nt_header = format!(" {}  ({}) ", nt_label, entries_nt.len());
-        let ot_header_style = if self.focus == SplashColumn::OT && !self.on_continue {
+        let ot_focused = self.focus == SplashColumn::OT && !self.on_continue;
+        let nt_focused = self.focus == SplashColumn::NT && !self.on_continue;
+        let ot_header_style = if ot_focused {
             styles.column_focused
         } else {
             styles.column_header
         };
-        let nt_header_style = if self.focus == SplashColumn::NT && !self.on_continue {
+        let nt_header_style = if nt_focused {
             styles.column_focused
         } else {
             styles.column_header
@@ -574,10 +581,20 @@ impl SplashView {
             Span::styled(" ".repeat(gap), styles.bg),
             Span::styled(left_padded(&nt_header, col_right), nt_header_style),
         ]));
+        // The focused column's rule stays bright; the other dims to dark_grey
+        // so the underline echoes which side h/l/Tab is acting on.
+        let bright_rule = Style::new().fg(theme::bright_white()).bg(theme::blue());
+        let dim_rule = Style::new().fg(theme::dark_grey()).bg(theme::blue());
         lines.push(Line::from(vec![
-            Span::styled("─".repeat(col_left), styles.dim),
+            Span::styled(
+                "─".repeat(col_left),
+                if ot_focused { bright_rule } else { dim_rule },
+            ),
             Span::styled(" ".repeat(gap), styles.bg),
-            Span::styled("─".repeat(col_right), styles.dim),
+            Span::styled(
+                "─".repeat(col_right),
+                if nt_focused { bright_rule } else { dim_rule },
+            ),
         ]));
 
         // Entries: side-by-side.
@@ -625,64 +642,97 @@ impl SplashView {
     fn render_footer(
         &self,
         styles: &RenderStyles,
+        inner_w: usize,
         entries_ot: &[&Book],
         entries_nt: &[&Book],
         lines: &mut Vec<Line<'static>>,
     ) {
         let total_count = entries_ot.len() + entries_nt.len();
-        let count_text = if self.on_continue {
-            "Continue".to_string()
+        // Split the readout into an always-kept core ("n/m" or "Continue") and
+        // a droppable "(N total)" suffix so the budgeter can shed the suffix as
+        // a unit rather than clip it mid-token.
+        let (count_core, count_suffix) = if self.on_continue {
+            ("Continue".to_string(), String::new())
         } else {
             let entries_focused = match self.focus {
                 SplashColumn::OT => entries_ot,
                 SplashColumn::NT => entries_nt,
             };
             let len = entries_focused.len();
-            if len == 0 {
-                format!("0/0 ({total_count} total)")
+            let cur = if len == 0 {
+                0
             } else {
-                format!(
-                    "{}/{} ({} total)",
-                    self.current_cursor() + 1,
-                    len,
-                    total_count
-                )
-            }
+                self.current_cursor() + 1
+            };
+            (format!("{cur}/{len}"), format!(" ({total_count} total)"))
         };
         // The in-dialog footer carries only what's unique to this dialog —
         // splash-local motions and the live cursor/total readout. Global
         // shortcuts (Enter / F2 / F3 / Esc) live in the bottom status bar so
-        // we don't show them twice.
-        let footer = match self.mode {
-            SplashMode::Normal => vec![
-                Span::styled("  ", styles.bg),
-                Span::styled("j k ", styles.key),
-                Span::styled("move  ", styles.dim),
-                Span::styled("h l Tab ", styles.key),
-                Span::styled("column  ", styles.dim),
-                Span::styled("gg G ", styles.key),
-                Span::styled("ends  ", styles.dim),
-                Span::styled("/ ", styles.key),
-                Span::styled("filter  ", styles.dim),
-                Span::styled("t ", styles.key),
-                Span::styled("translation   ", styles.dim),
-                Span::styled(count_text, styles.key),
+        // we don't show them twice. Highest-priority hint group first; the
+        // budgeter drops from the end when the line would overflow.
+        let groups: &[(&str, &str)] = match self.mode {
+            SplashMode::Normal => &[
+                ("j k ", "move  "),
+                ("h l Tab ", "column  "),
+                ("gg G ", "ends  "),
+                ("/ ", "filter  "),
+                ("t ", "translation   "),
             ],
-            SplashMode::Filter => vec![
-                Span::styled("  ", styles.bg),
-                Span::styled("type ", styles.key),
-                Span::styled("to filter  ", styles.dim),
-                Span::styled("Enter ", styles.key),
-                Span::styled("done  ", styles.dim),
-                Span::styled("Esc ", styles.key),
-                Span::styled("clear  ", styles.dim),
-                Span::styled("Ctrl-U ", styles.key),
-                Span::styled("wipe   ", styles.dim),
-                Span::styled(count_text, styles.key),
+            SplashMode::Filter => &[
+                ("type ", "to filter  "),
+                ("Enter ", "done  "),
+                ("Esc ", "clear  "),
+                ("Ctrl-U ", "wipe   "),
             ],
         };
-        lines.push(Line::from(footer));
+        lines.push(assemble_footer(
+            groups,
+            &count_core,
+            &count_suffix,
+            inner_w,
+            styles,
+        ));
     }
+}
+
+/// Lay out the splash footer within `inner_w`: always keep the readout core,
+/// add the `(N total)` suffix only if it fits whole, then fill hint groups in
+/// priority order, dropping low-priority groups (and all after them) rather
+/// than letting ratatui hard-clip the line mid-token.
+fn assemble_footer(
+    groups: &[(&str, &str)],
+    count_core: &str,
+    count_suffix: &str,
+    inner_w: usize,
+    styles: &RenderStyles,
+) -> Line<'static> {
+    const LEAD: usize = 2;
+    let core_w = count_core.chars().count();
+    let suffix_w = count_suffix.chars().count();
+    // Never start a `(…)` we can't close: show the suffix only if it fits
+    // alongside the core.
+    let show_suffix = !count_suffix.is_empty() && LEAD + core_w + suffix_w <= inner_w;
+    let count_w = core_w + if show_suffix { suffix_w } else { 0 };
+
+    let mut used = LEAD + count_w;
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ".repeat(LEAD), styles.bg)];
+    for (k, l) in groups {
+        let gw = k.chars().count() + l.chars().count();
+        if used + gw > inner_w {
+            break; // drop this group and every lower-priority one after it
+        }
+        spans.push(Span::styled((*k).to_string(), styles.key));
+        spans.push(Span::styled((*l).to_string(), styles.dim));
+        used += gw;
+    }
+    let count = if show_suffix {
+        format!("{count_core}{count_suffix}")
+    } else {
+        count_core.to_string()
+    };
+    spans.push(Span::styled(count, styles.key));
+    Line::from(spans)
 }
 
 /// Style table built once per render pass and shared across helpers.
@@ -723,11 +773,11 @@ impl RenderStyles {
                 .add_modifier(bold),
             sel: Style::new()
                 .fg(theme::bright_white())
-                .bg(theme::cyan())
+                .bg(theme::list_focus_bg())
                 .add_modifier(bold),
             filter: Style::new()
                 .fg(theme::black())
-                .bg(theme::cyan())
+                .bg(theme::input_field_bg())
                 .add_modifier(bold),
             mode: match mode {
                 SplashMode::Filter => Style::new()
@@ -736,11 +786,13 @@ impl RenderStyles {
                     .add_modifier(bold),
                 SplashMode::Normal => Style::new()
                     .fg(theme::black())
-                    .bg(theme::cyan())
+                    .bg(theme::mode_pill_bg())
                     .add_modifier(bold),
             },
+            // Unfocused column header — dimmed so the focused (bright_white +
+            // underline) side reads as "this is where j/k moves".
             column_header: Style::new()
-                .fg(theme::yellow())
+                .fg(theme::light_grey())
                 .bg(theme::blue())
                 .add_modifier(bold),
             column_focused: Style::new()

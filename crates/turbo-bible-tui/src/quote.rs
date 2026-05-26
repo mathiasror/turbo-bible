@@ -79,7 +79,7 @@ fn day_index() -> usize {
 
 fn lookup(
     db: &Db,
-    _translation: &str,
+    translation: &str,
     book: &str,
     chapter: i64,
     verse: i64,
@@ -95,7 +95,7 @@ fn lookup(
         })
         .ok();
     Ok(row.map(|(text, name)| DailyQuote {
-        reference: format!("{name} {chapter},{verse}"),
+        reference: crate::reference::format(&name, chapter, verse, translation),
         text: text.replace('\n', " "),
     }))
 }
