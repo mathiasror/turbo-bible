@@ -126,14 +126,7 @@ fn quit_persists_state_book_chapter() {
     // fresh `$HOME`, so launching it doesn't depend on an on-demand fetch.
     let mut p = launch(
         &tmp,
-        &[
-            "--translation",
-            "en-kjv",
-            "--book",
-            "ROM",
-            "--chapter",
-            "8",
-        ],
+        &["--translation", "en-kjv", "--book", "ROM", "--chapter", "8"],
     );
     sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
     key(&mut p, "q");
