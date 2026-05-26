@@ -152,10 +152,13 @@ fn populate_meta(
     scrollmapper_commit: &str,
     verse_count: i64,
 ) -> Result<()> {
-    let built_at = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let built_at = i64::try_from(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("system clock is before the unix epoch")?
+            .as_secs(),
+    )
+    .context("build timestamp overflows i64")?;
     tx.execute(
         "INSERT INTO meta
            (code, name, language, license, attribution,

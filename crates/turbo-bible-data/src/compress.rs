@@ -89,10 +89,13 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
         bail!("no translation .db files found in {}", in_dir.display());
     }
 
-    let built_at = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let built_at = i64::try_from(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("system clock is before the unix epoch")?
+            .as_secs(),
+    )
+    .context("build timestamp overflows i64")?;
 
     let manifest = Manifest {
         schema_version: 1,
