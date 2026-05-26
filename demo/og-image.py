@@ -5,6 +5,11 @@ Turbo Vision look: CGA-blue dithered desktop, a bordered dialog with the
 TURBO BIBLE wordmark, and the menu/status chrome from the landing page.
 Regenerate via `just og-image` (needs Pillow). Committed like demo.gif;
 don't hand-edit the PNG.
+
+Fonts are vendored under demo/fonts/ so the render matches the site (and
+is reproducible off-macOS): Silkscreen for the pixel wordmark and IBM
+Plex Mono for the body/chrome — the same two families website/styles.css
+loads from Google Fonts. Both are SIL OFL 1.1 (see the *-OFL.txt files).
 """
 
 from __future__ import annotations
@@ -29,20 +34,43 @@ BAR_DARK = (128, 128, 128)  # #808080
 W, H = 1200, 630
 BAR_H = 44
 
-FONT_PATH = "/System/Library/Fonts/Menlo.ttc"
+FONT_DIR = Path(__file__).resolve().parent / "fonts"
+PLEX_REGULAR = FONT_DIR / "IBMPlexMono-Regular.ttf"
+PLEX_BOLD = FONT_DIR / "IBMPlexMono-Bold.ttf"
+SILKSCREEN = FONT_DIR / "Silkscreen-Bold.ttf"
 
 
-def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    try:
-        return ImageFont.truetype(FONT_PATH, size, index=1 if bold else 0)
-    except OSError:
-        return ImageFont.truetype(FONT_PATH, size)
+def plex(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    """IBM Plex Mono — the chrome/body face (styles.css `--mono`)."""
+    return ImageFont.truetype(str(PLEX_BOLD if bold else PLEX_REGULAR), size)
 
 
-def centered(draw, text, fnt, cx, y, **kw):
-    w = draw.textlength(text, font=fnt)
-    draw.text((cx - w / 2, y), text, font=fnt, **kw)
-    return w
+def silk(size: int) -> ImageFont.FreeTypeFont:
+    """Silkscreen — the pixel wordmark face (styles.css `.hero-title`)."""
+    return ImageFont.truetype(str(SILKSCREEN), size)
+
+
+def centered(draw, text, fnt, cx, cy, **kw):
+    """Draw `text` centered on (cx, cy)."""
+    draw.text((cx, cy), text, font=fnt, anchor="mm", **kw)
+
+
+def tab(draw, text, x, y, fnt, fill, anchor):
+    """A title-bar tab embedded in the dialog border.
+
+    Mirrors `.panel > .title` in styles.css: a solid background swatch
+    that *breaks* the border line, with the label centered on it — so the
+    white double-border doesn't run through the text.
+    """
+    tw = draw.textlength(text, font=fnt)
+    pad = 10
+    if anchor.startswith("r"):
+        x0, x1 = x - tw - pad, x + pad
+    else:
+        x0, x1 = x - pad, x + tw + pad
+    half = fnt.size * 0.72
+    draw.rectangle([x0, y - half, x1, y + half], fill=BG)
+    draw.text((x, y), text, font=fnt, fill=fill, anchor=anchor)
 
 
 def main() -> int:
@@ -57,14 +85,17 @@ def main() -> int:
                 px[x, y] = BG_SOFT
     draw = ImageDraw.Draw(img)
 
-    bar_font = font(20, bold=True)
+    bar_font = plex(20, bold=True)
 
     # Top menu bar.
     draw.rectangle([0, 0, W, BAR_H], fill=BAR)
-    draw.text((24, 11), "≡", font=bar_font, fill=BAR_DARK)
-    menu = "  Bible · Edit · Search · Translation · Heresy · Help"
-    draw.text((24 + draw.textlength("≡", font=bar_font), 11), menu,
-              font=bar_font, fill=BLACK)
+    # Hamburger glyph, drawn as three bars — IBM Plex Mono has no U+2261
+    # and Pillow (unlike the browser) won't fall back to a face that does.
+    for i in range(3):
+        ly = 15 + i * 7
+        draw.rectangle([24, ly, 42, ly + 2], fill=BAR_DARK)
+    menu = "Bible · Edit · Search · Translation · Heresy · Help"
+    draw.text((58, 11), menu, font=bar_font, fill=BLACK)
 
     # Bottom status bar.
     draw.rectangle([0, H - BAR_H, W, H], fill=BAR)
@@ -82,32 +113,31 @@ def main() -> int:
     draw.rectangle([dx0 + 8, dy0 + 8, dx1 - 8, dy1 - 8], outline=WHITE, width=1)
     cx = (dx0 + dx1) / 2
 
-    # Dialog tab + version.
-    tab_font = font(22, bold=True)
-    draw.text((dx0 + 28, dy0 - 4), " Turbo Bible ", font=tab_font, fill=WHITE)
-    draw.text((dx1 - 28 - draw.textlength("v0.1", font=tab_font), dy0 - 4),
-              "v0.1", font=tab_font, fill=YELLOW)
+    # Dialog title tab + version, embedded in (breaking) the top border.
+    tab_font = plex(22, bold=True)
+    tab(draw, "Turbo Bible", dx0 + 34, dy0, tab_font, WHITE, "lm")
+    tab(draw, "v0.1", dx1 - 34, dy0, tab_font, YELLOW, "rm")
 
-    # Wordmark — fit to the dialog width, yellow with a white outline.
+    # Wordmark — Silkscreen, fit to the dialog width, yellow + white outline.
     title = "TURBO BIBLE"
-    size = 150
-    title_font = font(size, bold=True)
+    size = 132
+    title_font = silk(size)
     while draw.textlength(title, font=title_font) > (dx1 - dx0) - 130 and size > 40:
         size -= 2
-        title_font = font(size, bold=True)
-    centered(draw, title, title_font, cx, dy0 + 96, fill=YELLOW,
+        title_font = silk(size)
+    centered(draw, title, title_font, cx, dy0 + 150, fill=YELLOW,
              stroke_width=2, stroke_fill=WHITE)
 
-    centered(draw, "The Bible. In your terminal.", font(34, bold=True),
-             cx, dy0 + 262, fill=WHITE)
-    centered(draw, "// like god intended.", font(24), cx, dy0 + 306, fill=CYAN)
+    centered(draw, "The Bible. In your terminal.", plex(34, bold=True),
+             cx, dy0 + 278, fill=WHITE)
+    centered(draw, "// like god intended.", plex(24), cx, dy0 + 318, fill=CYAN)
 
     # Install command pill.
-    cmd_font = font(26, bold=True)
+    cmd_font = plex(26, bold=True)
     cmd = "$ curl -fsSL turbo.bible/install.sh | sh"
     cw = draw.textlength(cmd, font=cmd_font)
     bx0 = cx - cw / 2 - 24
-    by0 = dy0 + 346
+    by0 = dy0 + 350
     draw.rectangle([bx0, by0, cx + cw / 2 + 24, by0 + 50],
                    fill=BG_DARK, outline=BAR_DARK, width=1)
     tx = cx - cw / 2
@@ -116,7 +146,7 @@ def main() -> int:
               cmd[2:], font=cmd_font, fill=WHITE)
 
     centered(draw, "11 translations · 7 languages · offline · zero telemetry",
-             font(20), cx, dy1 - 32, fill=GREY)
+             plex(20), cx, dy1 - 26, fill=GREY)
 
     img.save(out)
     print(f"wrote {out} ({out.stat().st_size} bytes)")
