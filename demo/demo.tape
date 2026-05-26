@@ -1,40 +1,33 @@
-# turbo-bible demo — tuned for social sharing (Snapchat / Discord).
+# turbo-bible demo — README hero. One story: full-text search → jump → read.
 #
-# Render with:
-#   vhs demo/demo.tape
+# Render with:  vhs demo/demo.tape   (or: just demo)
+# Requires ./target/release/turbo-bible (run: cargo build -p turbo-bible --release).
 #
-# Requires:
-#   - `cargo build --release` has been run.
-#   - The bible.sqlite has been populated by scripts/import_translations.py.
-#
-# Tuning notes (vs. earlier readme-style tape):
-#   - FontSize 20 → readable on phone screens.
-#   - Terminal width sits just under the 120-col sidebar threshold, so the
-#     reading pane uses the full width (no half-empty "References" gutter).
-#   - WindowBar adds a chrome frame that looks polished in Discord previews.
-#   - Sleeps trimmed ~40% and typing sped up so the whole loop is ~22s.
-#   - XDG_CONFIG_HOME is redirected to a temp dir → splash starts clean
-#     every re-record.
+# Tuning notes:
+#   - One narrative arc, ~9s, 1200x720 → README/mobile-friendly, ~1MB gif.
+#   - TypingSpeed 90ms reads as human/confident (not robotic).
+#   - On the splash, "/" is the book filter, so Find ("/") is reached from
+#     the reading view — hence the Enter (open Genesis 1) before the search.
+#   - XDG_CONFIG_HOME is redirected to a temp dir → deterministic splash
+#     every re-record. --translation en-kjv keeps the "love" search English
+#     (a wiped config otherwise falls back to de-menge, the first DB
+#     alphabetically, and the search would return no matches).
+#   - Launch inside the Hide block so the gif opens already on the splash —
+#     no shell prompt or `./target/...` typing flashes in the final gif.
 
 Output demo/demo.gif
 
-Set Shell        "bash"
-Set FontSize     20
-Set Width        1400
-Set Height       820
-Set Padding      18
-Set Theme        "Catppuccin Mocha"
-Set TypingSpeed  35ms
-Set WindowBar    Colorful
-Set WindowBarSize 36
+Set Shell         "bash"
+Set FontSize      16
+Set Width         1200
+Set Height        720
+Set Padding       20
+Set Theme         "Catppuccin Mocha"
+Set TypingSpeed   90ms
+Set WindowBar     Colorful
+Set WindowBarSize 32
 
 # --- Setup (hidden) -----------------------------------------------------
-# Launch the binary inside the Hide block so recording starts with the
-# splash already mounted — no shell prompt or `./target/...` typing flashes
-# in the final gif. Pin the translation: with XDG_CONFIG_HOME wiped, startup
-# falls back to "first translation in DB" — which is `de-menge`
-# alphabetically, and the "love" search later in the tape would return no
-# matches.
 Hide
 Type "export XDG_CONFIG_HOME=$(mktemp -d)"
 Enter
@@ -45,84 +38,25 @@ Enter
 Sleep 1500ms
 Show
 
-# --- Splash: filterable book picker -------------------------------------
-Sleep 800ms
+# --- Splash: let the TURBO BIBLE title art + daily verse register -------
+Sleep 1500ms
 
-# Filter "jo" → narrows OT (Job/Joshua/Joel/Jonah) + NT (John, 1/2/3 John).
+# --- Open a book so the reading-view Find ("/") is available; Genesis 1
+#     renders as a brief, recognizable frame --------------------------------
+Enter
+Sleep 1200ms
+
+# --- Find: FTS5 search across the whole Bible ---------------------------
 Type "/"
-Sleep 250ms
-Type "jo"
-Sleep 700ms
-Enter
-Sleep 350ms
-
-# Hop to the New Testament column and open John.
-Tab
-Sleep 350ms
-Enter
+Sleep 500ms
+Type "love"
 Sleep 1400ms
 
-# --- Reading: walk the cursor through John 1 ----------------------------
+# --- Browse the BM25-ranked results, settle on 1 John 4:18 (query
+#     highlighted yellow throughout) ---------------------------------------
 Down
-Sleep 180ms
-Down
-Sleep 180ms
-Down
-Sleep 180ms
-Down
-Sleep 350ms
+Sleep 1200ms
 
-# --- Goto dialog: jump straight to John 3:16 ----------------------------
-Type ":"
-Sleep 250ms
-Type "John 3:16"
-Sleep 550ms
+# --- Jump: cursor lands on the matched verse → hero reading frame -------
 Enter
-Sleep 1700ms
-
-# --- Find dialog: FTS5 search for "love" --------------------------------
-Type "/"
-Sleep 250ms
-Type "love"
-Sleep 700ms
-Down
-Sleep 220ms
-Down
-Sleep 220ms
-Down
-Sleep 220ms
-Enter
-Sleep 1600ms
-
-# --- Bookmarks: toggle then open the list -------------------------------
-Type "b"
-Sleep 450ms
-Type "M"
-Sleep 1300ms
-Escape
-Sleep 350ms
-
-# --- Translations: switch to Reina-Valera 1909 (Spanish) ----------------
-# Picker opens with cursor on the current translation (en-kjv).
-# Alphabetical order: de-menge, en-asv, en-bsb, en-drc, en-kjv, en-ylt,
-# es-rv1909, … — so two Downs lands on Reina-Valera.
-Type "t"
-Sleep 700ms
-Down
-Sleep 220ms
-Down
-Sleep 350ms
-Enter
-Sleep 1800ms
-
-# --- Help overlay -------------------------------------------------------
-Type ":help"
-Sleep 350ms
-Enter
-Sleep 2200ms
-Escape
-Sleep 350ms
-
-# --- Quit ---------------------------------------------------------------
-Type "q"
-Sleep 400ms
+Sleep 3200ms
