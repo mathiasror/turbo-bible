@@ -37,6 +37,39 @@ need uname
 need mkdir
 need install
 
+# Wrapper around sha256sum / shasum -a 256 — Linux ships the former,
+# macOS the latter. Prints the hex digest of $1 to stdout.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# Verify $1 against the .sha256 sidecar at $2. The release workflow emits
+# `<asset>.sha256` next to every release asset; install.sh refuses to
+# proceed if the digest doesn't match. The sidecar is fetched over TLS
+# from the same GitHub release as the asset, so this catches at-rest
+# tampering of the CDN-served bytes, not a compromised release itself.
+verify_sha256() {
+  asset_path=$1
+  sha_url=$2
+  sha_file="$asset_path.sha256"
+  if ! curl --proto '=https' --tlsv1.2 -fsSL "$sha_url" -o "$sha_file"; then
+    red "could not fetch checksum: $sha_url"
+    return 1
+  fi
+  expected=$(awk '{print $1}' < "$sha_file")
+  actual=$(sha256_of "$asset_path")
+  if [ "$expected" != "$actual" ]; then
+    red "checksum mismatch for $(basename "$asset_path")"
+    red "  expected: $expected"
+    red "  actual:   $actual"
+    return 1
+  fi
+}
+
 # ── target triple detection ───────────────────────────────────────────
 uname_s=$(uname -s)
 uname_m=$(uname -m)
@@ -94,6 +127,11 @@ if ! curl --proto '=https' --tlsv1.2 -fL "$url" -o "$tmp/$asset"; then
   exit 1
 fi
 
+cyan "→ verifying checksum"
+if ! verify_sha256 "$tmp/$asset" "$url.sha256"; then
+  exit 1
+fi
+
 cyan "→ extracting"
 tar -xzf "$tmp/$asset" -C "$tmp"
 
@@ -121,7 +159,12 @@ else
 fi
 cyan "→ pre-fetching translations (~52 MB)"
 pack="$tmp/translations.tar.gz"
-if curl --proto '=https' --tlsv1.2 -fL "$pack_url" -o "$pack" 2>/dev/null; then
+# Pre-fetch is best-effort: failures here fall through to the binary's
+# on-demand fetch path (which has its own per-translation sha256 check
+# against the embedded manifest, so the bypass is safe). We still
+# verify the bundle's checksum when we do get it.
+if curl --proto '=https' --tlsv1.2 -fL "$pack_url" -o "$pack" \
+   && verify_sha256 "$pack" "$pack_url.sha256"; then
   cyan "→ staging into $data_dir"
   tar -xzf "$pack" -C "$tmp"
   # Stage .db.zst files next to the binary's data dir; the binary's
@@ -132,8 +175,9 @@ if curl --proto '=https' --tlsv1.2 -fL "$pack_url" -o "$pack" 2>/dev/null; then
   yellow "Translations staged. They'll decompress on first launch."
 else
   yellow ""
-  yellow "Translation pre-fetch failed (offline?). The binary will"
-  yellow "download translations on demand from the Translations picker."
+  yellow "Translation pre-fetch skipped (offline or checksum failure)."
+  yellow "The binary will download translations on demand from the"
+  yellow "Translations picker, with per-translation sha256 verification."
 fi
 
 # ── post-install hints ────────────────────────────────────────────────

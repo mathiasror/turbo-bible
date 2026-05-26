@@ -14,16 +14,22 @@ name: Release
 # under `github-build-setup`, and delete this file. See RELEASING.md.
 
 on:
+  # Tag-driven release. The matching `workflow_dispatch` knob used to
+  # take a `tag` input but every job consumed `github.ref_name` (which
+  # for dispatch is the *branch*, not the input) — silently mis-publishing.
+  # Removed: push `git tag vX && git push --tags` to cut a release.
   push:
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release (must already exist)'
-        required: true
 
-permissions:
-  contents: write
+# Serialize per-tag so re-pushing the same tag (e.g. tag fix) doesn't
+# race two concurrent runs trying to create the same release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default permissions are read-only; jobs that need to write to the
+# GitHub release opt in below. `publish-crate` doesn't write to the
+# release, only to crates.io via CARGO_REGISTRY_TOKEN.
 
 env:
   # Scrollmapper checkout pinned to a specific SHA so the release is
@@ -35,6 +41,8 @@ env:
 jobs:
   build:
     name: build / ${{ matrix.target }}
+    permissions:
+      contents: write   # Upload release assets.
     strategy:
       fail-fast: false
       matrix:
@@ -119,15 +127,38 @@ jobs:
             (cd dist-pkg && tar -czf "$name.tar.gz" "$name")
           fi
 
+      - name: Compute SHA256 sidecar
+        shell: bash
+        # install.sh fetches `<asset>.sha256` and verifies before extract.
+        # Linux runners have sha256sum; macOS has shasum -a 256; Windows
+        # runners (bash via Git Bash) ship sha256sum via msys.
+        run: |
+          cd dist-pkg
+          name="turbo-bible-${{ matrix.target }}.${{ matrix.ext }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$name" > "$name.sha256"
+          else
+            shasum -a 256 "$name" > "$name.sha256"
+          fi
+
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist-pkg/*.${{ matrix.ext }}
+          files: |
+            dist-pkg/*.${{ matrix.ext }}
+            dist-pkg/*.sha256
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
 
   upload-translations:
     name: upload translations + xrefs assets
+    # Run after `build` so we don't race against the matrix on
+    # `softprops/action-gh-release@v2`'s "create release if missing"
+    # path. The first job into a tag wins the create; later ones must
+    # observe an existing release to append to.
+    needs: build
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,6 +190,15 @@ jobs:
           cargo run -p turbo-bible-data --release -- compress
           (cd dist/translations && tar -czf ../translations.tar.gz *.db.zst manifest.json)
 
+      - name: Compute SHA256 sidecar for translations bundle
+        # The binary's `fetch.rs::ct_eq` already verifies per-translation
+        # sha256s against the embedded manifest on demand. The bundle's
+        # own sha256 is for install.sh's pre-stage path, which bypasses
+        # fetch.rs and so needs its own integrity check.
+        run: |
+          cd dist
+          sha256sum translations.tar.gz > translations.tar.gz.sha256
+
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -166,6 +206,7 @@ jobs:
             dist/translations/*.db.zst
             dist/translations/manifest.json
             dist/translations.tar.gz
+            dist/translations.tar.gz.sha256
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
 
@@ -197,6 +238,15 @@ jobs:
           mkdir -p crates/turbo-bible-tui/assets
           cp dist/translations/en-kjv.db.zst crates/turbo-bible-tui/assets/
           cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
+
+      - name: Copy license files into crate dir
+        # crates.io tarball claims "MIT OR Apache-2.0" in metadata but
+        # the LICENSE files live two directories up at workspace root.
+        # Copy them in so the published tarball is self-contained for
+        # downstreams that need to reproduce the license notices.
+        # `include = [...]` in Cargo.toml whitelists them for cargo
+        # package; this step makes the files exist at publish time.
+        run: cp LICENSE-MIT LICENSE-APACHE NOTICE crates/turbo-bible-tui/
 
       - name: cargo publish (turbo-bible)
         env:

@@ -21,6 +21,12 @@ include = [
     "assets/en-kjv.db.zst",
     "assets/manifest.json",
     "Cargo.toml",
+    # Copied in by release.yml's `publish-crate` job from workspace
+    # root before `cargo publish` runs. crates.io tarball needs its
+    # own LICENSE copies for compliance with "MIT OR Apache-2.0".
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "NOTICE",
 ]
 
 [dependencies]
