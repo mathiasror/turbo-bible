@@ -58,7 +58,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 
@@ -85,10 +85,15 @@
       translation God didn't copyright, zero telemetry.
     </p>
 
-    <div class="install">
-      <span class="install-label">$ install</span>
-      <div class="install-cmd"><span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh</div>
-      <button class="install-copy" type="button" onclick="(()=&gt;{navigator.clipboard&amp;&amp;navigator.clipboard.writeText('curl -fsSL turbo.bible/install.sh | sh');this.textContent='COPIED';setTimeout(()=&gt;this.textContent='[ COPY ]',900)})()">[ COPY ]</button>
+    <div class="install-tabs" data-copy="curl -fsSL turbo.bible/install.sh | sh">
+      <div class="install-row">
+        <div class="install-cmd"><span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh</div>
+        <button class="install-copy" type="button" onclick="tbCopy(this)">[ COPY ]</button>
+      </div>
+      <div class="tabbar" role="tablist" aria-label="Install method">
+        <button class="tab is-active" type="button" role="tab" aria-selected="true" onclick="tbInstall(this)" data-html='<span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh' data-copy="curl -fsSL turbo.bible/install.sh | sh">curl</button>
+        <button class="tab" type="button" role="tab" aria-selected="false" onclick="tbInstall(this)" data-html='<span class="sigil">$</span>cargo install <span class="arg">turbo-bible</span>' data-copy="cargo install turbo-bible">cargo</button>
+      </div>
     </div>
 
     <div class="hero-secondary">
@@ -216,6 +221,7 @@
         <h3>Install</h3>
         <div class="code"><span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh</div>
         <p>One line. No dependencies. No Node. No Python. No virtual environment called <code>eden</code>.</p>
+        <p>Have Rust? <code>cargo install turbo-bible</code> pulls the same binary from crates.io.</p>
       </div>
       <div class="step">
         <span class="badge">STEP 02</span>
@@ -287,9 +293,15 @@
     <h2>Ready when you are.<span class="blink">_</span></h2>
     <p class="sub">// ~55 MB binary. eleven translations, every cross-reference. tested on three monotheisms.</p>
 
-    <div class="install">
-      <div class="install-cmd"><span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh</div>
-      <button class="install-copy" type="button" onclick="(()=&gt;{navigator.clipboard&amp;&amp;navigator.clipboard.writeText('curl -fsSL turbo.bible/install.sh | sh');this.textContent='COPIED';setTimeout(()=&gt;this.textContent='[ COPY ]',900)})()">[ COPY ]</button>
+    <div class="install-tabs" data-copy="curl -fsSL turbo.bible/install.sh | sh">
+      <div class="install-row">
+        <div class="install-cmd"><span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh</div>
+        <button class="install-copy" type="button" onclick="tbCopy(this)">[ COPY ]</button>
+      </div>
+      <div class="tabbar" role="tablist" aria-label="Install method">
+        <button class="tab is-active" type="button" role="tab" aria-selected="true" onclick="tbInstall(this)" data-html='<span class="sigil">$</span>curl -fsSL <span class="arg">turbo.bible/install.sh</span> | sh' data-copy="curl -fsSL turbo.bible/install.sh | sh">curl</button>
+        <button class="tab" type="button" role="tab" aria-selected="false" onclick="tbInstall(this)" data-html='<span class="sigil">$</span>cargo install <span class="arg">turbo-bible</span>' data-copy="cargo install turbo-bible">cargo</button>
+      </div>
     </div>
 
     <p class="footnote">
@@ -317,6 +329,27 @@
   <span class="mode">-- NORMAL --</span>
 </div>
 
-
+<script>
+  // Tab-selectable install widget. Each .install-tabs block holds a row of
+  // .tab buttons carrying data-html (the styled command shown in the box)
+  // and data-copy (the plain text copied to the clipboard). Adding a new
+  // install method later (Homebrew, Scoop, …) is just another <button>.
+  function tbInstall(btn) {
+    var root = btn.closest('.install-tabs');
+    root.querySelectorAll('.tab').forEach(function (t) {
+      var on = t === btn;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    root.querySelector('.install-cmd').innerHTML = btn.getAttribute('data-html');
+    root.setAttribute('data-copy', btn.getAttribute('data-copy'));
+  }
+  function tbCopy(btn) {
+    var root = btn.closest('.install-tabs');
+    if (navigator.clipboard) navigator.clipboard.writeText(root.getAttribute('data-copy'));
+    btn.textContent = 'COPIED';
+    setTimeout(function () { btn.textContent = '[ COPY ]'; }, 900);
+  }
+</script>
 
 </body></html>
