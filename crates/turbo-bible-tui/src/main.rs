@@ -516,9 +516,11 @@ fn run(
             let raw_event = event::read()?;
             let synth: Option<KeyEvent> = match raw_event {
                 Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
-                Event::Mouse(me) => {
-                    mouse_to_key(me, term_height, make_status(&state.bg, state.show_sidebar))
-                }
+                Event::Mouse(me) => mouse_to_key(
+                    me,
+                    term_height,
+                    make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some()),
+                ),
                 _ => None,
             };
             if let Some(key) = synth {
@@ -607,7 +609,7 @@ fn draw_frame(
     passage: &Passage,
     cursor_verse: i64,
 ) -> Result<()> {
-    let status = make_status(&state.bg, state.show_sidebar);
+    let status = make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some());
     state.refresh_bookmarks_cache(passage);
     // SAFETY (logical): refresh_bookmarks_cache guarantees Some(...) on return.
     let bookmarked_in_chapter = &state
@@ -1258,9 +1260,32 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
     ]
 }
 
-const fn make_status(bg: &Bg, show_sidebar: bool) -> &'static [Shortcut<'static>] {
+const STATUS_VISUAL: &[Shortcut<'static>] = &[
+    Shortcut {
+        key: "y",
+        action: "Copy",
+    },
+    Shortcut {
+        key: "b",
+        action: "Bookmark",
+    },
+    Shortcut {
+        key: "V",
+        action: "Exit",
+    },
+    Shortcut {
+        key: "Esc",
+        action: "Cancel",
+    },
+];
+
+const fn make_status(bg: &Bg, show_sidebar: bool, visual: bool) -> &'static [Shortcut<'static>] {
     match bg {
         Bg::Splash(_) => STATUS_SPLASH,
+        // In a visual selection the relevant actions are copy / bookmark /
+        // exit, so swap the reading hints for those (mirrors how the dialogs
+        // carry their own mode-specific footers).
+        Bg::Reading if visual => STATUS_VISUAL,
         Bg::Reading if show_sidebar => STATUS_READING_HIDE,
         Bg::Reading => STATUS_READING_REFS,
     }
