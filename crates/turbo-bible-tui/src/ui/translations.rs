@@ -157,7 +157,9 @@ impl TranslationsDialog {
                 let install = if t.installed { "[*]" } else { "[ ]" };
                 let mark = format!(" {focus_mark}{active_mark} {install} ");
                 let code_w = 14usize;
-                let lang_w = 4usize;
+                // 3 (not 4) leaves a single space between the 2-letter language
+                // and the translation name, tightening per-row cohesion.
+                let lang_w = 3usize;
                 let code_field = format!("{:<w$}", t.code, w = code_w);
                 let lang_field = format!("{:<w$}", t.language, w = lang_w);
                 let name_field = t.name.clone();

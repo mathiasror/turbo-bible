@@ -161,11 +161,9 @@ impl HelpDialog {
         // Parallel to `content`: marks which rows are section headers, so the
         // scroll logic can keep a header glued to its first entry.
         let mut is_section: Vec<bool> = Vec::new();
-        content.push(Line::from(Span::styled(
-            " ".repeat(inner.width as usize),
-            bg,
-        )));
-        is_section.push(false); // leading blank
+        // No leading blank row: the cheat-sheet is 25 rows, which then fits a
+        // standard ~32-row terminal without scrolling — so the scroll arrows
+        // stay suppressed (see the overflow gate below) instead of a phantom ▲.
         for row in ROWS {
             match row {
                 Section(name) => {
@@ -194,6 +192,8 @@ impl HelpDialog {
         // with its entries below the fold (used for the offset *and* the
         // indicator below, so they agree).
         let scroll = keep_with_next(self.scroll, body_h, content.len(), &is_section);
+        // Captured before `content` is moved into the Paragraph below.
+        let overflow = content.len() > body_h;
 
         let body_area = Rect::new(
             inner.x,
@@ -219,11 +219,13 @@ impl HelpDialog {
             Span::styled("Esc / Enter ", key_f),
             Span::styled("close", dim),
         ];
+        // Only show scroll arrows when the content actually overflows the body
+        // (content_height <= viewport_height ⇒ no indicator at all).
         let mut indicator = String::new();
-        if scroll > 0 {
+        if overflow && scroll > 0 {
             indicator.push('\u{25B2}');
         }
-        if scroll < max_scroll {
+        if overflow && scroll < max_scroll {
             indicator.push('\u{25BC}');
         }
         if !indicator.is_empty() {
@@ -257,7 +259,7 @@ mod tests {
     fn keep_with_next_never_orphans_a_section_header() {
         // Build `is_section` exactly as `render` does: a leading blank, then
         // one flag per ROW.
-        let mut is_section = vec![false];
+        let mut is_section = Vec::new();
         for row in ROWS {
             is_section.push(matches!(row, Section(_)));
         }

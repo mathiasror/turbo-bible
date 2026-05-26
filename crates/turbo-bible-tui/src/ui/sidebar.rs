@@ -34,7 +34,10 @@ impl Widget for SidebarView<'_> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::new().fg(theme::light_grey()).bg(theme::blue()))
+            // Dim the border to dark_grey so the panel reads as clearly
+            // subordinate to the scripture pane's bright_white border — the
+            // hierarchy comes from the difference between the two borders.
+            .border_style(Style::new().fg(theme::dark_grey()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
                 Style::new().fg(theme::light_grey()).bg(theme::blue()),

@@ -131,6 +131,20 @@ impl BookmarksDialog {
         let blank = || Line::from(Span::styled(" ".repeat(inner_w), bg));
 
         let mut lines: Vec<Line<'static>> = Vec::new();
+        // Subtitle directly below the title: the saved-verse count, pluralized.
+        // Completes the dialog's hierarchy so the populated list doesn't read
+        // as a sparse field of empty blue.
+        if !self.items.is_empty() {
+            let noun = if self.items.len() == 1 {
+                "verse"
+            } else {
+                "verses"
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  ", bg),
+                Span::styled(format!("{} saved {noun}", self.items.len()), dim),
+            ]));
+        }
         lines.push(blank());
 
         if self.items.is_empty() {

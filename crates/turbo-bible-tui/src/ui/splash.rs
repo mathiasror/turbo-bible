@@ -22,11 +22,14 @@ use crate::theme;
 use crate::ui::dialog;
 use crate::ui::listnav::{ListNav, Step};
 
+// 5-row block letters (the classic ANSI-Shadow glyphs with one redundant
+// middle row dropped) so the splash logo carries less vertical bulk and the
+// book picker rises. Keep both arrays the same height; `render_title` zips them
+// side by side.
 const TITLE_TURBO: &[&str] = &[
     "████████╗██╗   ██╗██████╗ ██████╗  ██████╗ ",
     "╚══██╔══╝██║   ██║██╔══██╗██╔══██╗██╔═══██╗",
     "   ██║   ██║   ██║██████╔╝██████╔╝██║   ██║",
-    "   ██║   ██║   ██║██╔══██╗██╔══██╗██║   ██║",
     "   ██║   ╚██████╔╝██║  ██║██████╔╝╚██████╔╝",
     "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝  ╚═════╝ ",
 ];
@@ -34,7 +37,6 @@ const TITLE_BIBLE: &[&str] = &[
     "██████╗ ██╗██████╗ ██╗     ███████╗",
     "██╔══██╗██║██╔══██╗██║     ██╔════╝",
     "██████╔╝██║██████╔╝██║     █████╗  ",
-    "██╔══██╗██║██╔══██╗██║     ██╔══╝  ",
     "██████╔╝██║██████╔╝███████╗███████╗",
     "╚═════╝ ╚═╝╚═════╝ ╚══════╝╚══════╝",
 ];
@@ -405,7 +407,7 @@ impl SplashView {
         // Prefer side-by-side ("TURBO  BIBLE" on one 6-row logo). Fall back
         // to stacked, then to plain text on narrow terminals.
         let combined_w = TITLE_TURBO[0].chars().count() + 2 + TITLE_BIBLE[0].chars().count();
-        if inner_w >= combined_w && avail >= 12 {
+        if inner_w >= combined_w && avail >= 10 {
             for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(
                     inner_w,
@@ -414,7 +416,7 @@ impl SplashView {
                     styles.title,
                 ));
             }
-        } else if inner_w >= TITLE_TURBO[0].chars().count() && avail >= 22 {
+        } else if inner_w >= TITLE_TURBO[0].chars().count() && avail >= 18 {
             for row in TITLE_TURBO.iter().chain(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(inner_w, styles.bg, row, styles.title));
             }
@@ -509,8 +511,6 @@ impl SplashView {
             Span::styled("\u{258F}", input_edge_left),
             Span::styled(filter_display.clone(), styles.filter),
         ];
-        let used_filter: usize =
-            2 + 1 + mode_label.chars().count() + 1 + 2 + 1 + filter_display.chars().count();
         let cursor_extra = if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
                 "\u{2588}",
@@ -520,13 +520,23 @@ impl SplashView {
         } else {
             0
         };
-        filter_row.push(Span::styled("\u{2595}", input_edge_right));
-        let trailing_edge = 1;
-        if (used_filter + cursor_extra + trailing_edge) < inner_w {
+        // Give the input a deliberate width (mode pill + a cushion) so the
+        // field doesn't pinch around short queries like "jo": pad the well's
+        // own background out to `well_target`, then close the right rim.
+        let well_target = mode_label.chars().count() + 32;
+        let well_used = filter_display.chars().count() + cursor_extra;
+        if well_used < well_target {
             filter_row.push(Span::styled(
-                " ".repeat(inner_w - used_filter - cursor_extra - trailing_edge),
-                styles.bg,
+                " ".repeat(well_target - well_used),
+                styles.filter,
             ));
+        }
+        filter_row.push(Span::styled("\u{2595}", input_edge_right));
+        // Lead = "  " + ▌ + mode + ▐ + "  " + ▏ = mode + 7; then the well and
+        // the closing ▕ (1). Fill the rest of the row with the desktop bg.
+        let used = mode_label.chars().count() + 7 + well_used.max(well_target) + 1;
+        if used < inner_w {
+            filter_row.push(Span::styled(" ".repeat(inner_w - used), styles.bg));
         }
         lines.push(Line::from(filter_row));
         lines.push(blank_line(inner_w, styles.bg));
@@ -612,7 +622,6 @@ impl SplashView {
 
         let entry_styles = EntryStyles {
             sel: styles.sel,
-            label: styles.label,
             dim: styles.dim,
             bg: styles.bg,
         };
@@ -858,7 +867,6 @@ fn left_padded(s: &str, width: usize) -> String {
 /// render pass and shared across every cell.
 struct EntryStyles {
     sel: Style,
-    label: Style,
     dim: Style,
     bg: Style,
 }
@@ -871,12 +879,7 @@ fn render_entry_cell(
     width: usize,
     styles: &EntryStyles,
 ) -> Vec<Span<'static>> {
-    let EntryStyles {
-        sel,
-        label,
-        dim,
-        bg,
-    } = *styles;
+    let EntryStyles { sel, dim, bg } = *styles;
     let Some(b) = book else {
         return vec![Span::styled(" ".repeat(width), bg)];
     };
@@ -885,7 +888,12 @@ fn render_entry_cell(
     // hints at it — avoids the "ghost cursor" effect.
     let is_cursor = idx == cursor_idx && column_has_focus;
 
-    let row_style = if is_cursor { sel } else { label };
+    // Non-cursor book names sit at light_grey, one step below the bright_white
+    // daily verse above the columns — so the verse reads as the second-
+    // strongest element after the title (bright_white is already the ceiling,
+    // so the hierarchy comes from dimming the picker, not brightening the verse).
+    // The cursor row stays full-bright on its cyan slab.
+    let row_style = if is_cursor { sel } else { dim };
     let mark_style = if is_cursor { sel } else { dim };
     let detail_style = if is_cursor { sel } else { dim };
 

@@ -30,10 +30,14 @@ impl Widget for PassageView<'_> {
         // VISUAL is loud (yellow), NORMAL subdued (the standard mode cyan). The
         // reading view is where mode matters most, so it gets a permanent cue.
         let visual = self.selection.is_some();
+        // Reading-view pills are *status indicators*, so they're quieter than
+        // the splash's NORMAL/FILTER *control* pills: no [ ] brackets, and
+        // NORMAL drops to dim teal (splash uses bright cyan). VISUAL keeps the
+        // louder yellow — an active selection mode warrants the attention.
         let (pill_text, pill_bg) = if visual {
-            ("[ VISUAL ]", theme::yellow())
+            (" VISUAL ", theme::yellow())
         } else {
-            ("[ NORMAL ]", theme::mode_pill_bg())
+            (" NORMAL ", theme::teal())
         };
         let pill = Line::from(Span::styled(
             pill_text,
