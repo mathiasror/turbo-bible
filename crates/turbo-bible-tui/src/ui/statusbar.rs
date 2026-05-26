@@ -16,6 +16,12 @@ pub struct Shortcut<'a> {
 /// Render shortcuts left-aligned. If `mode_tag` is non-empty, draw it
 /// right-aligned in an inverted block — vim-style mode pill.
 pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &str) {
+    // Clip to the backing buffer first — see the note in `menubar::render`: a
+    // 0-row frame would otherwise panic in the raw `buf[(x, area.y)]` loop.
+    let area = area.intersection(buf.area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let base = theme::menubar_style();
     let key = Style::new()
         .fg(theme::bright_white())
@@ -96,4 +102,28 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
     Paragraph::new(Line::from(spans))
         .style(base)
         .render(area, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression: see `menubar::render` — a 0-row frame buffer must not panic
+    // the raw per-cell loop. Exercise the empty mode tag too.
+    #[test]
+    fn render_into_degenerate_buffer_does_not_panic() {
+        let items = [Shortcut {
+            key: "F1",
+            action: "Help",
+        }];
+        for (w, h) in [(0u16, 0u16), (20, 0), (0, 1), (1, 1)] {
+            let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+            render(
+                &items,
+                Rect::new(0, 0, w.max(1), 1),
+                &mut buf,
+                "-- NORMAL --",
+            );
+        }
+    }
 }

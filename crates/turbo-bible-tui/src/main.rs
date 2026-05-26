@@ -647,7 +647,12 @@ fn draw_frame(
                 );
                 crate::ui::statusbar::render(
                     status,
-                    ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
+                    ratatui::layout::Rect::new(
+                        area.x,
+                        area.y + area.height.saturating_sub(1),
+                        area.width,
+                        1,
+                    ),
                     buf,
                     &mode_tag,
                 );
