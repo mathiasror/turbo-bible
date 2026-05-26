@@ -46,11 +46,9 @@ pub fn build_query(input: &str) -> String {
 /// Fails when the FTS5 MATCH or the `verse` join queries error.
 /// An empty `input` returns `Ok(vec![])` rather than an error.
 ///
-/// `_translation` is kept on the signature for callsite locality
-/// (search-by-translation is the obvious mental model) even though
-/// translation routing is now embedded in `db.conn()` (the active
-/// translation's own `Connection`).
-pub fn search(db: &Db, _translation: &str, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
+/// The active translation is implicit: queries run on `db.conn()` — the active
+/// translation's own `Connection`.
+pub fn search(db: &Db, input: &str, limit: usize) -> Result<Vec<SearchHit>> {
     let query = build_query(input);
     if query.is_empty() {
         return Ok(vec![]);
