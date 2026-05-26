@@ -15,7 +15,11 @@
 #   - Launch inside the Hide block so the gif opens already on the splash —
 #     no shell prompt or `./target/...` typing flashes in the final gif.
 
+# Emits two artifacts: demo/demo.gif (README hero) and website/demo.webm
+# (higher-quality VP9 for the turbo.bible landing page; READMEs only animate
+# gifs, but a <video> tag on the site can use webm).
 Output demo/demo.gif
+Output website/demo.webm
 
 Set Shell         "bash"
 Set FontSize      16

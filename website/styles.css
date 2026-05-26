@@ -446,6 +446,14 @@
     font-size: 15px;
   }
   .showcase .mini .verse .t { line-height: 1.6; }
+  .showcase .demo-video {
+    display: block;
+    max-width: 920px;
+    width: 100%;
+    height: auto;
+    margin: 12px auto 0;
+    box-shadow: 8px 8px 0 var(--shadow);
+  }
 
   /* ---------- value tiles ---------- */
   .tiles {
