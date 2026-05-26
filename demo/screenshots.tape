@@ -11,9 +11,8 @@
 Output demo/_screenshots-trace.gif
 
 Set Shell        "bash"
-Set FontSize     20
-Set Width        1400
-Set Height       800
+Set Width        1200
+Set Height       720
 Set Padding      18
 Set Theme        "Catppuccin Mocha"
 Set TypingSpeed  20ms
@@ -29,8 +28,11 @@ Enter
 Show
 
 # --- Launch -------------------------------------------------------------
+# Pin the translation: with XDG_CONFIG_HOME wiped, startup falls back to
+# "first translation in DB" — which is `de-menge` alphabetically, and the
+# "love" search later in the tape would return no matches.
 Hide
-Type "./target/release/turbo-bible"
+Type "./target/release/turbo-bible --translation en-kjv"
 Enter
 Show
 Sleep 2000ms
