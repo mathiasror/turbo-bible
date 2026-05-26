@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Turbo Vision–styled terminal Bible reader with FTS5 search."
 license.workspace = true
+homepage.workspace = true
 readme = "../../README.md"
 repository.workspace = true
 keywords = ["bible", "tui", "ratatui", "terminal", "turbo-vision"]
