@@ -13,9 +13,9 @@
 /// is verified against [`Self::sha256`] before being decompressed.
 #[allow(
     dead_code,
-    reason = "license / attribution / decompressed_size are read by future affordances \
-              (About dialog, disk-space warnings). The struct mirrors the JSON 1:1 so the \
-              build.rs codegen stays uniform."
+    reason = "license / attribution are read by future affordances (About dialog). \
+              decompressed_size is read by fetch::decode_and_verify; the struct \
+              mirrors the JSON 1:1 so the build.rs codegen stays uniform."
 )]
 pub struct TranslationManifestEntry {
     pub code: &'static str,

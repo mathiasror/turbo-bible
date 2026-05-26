@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -50,8 +51,14 @@ pub fn translation(translations_dir: &Path, code: &str) -> Result<()> {
     if dest.exists() {
         return Ok(());
     }
-    fetch_and_install(translations_dir, entry.file, entry.sha256, &dest)
-        .with_context(|| format!("fetch translation {}", entry.code))
+    fetch_and_install(
+        translations_dir,
+        entry.file,
+        entry.sha256,
+        entry.decompressed_size,
+        &dest,
+    )
+    .with_context(|| format!("fetch translation {}", entry.code))
 }
 
 /// Download the cross-references DB and install it as
@@ -67,13 +74,21 @@ pub fn xrefs(translations_dir: &Path) -> Result<()> {
 
 fn xrefs_with(translations_dir: &Path, entry: &XrefsManifestEntry) -> Result<()> {
     let dest = translations_dir.join("xrefs.db");
-    fetch_and_install(translations_dir, entry.file, entry.sha256, &dest).context("fetch xrefs.db")
+    fetch_and_install(
+        translations_dir,
+        entry.file,
+        entry.sha256,
+        entry.decompressed_size,
+        &dest,
+    )
+    .context("fetch xrefs.db")
 }
 
 fn fetch_and_install(
     translations_dir: &Path,
     asset_file: &str,
     expected_sha256: &str,
+    expected_decompressed_size: u64,
     final_path: &Path,
 ) -> Result<()> {
     fs::create_dir_all(translations_dir)
@@ -90,15 +105,12 @@ fn fetch_and_install(
 
     let compressed =
         fs::read(dl.path()).with_context(|| format!("read {}", dl.path().display()))?;
-    let decoded = zstd::decode_all(io::Cursor::new(&compressed))
-        .with_context(|| format!("decompress {asset_file}"))?;
-
-    let actual = hex_sha256(&decoded);
-    if !ct_eq(actual.as_bytes(), expected_sha256.as_bytes()) {
-        return Err(anyhow!(
-            "sha256 mismatch for {asset_file}: expected {expected_sha256}, got {actual}"
-        ));
-    }
+    let decoded = decode_and_verify(
+        &compressed,
+        expected_sha256,
+        expected_decompressed_size,
+        asset_file,
+    )?;
 
     // Stage the decompressed bytes into another tempfile (same dir
     // for atomic-rename), then move into place.
@@ -110,6 +122,44 @@ fn fetch_and_install(
         .persist(final_path)
         .with_context(|| format!("persist {}", final_path.display()))?;
     Ok(())
+}
+
+/// Decompress a downloaded zstd asset, enforcing the manifest's declared
+/// decompressed size as a hard ceiling — so a tampered or corrupt asset can't
+/// expand without bound (a zip bomb would OOM the process before the hash is
+/// ever checked) — then verify the SHA-256 of the result. The decoded bytes
+/// are returned only when both the size and the hash match.
+fn decode_and_verify(
+    compressed: &[u8],
+    expected_sha256: &str,
+    expected_decompressed_size: u64,
+    asset_file: &str,
+) -> Result<Vec<u8>> {
+    // Bound the reader one byte past the expected size: reading that extra
+    // byte means the asset is oversized (or the manifest is wrong), so the
+    // length check rejects it before we ever hash gigabytes.
+    let mut decoded = Vec::new();
+    zstd::Decoder::new(io::Cursor::new(compressed))
+        .with_context(|| format!("decompress {asset_file}"))?
+        .take(expected_decompressed_size.saturating_add(1))
+        .read_to_end(&mut decoded)
+        .with_context(|| format!("decompress {asset_file}"))?;
+    if decoded.len() as u64 != expected_decompressed_size {
+        return Err(anyhow!(
+            "{asset_file}: decompressed to {} bytes but the manifest declares {} \
+             (corrupt download or zip bomb)",
+            decoded.len(),
+            expected_decompressed_size
+        ));
+    }
+
+    let actual = hex_sha256(&decoded);
+    if !ct_eq(actual.as_bytes(), expected_sha256.as_bytes()) {
+        return Err(anyhow!(
+            "sha256 mismatch for {asset_file}: expected {expected_sha256}, got {actual}"
+        ));
+    }
+    Ok(decoded)
 }
 
 fn run_curl(url: &str, dest: &Path) -> Result<()> {
@@ -200,5 +250,38 @@ mod tests {
         assert!(ct_eq(b"abc", b"abc"));
         assert!(!ct_eq(b"abc", b"abd"));
         assert!(!ct_eq(b"abc", b"abcd"));
+    }
+
+    #[test]
+    fn decode_and_verify_accepts_matching_asset() {
+        let raw = b"the quick brown fox jumps over the lazy dog";
+        let compressed = zstd::encode_all(io::Cursor::new(&raw[..]), 0).expect("compress");
+        let sha = hex_sha256(raw);
+        let out = decode_and_verify(&compressed, &sha, raw.len() as u64, "t.db.zst")
+            .expect("matching size + sha");
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn decode_and_verify_rejects_oversize_decode() {
+        // Asset expands to 4096 bytes; the manifest claims 16. The bounded
+        // reader must trip the size check rather than decompressing unbounded.
+        let raw = vec![0u8; 4096];
+        let compressed = zstd::encode_all(io::Cursor::new(&raw[..]), 0).expect("compress");
+        let err = decode_and_verify(&compressed, &hex_sha256(&raw), 16, "bomb.db.zst")
+            .expect_err("oversize must be rejected");
+        assert!(
+            format!("{err}").contains("zip bomb") || format!("{err}").contains("decompressed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn decode_and_verify_rejects_sha_mismatch() {
+        let raw = b"genuine bytes";
+        let compressed = zstd::encode_all(io::Cursor::new(&raw[..]), 0).expect("compress");
+        let err = decode_and_verify(&compressed, &"0".repeat(64), raw.len() as u64, "x.db.zst")
+            .expect_err("sha mismatch must be rejected");
+        assert!(format!("{err}").contains("sha256 mismatch"), "got: {err}");
     }
 }
