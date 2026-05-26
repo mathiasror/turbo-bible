@@ -13,8 +13,10 @@ mod bookmark;
 mod bundled;
 mod config;
 mod db;
+mod fetch;
 mod install;
 mod keys;
+mod manifest;
 mod nav;
 mod paths;
 mod quote;
@@ -52,7 +54,7 @@ use crate::ui::goto::{GotoCommand, GotoDialog, GotoOutcome};
 use crate::ui::help::{HelpDialog, HelpOutcome};
 use crate::ui::splash::{SplashOutcome, SplashView};
 use crate::ui::statusbar::Shortcut;
-use crate::ui::translations::{TranslationsDialog, TranslationsOutcome};
+use crate::ui::translations::{PickerEntry, TranslationsDialog, TranslationsOutcome};
 
 enum Bg {
     // SplashView carries three Vec<Book>-derived fields, the QOTD, two
@@ -450,21 +452,30 @@ fn resolve_translation(
     translations_dir: &Path,
     cfg: &config::Config,
 ) -> Result<String> {
+    let installed = db::installed_codes(translations_dir)?;
+    // Explicit --translation overrides everything; the caller (Db::open_ro)
+    // will surface a clear error if it isn't installed.
     if let Some(t) = args.translation.as_ref() {
         return Ok(t.clone());
     }
-    if let Some(t) = cfg.default_translation.clone() {
-        return Ok(t);
+    // Config default only wins if the file's still there. A stale
+    // value (e.g. a translation the user has since deleted) falls
+    // through to the bundled default so the app starts cleanly.
+    if let Some(t) = &cfg.default_translation
+        && installed.iter().any(|c| c == t)
+    {
+        return Ok(t.clone());
     }
-    let mut codes = db::installed_codes(translations_dir)?;
-    if codes.is_empty() {
-        anyhow::bail!(
+    if installed.iter().any(|c| c == bundled::DEFAULT_TRANSLATION) {
+        return Ok(bundled::DEFAULT_TRANSLATION.to_string());
+    }
+    installed.first().cloned().ok_or_else(|| {
+        anyhow::anyhow!(
             "No translations installed in {}. Run `turbo-bible install --force` \
-             to extract the bundled translations.",
+             to extract the bundled default.",
             translations_dir.display()
-        );
-    }
-    Ok(codes.remove(0))
+        )
+    })
 }
 
 #[allow(
@@ -803,6 +814,44 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                     );
                     state.dialog = Dialog::None;
                 }
+                TranslationsOutcome::Download(code) => {
+                    // Blocks the event loop while curl fetches the
+                    // ~4 MB tarball, verifies sha256, and decompresses.
+                    // The dialog stays on screen until we close it
+                    // below; "Downloading…" affordances live as a
+                    // future enhancement (background thread + channel).
+                    let dir = ctx.db.translations_dir().to_path_buf();
+                    match fetch::translation(&dir, &code)
+                        .and_then(|()| ctx.db.add_translation(&code))
+                    {
+                        Ok(()) => {
+                            switch_translation(
+                                ctx.db,
+                                &mut state.books,
+                                &mut state.translation_label,
+                                &code,
+                                ctx.pos,
+                                ctx.passage,
+                                ctx.cursor_verse,
+                            )?;
+                            save_or_warn(
+                                ctx.warnings,
+                                "default-translation persist",
+                                persist_default_translation(&code),
+                            );
+                            update_splash_label(
+                                &mut state.last_label_for_splash,
+                                &state.books,
+                                ctx.pos,
+                                *ctx.cursor_verse,
+                            );
+                        }
+                        Err(e) => {
+                            ctx.warnings.push(format!("download {code} failed: {e}"));
+                        }
+                    }
+                    state.dialog = Dialog::None;
+                }
             }
             Ok(DispatchStep::Continue)
         }
@@ -846,7 +895,7 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
         }
         SplashOutcome::OpenTranslations => {
             state.dialog = Dialog::Translations(TranslationsDialog::new(
-                ctx.db.translations().to_vec(),
+                picker_entries(ctx.db),
                 ctx.db.translation(),
             ));
             Ok(DispatchStep::Continue)
@@ -970,7 +1019,7 @@ impl LoopState {
 
     fn open_translations_dialog(&mut self, ctx: &AppCtx) -> Result<()> {
         self.dialog = Dialog::Translations(TranslationsDialog::new(
-            ctx.db.translations().to_vec(),
+            picker_entries(ctx.db),
             ctx.db.translation(),
         ));
         Ok(())
@@ -1382,6 +1431,24 @@ fn repeat_search(
         chapter: h.chapter,
         verse: Some(h.verse),
     })
+}
+
+/// Build the picker entry list: every translation the binary knows
+/// about (from the static manifest), marked installed iff its `.db`
+/// is currently loaded in `db`.
+fn picker_entries(db: &Db) -> Vec<PickerEntry> {
+    use std::collections::HashSet;
+    let installed: HashSet<&str> = db.translations().iter().map(|t| t.code.as_str()).collect();
+    crate::manifest::TRANSLATIONS
+        .iter()
+        .map(|t| PickerEntry {
+            code: t.code.to_string(),
+            name: t.name.to_string(),
+            language: t.language.to_string(),
+            installed: installed.contains(t.code),
+            compressed_size: t.compressed_size,
+        })
+        .collect()
 }
 
 fn switch_translation(

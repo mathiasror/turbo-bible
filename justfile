@@ -70,14 +70,17 @@ data-build scrollmapper="data/scrollmapper-checkout" *args="":
 data-compress *args="":
     cargo run -p turbo-bible-data -- compress {{args}}
 
-# Build the data pipeline output and copy *.db.zst into the TUI's
-# assets/ dir so `include_bytes!` in src/bundled.rs has fresh inputs.
+# Build the data pipeline output and stage the TUI's assets/ dir so
+# build.rs + include_bytes! in src/bundled.rs have fresh inputs.
+# Only KJV is embedded in the binary; the manifest lets the binary
+# discover the rest at runtime and fetch from GitHub Releases.
 # Required before `cargo build -p turbo-bible` if assets/ is empty.
 bundle-translations scrollmapper="data/scrollmapper-checkout":
     cargo run -p turbo-bible-data --release -- build --scrollmapper {{scrollmapper}} --manifest data/manifest_source.toml
     cargo run -p turbo-bible-data --release -- compress
     mkdir -p crates/turbo-bible-tui/assets
-    cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+    cp dist/translations/en-kjv.db.zst crates/turbo-bible-tui/assets/
+    cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
 
 # Re-record the README demo GIF. Requires `vhs` (https://github.com/charmbracelet/vhs).
 demo:

@@ -77,13 +77,17 @@ jobs:
 
       - name: Bundle translations into TUI assets/
         shell: bash
+        # build.rs reads assets/manifest.json; bundled.rs embeds only
+        # en-kjv. The other translations + xrefs are uploaded as
+        # individual release assets below for the binary to fetch.
         run: |
           cargo run -p turbo-bible-data --release -- build \
             --scrollmapper data/scrollmapper-checkout \
             --manifest data/manifest_source.toml
           cargo run -p turbo-bible-data --release -- compress
           mkdir -p crates/turbo-bible-tui/assets
-          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/en-kjv.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
 
       - name: Install cross (linux-arm64 only)
         if: matrix.cross == true
@@ -122,6 +126,49 @@ jobs:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
 
+  upload-translations:
+    name: upload translations + xrefs assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone scrollmapper at pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: translations-assets
+
+      # Each <code>.db.zst (and xrefs.db.zst) lands as an individual
+      # release asset so the binary's fetch::translation can grab
+      # exactly the one it needs from
+      # `releases/v<tag>/download/<code>.db.zst`.
+      # translations.tar.gz bundles all 12 for install.sh to
+      # pre-fetch in one HTTP request, keeping the curl-install
+      # experience offline-from-the-jump.
+      - name: Build translation assets
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+          (cd dist/translations && tar -czf ../translations.tar.gz *.db.zst manifest.json)
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/translations/*.db.zst
+            dist/translations/manifest.json
+            dist/translations.tar.gz
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+
   publish-crate:
     name: publish to crates.io
     needs: build
@@ -148,7 +195,8 @@ jobs:
             --manifest data/manifest_source.toml
           cargo run -p turbo-bible-data --release -- compress
           mkdir -p crates/turbo-bible-tui/assets
-          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/en-kjv.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
 
       - name: cargo publish (turbo-bible)
         env:

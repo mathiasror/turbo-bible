@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, params};
@@ -24,6 +24,13 @@ use rusqlite::{Connection, OpenFlags, params};
 pub struct TranslationInfo {
     pub code: String,
     pub name: String,
+    #[expect(
+        dead_code,
+        reason = "loaded from the per-translation meta table for runtime inspection; \
+                  the static manifest carries the same field, which is what the \
+                  picker reads, but keeping this on the on-disk struct keeps the \
+                  two surfaces interchangeable for a future About dialog"
+    )]
     pub language: String,
     #[expect(
         dead_code,
@@ -157,13 +164,23 @@ const XREFS_SCHEMA: &str = "xrefs";
 #[derive(Debug)]
 pub struct Db {
     /// One Connection per installed translation. Each has its
-    /// `<code>.db` open as `main` and the shared `xrefs.db` ATTACHed
-    /// as `xrefs`. Keyed by translation code (`en-kjv`, not `en_kjv`).
+    /// `<code>.db` open as `main`; if `xrefs.db` is present it's
+    /// ATTACHed as `xrefs`. Keyed by translation code.
     conns: HashMap<String, Connection>,
-    /// Sorted by `code`. Built once at open from each per-translation
-    /// `meta` table; never re-queried.
+    /// Sorted by `code`. Built from each translation's `meta` table
+    /// as connections are opened (initially or via [`Db::add_translation`]).
     translations: Vec<TranslationInfo>,
     active_code: String,
+    /// Where `<code>.db` files live on disk. Stored so
+    /// [`Db::add_translation`] can resolve a code → path without the
+    /// caller threading the value through.
+    translations_dir: PathBuf,
+    /// Path to `xrefs.db` ATTACHed on every connection in
+    /// [`Self::conns`]. Always populated — when the real DB isn't on
+    /// disk, [`create_empty_xrefs_db`] seeds an empty stand-in so the
+    /// `xref_note_count` subquery in [`Self::load_passage`] keeps
+    /// resolving.
+    xrefs_path: PathBuf,
 }
 
 impl Db {
@@ -244,37 +261,29 @@ impl Db {
                 translations_dir.display()
             );
         }
-        let xrefs_path = xrefs_path.ok_or_else(|| {
-            anyhow!(
-                "{}/xrefs.db missing — run `turbo-bible install --force`",
-                translations_dir.display()
-            )
-        })?;
         translation_files.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Open one Connection per translation, each with xrefs ATTACHed.
+        // Every per-translation connection needs `xrefs.xref` ATTACHed
+        // because load_passage's `xref_note_count` subquery references
+        // it unconditionally. If the real xrefs.db isn't on disk, seed
+        // an empty stand-in so the ATTACH succeeds; load_xrefs() then
+        // returns 0 rows until fetch::xrefs replaces the file.
+        let xrefs_path = match xrefs_path {
+            Some(p) => p,
+            None => {
+                let p = translations_dir.join("xrefs.db");
+                create_empty_xrefs_db(&p)?;
+                p
+            }
+        };
+
         let mut conns: HashMap<String, Connection> = HashMap::new();
         let mut translations: Vec<TranslationInfo> = Vec::new();
         for (code, path) in &translation_files {
             let conn = open_translation_ro(path)
                 .with_context(|| format!("open {} (main)", path.display()))?;
             attach_ro(&conn, &xrefs_path, XREFS_SCHEMA)?;
-            let info: TranslationInfo = conn
-                .query_row(
-                    "SELECT code, name, language, license, attribution \
-                     FROM meta LIMIT 1",
-                    [],
-                    |r| {
-                        Ok(TranslationInfo {
-                            code: r.get(0)?,
-                            name: r.get(1)?,
-                            language: r.get(2)?,
-                            license: r.get(3)?,
-                            attribution: r.get(4)?,
-                        })
-                    },
-                )
-                .with_context(|| format!("read meta for {code}"))?;
+            let info = read_meta(&conn).with_context(|| format!("read meta for {code}"))?;
             if info.code != *code {
                 bail!(
                     "translations/{code}.db has meta.code = {:?} — file/meta mismatch",
@@ -302,9 +311,108 @@ impl Db {
             conns,
             translations,
             active_code: initial_translation.to_string(),
+            translations_dir: translations_dir.to_path_buf(),
+            xrefs_path,
         })
     }
 
+    /// Open and register a newly-downloaded translation. Idempotent —
+    /// a no-op if the code is already loaded.
+    ///
+    /// # Errors
+    /// Fails if `<code>.db` is missing under the translations dir or
+    /// has an inconsistent `meta` table.
+    pub fn add_translation(&mut self, code: &str) -> Result<()> {
+        if self.conns.contains_key(code) {
+            return Ok(());
+        }
+        let path = self.translations_dir.join(format!("{code}.db"));
+        let conn = open_translation_ro(&path)
+            .with_context(|| format!("open {} (main)", path.display()))?;
+        attach_ro(&conn, &self.xrefs_path, XREFS_SCHEMA)?;
+        let info = read_meta(&conn).with_context(|| format!("read meta for {code}"))?;
+        if info.code != code {
+            bail!(
+                "translations/{code}.db has meta.code = {:?} — file/meta mismatch",
+                info.code
+            );
+        }
+        self.translations.push(info);
+        self.translations.sort_by(|a, b| a.code.cmp(&b.code));
+        self.conns.insert(code.to_string(), conn);
+        Ok(())
+    }
+
+    /// ATTACH `xrefs.db` onto every translation connection. Used after
+    /// the xrefs DB has been downloaded post-startup.
+    ///
+    /// # Errors
+    /// Fails if the file can't be canonicalised or any ATTACH
+    /// statement errors out.
+    #[allow(
+        dead_code,
+        reason = "wired in once the K-popup learns to fetch xrefs on demand; \
+                  the empty stand-in keeps everything working until then"
+    )]
+    pub fn attach_xrefs(&mut self, xrefs_path: &Path) -> Result<()> {
+        for conn in self.conns.values() {
+            // Drop the empty stand-in (or a previously ATTACHed real
+            // file) before pointing at the new one.
+            conn.execute(&format!("DETACH DATABASE {XREFS_SCHEMA}"), [])
+                .context("DETACH xrefs (old)")?;
+            attach_ro(conn, xrefs_path, XREFS_SCHEMA)?;
+        }
+        self.xrefs_path = xrefs_path.to_path_buf();
+        Ok(())
+    }
+
+    /// `true` when the ATTACHed `xrefs.xref` table has any rows — i.e.
+    /// the real openbible.info data is on disk, not the install-time
+    /// empty stand-in. One short query per call; SQLite stops at the
+    /// first row so the cost is independent of table size.
+    #[must_use]
+    #[allow(
+        dead_code,
+        reason = "wired in once the K-popup surfaces a 'fetch cross-references' affordance"
+    )]
+    pub fn has_xrefs(&self) -> bool {
+        self.active_conn()
+            .query_row::<i64, _, _>(
+                &format!("SELECT 1 FROM {XREFS_SCHEMA}.xref LIMIT 1"),
+                [],
+                |r| r.get(0),
+            )
+            .is_ok()
+    }
+
+    /// The translations dir this `Db` was opened against. Useful for
+    /// the fetcher, which writes new `<code>.db` files next to the
+    /// existing ones.
+    #[must_use]
+    pub fn translations_dir(&self) -> &Path {
+        &self.translations_dir
+    }
+}
+
+fn read_meta(conn: &Connection) -> Result<TranslationInfo> {
+    conn.query_row(
+        "SELECT code, name, language, license, attribution \
+         FROM meta LIMIT 1",
+        [],
+        |r| {
+            Ok(TranslationInfo {
+                code: r.get(0)?,
+                name: r.get(1)?,
+                language: r.get(2)?,
+                license: r.get(3)?,
+                attribution: r.get(4)?,
+            })
+        },
+    )
+    .map_err(Into::into)
+}
+
+impl Db {
     /// "King James Version (1769)  ·  en-kjv" — the subtitle shown on splash.
     pub fn translation_label(&self) -> Result<String> {
         let info = self
@@ -481,6 +589,10 @@ impl Db {
     }
 
     fn load_xrefs(&self, book: &str, chapter: i64) -> Result<Vec<Xref>> {
+        // The empty xrefs.db stand-in (seeded at install) has the same
+        // schema as the real one, so this query returns Vec::new()
+        // naturally when the user hasn't fetched the real DB yet. No
+        // pre-check needed.
         // LEFT JOIN to_book's label table (in the active translation's
         // own `main` schema) so the UI can render localised
         // abbreviations without holding the full `books` list. Falls
@@ -560,39 +672,92 @@ fn attach_ro(conn: &Connection, path: &Path, alias: &str) -> Result<()> {
     Ok(())
 }
 
+/// Create an empty `xrefs.db` stand-in at `path` with the columns
+/// [`Db::load_passage`] queries against. Used as the seed at install
+/// time when no real xrefs DB is present yet: the file exists on
+/// disk so every per-translation connection can ATTACH it read-only
+/// like the real thing, and [`Db::load_xrefs`] returns 0 rows until
+/// [`fetch::xrefs`] replaces it atomically.
+///
+/// # Errors
+/// Propagates IO and SQLite open / CREATE TABLE failures.
+pub fn create_empty_xrefs_db(path: &Path) -> Result<()> {
+    let conn = Connection::open(path)
+        .with_context(|| format!("create empty xrefs.db at {}", path.display()))?;
+    conn.execute(
+        "CREATE TABLE xref (
+            from_book TEXT, from_chapter INT, from_verse INT,
+            to_book TEXT, to_chapter INT,
+            to_verse_start INT, to_verse_end INT,
+            votes INT
+        )",
+        [],
+    )
+    .context("create empty xref table")?;
+    Ok(())
+}
+
 /// Open a per-translation `.db` file read-only as a fresh
-/// `Connection`. Caller is responsible for ATTACHing `xrefs.db` if
-/// needed.
+/// `Connection`. Caller is responsible for ATTACHing `xrefs.db` (or
+/// an empty in-memory stand-in via [`attach_empty_xrefs`]).
+///
+/// We don't set `query_only=ON` because the empty in-memory xrefs
+/// stand-in needs writes during setup; per-attach readonly flags
+/// (`SQLITE_OPEN_READ_ONLY` on the main DB, `file://?mode=ro` on the
+/// real xrefs) already prevent on-disk modification.
 fn open_translation_ro(path: &Path) -> Result<Connection> {
-    let conn = Connection::open_with_flags(
+    Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .with_context(|| format!("opening {}", path.display()))?;
-    conn.pragma_update(None, "query_only", "ON")?;
-    Ok(conn)
+    .with_context(|| format!("opening {}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Decompress an extra `<code>.db.zst` into `dir` from the data
+    /// pipeline's output at `<workspace>/dist/translations/`. Used by
+    /// tests that need a translation other than the bundled KJV (and
+    /// `xrefs.db`). Returns `Ok(false)` if the source file is missing
+    /// — caller can use `#[ignore]` semantics to skip.
+    fn install_extra(dir: &Path, file: &str) -> Result<bool> {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| anyhow!("can't resolve workspace root"))?;
+        let src = workspace_root.join("dist/translations").join(file);
+        if !src.exists() {
+            return Ok(false);
+        }
+        let compressed = fs::read(&src).with_context(|| format!("read {}", src.display()))?;
+        let decoded = zstd::decode_all(std::io::Cursor::new(&compressed))
+            .with_context(|| format!("decompress {}", src.display()))?;
+        let stem = Path::new(file)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".zst"))
+            .ok_or_else(|| anyhow!("unexpected file name: {file}"))?;
+        fs::write(dir.join(stem), &decoded)?;
+        Ok(true)
+    }
+
     #[test]
-    fn open_ro_attaches_bundled_translations() {
-        // Stand up the install routine into a tempdir and then have
-        // Db::open_ro discover everything.
+    fn open_ro_attaches_bundled_default() {
+        // Fresh `cargo install` state: only KJV is extracted, xrefs
+        // is not yet present. Db should still open cleanly.
         let tmp = tempfile::tempdir().unwrap();
         crate::install::ensure_installed(tmp.path()).expect("install");
 
-        let db = Db::open_ro(tmp.path(), "en-bsb").expect("open_ro");
-        assert_eq!(db.translation(), "en-bsb");
-        assert!(db.translations().len() >= 11);
-        // Spot-check a known translation is in the cache.
-        assert!(db.translations().iter().any(|t| t.code == "la-clementine"));
+        let db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        assert_eq!(db.translation(), "en-kjv");
+        assert!(db.translations().iter().any(|t| t.code == "en-kjv"));
+        assert!(!db.has_xrefs(), "fresh install has no xrefs.db yet");
 
         let label = db.translation_label().expect("label");
-        assert!(label.contains("Berean Standard Bible"));
-        assert!(label.contains("en-bsb"));
+        assert!(label.contains("King James"));
+        assert!(label.contains("en-kjv"));
 
         let books = db.list_books().expect("list_books");
         assert_eq!(books.len(), 66);
@@ -604,29 +769,36 @@ mod tests {
                 .iter()
                 .any(|v| v.number == 16 && v.text.contains("God") && v.text.contains("world"))
         );
+        // No xrefs.db means an empty xref list — not an error.
+        assert!(passage.xrefs.is_empty());
     }
 
     #[test]
-    fn try_switch_translation_routes_to_per_connection_pool() {
+    fn add_translation_registers_a_new_db() {
         let tmp = tempfile::tempdir().unwrap();
         crate::install::ensure_installed(tmp.path()).expect("install");
-        let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
-        assert_eq!(db.translation(), "en-kjv");
+        if !install_extra(tmp.path(), "nb-1930.db.zst").expect("install_extra") {
+            eprintln!(
+                "skip: dist/translations/nb-1930.db.zst missing — run `just bundle-translations`"
+            );
+            return;
+        }
 
-        // John 1:1 in KJV begins with "In the beginning" (English).
-        let kjv = db.load_passage("JHN", 1).expect("John 1 (KJV)");
-        assert!(
-            kjv.verses[0].text.starts_with("In the beginning"),
-            "expected KJV JHN 1:1 in English, got {:?}",
-            kjv.verses[0].text
-        );
+        let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        assert!(db.translations().iter().any(|t| t.code == "en-kjv"));
+
+        // Capture the KJV verse before swapping — load_passage reads
+        // from whichever translation is active.
+        let kjv = db.load_passage("JHN", 1).expect("kjv John 1");
+
+        db.add_translation("nb-1930").expect("add_translation");
+        assert!(db.translations().iter().any(|t| t.code == "nb-1930"));
 
         let (_books, _label, nb_passage) = db
             .try_switch_translation("nb-1930", "JHN", 1)
             .expect("switch");
         assert_eq!(db.translation(), "nb-1930");
-        // Same reference, different language → wholly different bytes.
-        assert_ne!(kjv.verses[0].text, nb_passage.verses[0].text);
+        assert_ne!(nb_passage.verses[0].text, kjv.verses[0].text);
     }
 
     #[test]
@@ -636,7 +808,6 @@ mod tests {
         let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
         let err = db.try_switch_translation("xx-bogus", "JHN", 3).unwrap_err();
         assert!(format!("{err}").contains("xx-bogus"));
-        // Active stays unchanged.
         assert_eq!(db.translation(), "en-kjv");
     }
 
@@ -649,14 +820,28 @@ mod tests {
     }
 
     #[test]
-    fn load_xrefs_uses_shared_xrefs_schema() {
+    fn attach_xrefs_after_startup_enables_load() {
         let tmp = tempfile::tempdir().unwrap();
         crate::install::ensure_installed(tmp.path()).expect("install");
-        let db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
-        // John 3 should have plenty of cross-references in openbible.info
-        // data; the existing import test already asserts John 3:16
-        // alone has ≥20 xrefs.
-        let passage = db.load_passage("JHN", 3).expect("John 3");
+        // Skip when dist/ isn't populated.
+        if !install_extra(tmp.path(), "xrefs.db.zst").expect("install_extra") {
+            eprintln!(
+                "skip: dist/translations/xrefs.db.zst missing — run `just bundle-translations`"
+            );
+            return;
+        }
+        // Open WITHOUT xrefs first, then attach to verify the
+        // post-startup attach path used by the K-popup download flow.
+        let xrefs_target = tmp.path().join("xrefs.db");
+        let staged = tmp.path().join("xrefs.db.staged");
+        fs::rename(&xrefs_target, &staged).expect("hide xrefs");
+        let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        assert!(!db.has_xrefs());
+        assert!(db.load_passage("JHN", 3).expect("john 3").xrefs.is_empty());
+        fs::rename(&staged, &xrefs_target).expect("unhide");
+        db.attach_xrefs(&xrefs_target).expect("attach_xrefs");
+        assert!(db.has_xrefs());
+        let passage = db.load_passage("JHN", 3).expect("John 3 again");
         assert!(
             passage.xrefs.len() > 50,
             "expected lots of xrefs for John 3, got {}",

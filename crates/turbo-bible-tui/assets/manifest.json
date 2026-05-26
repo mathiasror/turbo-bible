@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "scrollmapper_commit": "a228a19a29099a41c196c2a310cd93e50a390e30",
+  "built_at": 1779453221,
+  "translations": [
+    {
+      "code": "de-menge",
+      "name": "Menge-Bibel (1939)",
+      "language": "de",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "de-menge.db.zst",
+      "sha256": "e4b1a1da67852250263360742adc706e79b40ea13ecb5e73c27c3cf847c40f27",
+      "compressed_size": 5087548,
+      "decompressed_size": 13701120,
+      "verse_count": 31172
+    },
+    {
+      "code": "en-asv",
+      "name": "American Standard Version (1901)",
+      "language": "en",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "en-asv.db.zst",
+      "sha256": "e06b06316350451a364a6b9a14fbd28f904631f12e08b134e6373f8142c8f11e",
+      "compressed_size": 4278226,
+      "decompressed_size": 12365824,
+      "verse_count": 31102
+    },
+    {
+      "code": "en-bsb",
+      "name": "Berean Standard Bible",
+      "language": "en",
+      "license": "CC0-1.0",
+      "attribution": "",
+      "file": "en-bsb.db.zst",
+      "sha256": "d7ef510988394856384d5a4331c839caf4190141831e541d19908ce36fb27ec3",
+      "compressed_size": 4202714,
+      "decompressed_size": 11853824,
+      "verse_count": 31102
+    },
+    {
+      "code": "en-drc",
+      "name": "Douay-Rheims-Challoner",
+      "language": "en",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "en-drc.db.zst",
+      "sha256": "f3c78241548f48bb62b512472c4f0df1f0b6cff7340f1b61345c13704c2fd5b1",
+      "compressed_size": 4308479,
+      "decompressed_size": 12361728,
+      "verse_count": 31442
+    },
+    {
+      "code": "en-kjv",
+      "name": "King James Version (1769)",
+      "language": "en",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "en-kjv.db.zst",
+      "sha256": "091d9849bf93f2f0b91f263d6356357bbdc9d4e909f19a7c4906b8d63fd2b23f",
+      "compressed_size": 4287388,
+      "decompressed_size": 12390400,
+      "verse_count": 31102
+    },
+    {
+      "code": "en-ylt",
+      "name": "Young's Literal Translation (1898)",
+      "language": "en",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "en-ylt.db.zst",
+      "sha256": "738185e9f94af17cb9d5d1b191c591797103bcd3c8d28329d61def340b25f7d1",
+      "compressed_size": 4279242,
+      "decompressed_size": 12480512,
+      "verse_count": 31102
+    },
+    {
+      "code": "es-rv1909",
+      "name": "Reina-Valera 1909",
+      "language": "es",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "es-rv1909.db.zst",
+      "sha256": "454b24441d3382f0d26cca65d17790e046d4fc0b9fd9cd32c066666f59ccdb7a",
+      "compressed_size": 4267172,
+      "decompressed_size": 11489280,
+      "verse_count": 31102
+    },
+    {
+      "code": "fr-crampon",
+      "name": "La Bible Crampon (1923)",
+      "language": "fr",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "fr-crampon.db.zst",
+      "sha256": "6430d3406d5e52252175e7b0d32bd168cec4d8bc3448d95d61b7a058aadbf6e5",
+      "compressed_size": 4623658,
+      "decompressed_size": 12681216,
+      "verse_count": 31473
+    },
+    {
+      "code": "la-clementine",
+      "name": "Clementine Vulgate (1592)",
+      "language": "la",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "la-clementine.db.zst",
+      "sha256": "9c0bbd6f2e6845cbdc02d8e46ea3231554bc5c54d06c25bcdaee59f724051731",
+      "compressed_size": 4161593,
+      "decompressed_size": 10821632,
+      "verse_count": 31442
+    },
+    {
+      "code": "nb-1930",
+      "name": "Bibelen 1930 (Bokmål)",
+      "language": "nb",
+      "license": "LicenseRef-PublicDomain",
+      "attribution": "",
+      "file": "nb-1930.db.zst",
+      "sha256": "ef1e19cfb2b428173914ef78e2d69541a0fba576381b48810f22e310e4c5d8bf",
+      "compressed_size": 4266789,
+      "decompressed_size": 11735040,
+      "verse_count": 31102
+    },
+    {
+      "code": "pt-blivre",
+      "name": "Bíblia Livre",
+      "language": "pt",
+      "license": "CC-BY-3.0",
+      "attribution": "Bíblia Livre — Creative Commons Attribution 3.0 Brazil",
+      "file": "pt-blivre.db.zst",
+      "sha256": "523c67a5a52074edca3eda173c2ac3be5ba7d36527f7026d8580b5782e0082ec",
+      "compressed_size": 4324107,
+      "decompressed_size": 11501568,
+      "verse_count": 31104
+    }
+  ],
+  "xrefs": {
+    "file": "xrefs.db.zst",
+    "sha256": "909c0483ef35bf0a70770f11c64255d51c80359fe06fb06defdc1ed4fc8acdfc",
+    "compressed_size": 6546162,
+    "decompressed_size": 30593024
+  }
+}

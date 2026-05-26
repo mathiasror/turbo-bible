@@ -106,6 +106,36 @@ fi
 cyan "→ installing to $install_dir/turbo-bible"
 install -m 0755 "$bin_src" "$install_dir/turbo-bible"
 
+# ── pre-fetch the translation pack ────────────────────────────────────
+# The binary ships with only KJV embedded; everything else is fetched
+# on demand. Pulling translations.tar.gz here keeps the curl-install
+# user offline-from-the-jump — no first-launch network round trip.
+# XDG_DATA_HOME defaults to ~/.local/share on Linux/macOS; the binary
+# resolves the same path via etcetera.
+data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/turbo-bible/translations"
+mkdir -p "$data_dir"
+if [ "$VERSION" = "latest" ]; then
+  pack_url="https://github.com/$REPO/releases/latest/download/translations.tar.gz"
+else
+  pack_url="https://github.com/$REPO/releases/download/$VERSION/translations.tar.gz"
+fi
+cyan "→ pre-fetching translations (~52 MB)"
+pack="$tmp/translations.tar.gz"
+if curl --proto '=https' --tlsv1.2 -fL "$pack_url" -o "$pack" 2>/dev/null; then
+  cyan "→ staging into $data_dir"
+  tar -xzf "$pack" -C "$tmp"
+  # Stage .db.zst files next to the binary's data dir; the binary's
+  # first-launch install pass picks them up, decompresses, and
+  # removes the .zst (see install::extract_into).
+  cp "$tmp"/*.db.zst "$data_dir/" 2>/dev/null || true
+  yellow ""
+  yellow "Translations staged. They'll decompress on first launch."
+else
+  yellow ""
+  yellow "Translation pre-fetch failed (offline?). The binary will"
+  yellow "download translations on demand from the Translations picker."
+fi
+
 # ── post-install hints ────────────────────────────────────────────────
 case ":$PATH:" in
   *:"$install_dir":*) ;;
