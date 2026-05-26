@@ -43,6 +43,9 @@ rust-review.md
 # Claude Code scheduler runtime lock — per-session, never shared.
 .claude/scheduled_tasks.lock
 
+# Claude Code per-session git worktrees (agent isolation scratch dirs).
+.claude/worktrees/
+
 # rustc will dump stack traces when hitting an internal compiler error to PWD
 rustc-ice-*.txt
 
