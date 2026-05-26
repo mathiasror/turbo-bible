@@ -474,6 +474,11 @@ mod tests {
             .map(|v: toml::Value| v["c"].clone().try_into::<HexColor>().unwrap())
             .unwrap();
         assert_eq!((with.r, with.g, with.b), (0, 0, 0xaa));
+        // The leading '#' is optional — `strip_prefix('#').unwrap_or(&raw)`.
+        let without: HexColor = toml::from_str("c = \"0000aa\"\n")
+            .map(|v: toml::Value| v["c"].clone().try_into::<HexColor>().unwrap())
+            .unwrap();
+        assert_eq!((without.r, without.g, without.b), (0, 0, 0xaa));
     }
 
     #[test]
