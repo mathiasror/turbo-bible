@@ -69,14 +69,37 @@ pub struct BookmarkStore {
 }
 
 impl BookmarkStore {
-    pub fn load() -> Self {
+    /// Load the bookmark store. A present-but-unparsable `bookmarks.toml` is
+    /// surfaced via `warnings` (replayed to stderr after the TUI exits) rather
+    /// than silently discarded — otherwise the user loses their bookmarks from
+    /// view and the next save overwrites the file. Warnings are collected, not
+    /// printed, because this runs while the alternate screen is active.
+    pub fn load(warnings: &mut Vec<String>) -> Self {
         // Preferred: TOML.
-        if let Ok(path) = bookmarks_path()
-            && let Ok(txt) = fs::read_to_string(&path)
-            && let Ok(mut s) = toml::from_str::<Self>(&txt)
-        {
-            s.rewrite_legacy_translation();
-            return s;
+        if let Ok(path) = bookmarks_path() {
+            match fs::read_to_string(&path) {
+                Ok(txt) => match toml::from_str::<Self>(&txt) {
+                    Ok(mut s) => {
+                        s.rewrite_legacy_translation();
+                        return s;
+                    }
+                    Err(e) => {
+                        warnings.push(format!(
+                            "bookmarks.toml is unparsable ({e}); starting with no \
+                             bookmarks — it will be overwritten on the next change"
+                        ));
+                        return Self::default();
+                    }
+                },
+                // No TOML file yet — fall through to the legacy JSON migration.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    warnings.push(format!(
+                        "could not read bookmarks.toml ({e}); starting with no bookmarks"
+                    ));
+                    return Self::default();
+                }
+            }
         }
         // Fallback: legacy JSON file from v1.
         if let Ok(legacy) = legacy_bookmarks_path()

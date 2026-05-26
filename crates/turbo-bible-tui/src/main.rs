@@ -566,7 +566,7 @@ impl LoopState {
             ))),
             None => Bg::Reading,
         };
-        let bookmarks = bookmark::BookmarkStore::load();
+        let bookmarks = bookmark::BookmarkStore::load(warnings);
         // Persist the migrated bookmarks immediately so the file on disk is
         // in the new TOML format with translation rewritten — survives a
         // crash before any user action triggers another save.
