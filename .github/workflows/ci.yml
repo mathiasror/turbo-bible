@@ -45,6 +45,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Bundle translations into TUI assets/
+        # build.rs reads assets/manifest.json; bundled.rs embeds only
+        # en-kjv. Always copy the freshly-built manifest alongside the
+        # .db.zst — the data pipeline isn't bit-deterministic across
+        # machines, so the committed manifest.json's sha256 fields
+        # won't match a CI-rebuilt en-kjv.db.zst.
         run: |
           cargo run -p turbo-bible-data --release -- build \
             --scrollmapper data/scrollmapper-checkout \
@@ -52,6 +57,7 @@ jobs:
           cargo run -p turbo-bible-data --release -- compress
           mkdir -p crates/turbo-bible-tui/assets
           cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
