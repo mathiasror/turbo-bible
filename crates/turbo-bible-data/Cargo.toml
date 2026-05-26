@@ -13,6 +13,9 @@ publish = false
 name = "turbo-bible-data"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
