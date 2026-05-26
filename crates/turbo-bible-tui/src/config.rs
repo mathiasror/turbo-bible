@@ -107,6 +107,13 @@ impl Default for ReadingConfig {
     }
 }
 
+/// Clamp bounds for `reading.max_width`, applied on load so an out-of-range
+/// value (hand-edited, or a future bug) can't overflow the pane-layout
+/// arithmetic in [`crate::ui`]'s `body_layout`, and can't shrink the reading
+/// pane to something unusable.
+const MIN_READING_WIDTH: u16 = 20;
+const MAX_READING_WIDTH: u16 = 400;
+
 // --------------------------- Theme ---------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,10 +390,15 @@ pub fn load() -> Config {
     for key in &dropped {
         eprintln!("warning: config.toml: removed key `{key}` ignored (see CHANGELOG)");
     }
-    toml::from_str(&migrated).unwrap_or_else(|e| {
+    let mut cfg: Config = toml::from_str(&migrated).unwrap_or_else(|e| {
         eprintln!("config.toml: {e}; using defaults");
         Config::default()
-    })
+    });
+    cfg.reading.max_width = cfg
+        .reading
+        .max_width
+        .clamp(MIN_READING_WIDTH, MAX_READING_WIDTH);
+    cfg
 }
 
 /// Strip lines that assign to keys we've removed in past versions, so
