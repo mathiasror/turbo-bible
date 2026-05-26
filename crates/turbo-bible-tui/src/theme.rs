@@ -25,6 +25,9 @@ pub fn blue() -> Color {
 pub fn cyan() -> Color {
     theme().cyan.to_color()
 }
+pub fn mid_cyan() -> Color {
+    theme().mid_cyan.to_color()
+}
 pub fn bright_cyan() -> Color {
     theme().bright_cyan.to_color()
 }

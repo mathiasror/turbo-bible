@@ -18,6 +18,7 @@
 //! [theme]
 //! blue         = "#0000aa"
 //! cyan         = "#00aaaa"
+//! mid_cyan     = "#2ad4d4"
 //! bright_cyan  = "#55ffff"
 //! teal         = "#006a6a"
 //! input_teal   = "#005f5f"
@@ -113,6 +114,11 @@ impl Default for ReadingConfig {
 pub struct ThemeConfig {
     pub blue: HexColor,
     pub cyan: HexColor,
+    /// Mid cyan (#2ad4d4) — structural labels (sidebar section headers + verse
+    /// anchor) that must out-rank dim entries without using the electric
+    /// `bright_cyan`, which would fight the sidebar's deliberately subordinate
+    /// framing.
+    pub mid_cyan: HexColor,
     /// Brightest cyan — visual-mode selection range only (the loudest slab).
     pub bright_cyan: HexColor,
     /// Darker teal — reading cursor-verse fill (toned down from `cyan`).
@@ -134,6 +140,7 @@ impl Default for ThemeConfig {
         Self {
             blue: HexColor::new(0, 0, 170),
             cyan: HexColor::new(0, 170, 170),
+            mid_cyan: HexColor::new(42, 212, 212),
             bright_cyan: HexColor::new(85, 255, 255), // #55ffff CGA bright cyan
             teal: HexColor::new(0, 106, 106),         // #006a6a cursor row
             input_teal: HexColor::new(0, 95, 95),     // #005f5f input wells

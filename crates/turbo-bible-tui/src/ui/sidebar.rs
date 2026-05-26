@@ -27,9 +27,11 @@ impl Widget for SidebarView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         theme::draw_shadow(buf, area);
 
-        // Subordinate the sidebar visually: dim border + dim title so the
-        // reading pane is unambiguously the primary surface. Single-line
-        // border (vs the reading pane's double) further demotes it.
+        // Subordinate the sidebar visually: a dim dark_grey border + dim title
+        // so the reading pane — same single-line frame, but a bright_white
+        // border — stays the unambiguous primary surface. The demotion is
+        // carried by border COLOUR; both panes use a single-line frame (only
+        // the modal dialogs use the heavier double border).
         let title = " References ";
         let block = Block::default()
             .borders(Borders::ALL)
@@ -70,20 +72,27 @@ fn build_lines(
     let bg = Style::new().bg(theme::blue());
     let body = Style::new().fg(theme::bright_white()).bg(theme::blue());
     let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
+    // Section labels ("Parallel passage", "Footnotes", "Cross-references") —
+    // mid cyan: bright enough to anchor the eye and out-rank the dim xref
+    // entries, but not the electric `bright_cyan` (reserved for the visual-mode
+    // selection), so the panel still reads as subordinate to the scripture
+    // pane. The wide gap down to the teal entries (see `xref_style`) is what
+    // gives the sidebar its scan hierarchy.
     let header = Style::new()
-        .fg(theme::cyan())
+        .fg(theme::mid_cyan())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    // Verse-label heading (e.g. "John 3:16") — a medium-emphasis cyan
-    // structural anchor. Yellow is reserved for the scripture pane (verse
-    // numbers, mode pills); the sidebar carries no yellow.
+    // Verse-label heading (e.g. "John 3:16") — the panel's subject line, on the
+    // same mid-cyan structural tier as the section headers (its position at the
+    // top, not a separate colour, sets it apart). Yellow is reserved for the
+    // scripture pane (verse numbers, mode pills); the sidebar carries no yellow.
     let accent = Style::new()
-        .fg(theme::cyan())
+        .fg(theme::mid_cyan())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    // Cross-reference entries — dim cyan (teal), one tier below the cyan
-    // section labels, and no underline: DOS/Turbo Vision TUIs never
-    // underlined whole entries (the `→` arrow already signals navigability).
+    // Cross-reference entries — dim cyan (teal), well below the mid-cyan section
+    // labels, and no underline: DOS/Turbo Vision TUIs never underlined whole
+    // entries (the `→` arrow already signals navigability).
     let xref_style = Style::new().fg(theme::teal()).bg(theme::blue());
 
     let mut lines: Vec<Line<'static>> = Vec::new();

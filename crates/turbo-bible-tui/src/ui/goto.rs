@@ -91,7 +91,11 @@ impl GotoDialog {
 
     pub fn render(&self, outer: Rect, buf: &mut Buffer, books: &[Book]) {
         let w: u16 = 60;
-        let h: u16 = 9;
+        // 5 content rows (blank, input, preview, blank, footer) + 2 border rows.
+        // The preview sits flush under the input — its live feedback on what you
+        // typed — mirroring Find's input→hint adjacency and trimming the dialog's
+        // former empty vertical slack.
+        let h: u16 = 7;
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_modal_dialog(outer, area, "Goto reference", buf);
 
@@ -138,7 +142,6 @@ impl GotoDialog {
         let lines = vec![
             Line::from(blank.clone()),
             Line::from(input_line),
-            Line::from(blank.clone()),
             Line::from(vec![
                 Span::styled("  ", Style::new().bg(theme::blue())),
                 Span::styled(

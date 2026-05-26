@@ -60,9 +60,11 @@ pub fn render_passage(
         .add_modifier(Modifier::BOLD);
     // Three-tier row palette, period-correct Turbo Vision:
     //   idle:     blue pane bg, light_grey body, full yellow num
-    //   cursor:   darker-teal bg, bright_white BOLD body; the verse NUMBER is
-    //             inverse-video (teal-on-yellow) so the position pops while
-    //             every other number keeps the yellow scanning rhythm
+    //   cursor:   darker-teal bg, bright_white body — NOT bold: a bold white
+    //             slab drew too much attention against the calm pane. The teal
+    //             fill, the ▸ gutter arrow, and the inverse-video yellow number
+    //             chip already mark the active row, so the body stays
+    //             regular-weight (still bright_white, so it reads as active).
     //   selected: brightest-cyan slab, black BOLD body/num — the classic TV
     //             reverse-video selection, and the loudest row in the pane
     let verse_num_style = |kind: RowKind| match kind {
@@ -82,8 +84,7 @@ pub fn render_passage(
     let verse_text_style = |kind: RowKind| match kind {
         RowKind::Cursor => Style::new()
             .fg(theme::bright_white())
-            .bg(theme::cursor_row_bg())
-            .add_modifier(Modifier::BOLD),
+            .bg(theme::cursor_row_bg()),
         RowKind::Selected => Style::new()
             .fg(theme::black())
             .bg(theme::selection_bg())

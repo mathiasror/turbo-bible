@@ -58,8 +58,8 @@ const ROWS: &[Row] = &[
     Entry("K", "footnote / cross-ref popup"),
     Section("Dialogs"),
     Entry("F1", "this help"),
-    Entry("F2  :", "Goto reference  (e.g. John 3:16)"),
-    Entry("F3  /", "Find  (FTS5 search)"),
+    Entry("F2  :", "Goto reference (e.g. John 3:16)"),
+    Entry("F3  /", "Find (FTS5 search)"),
     Entry("n  N", "repeat last find forward / backward"),
     Entry("F4  M", "Bookmarks"),
     Entry("F5  t", "Translations"),
@@ -249,11 +249,56 @@ impl HelpDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
 
     /// Tokens that have been removed from the runtime keymap. If you remove
     /// a binding from `src/keys.rs`, add it here so the help table can't
     /// silently lag behind.
     const REMOVED_KEYS: &[&str] = &["T"];
+
+    /// The cheat sheet is a two-column grid: a fixed-width key field then a
+    /// description. Every entry's description must begin at the same buffer
+    /// column so the table reads as one grid with no per-section drift. Keys
+    /// render yellow and descriptions bright_white, so we locate each column
+    /// by style. Guards against a future key string outgrowing the key field
+    /// (which would silently shove that one row's description to the right).
+    #[test]
+    fn entry_descriptions_share_one_column() {
+        let dlg = HelpDialog::new();
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf);
+
+        let yellow = theme::yellow();
+        let white = theme::bright_white();
+
+        let mut cols: Vec<(u16, u16)> = Vec::new();
+        for y in area.top()..area.bottom() {
+            // Only entry rows carry a yellow key cell (section headers are cyan;
+            // the footer is white/grey, with no yellow).
+            let has_key = (area.left()..area.right()).any(|x| buf[(x, y)].fg == yellow);
+            if !has_key {
+                continue;
+            }
+            // The description's first glyph is a letter; the white left border
+            // (║) and any white padding are skipped by the alphabetic test.
+            if let Some(col) = (area.left()..area.right()).find(|&x| {
+                let c = &buf[(x, y)];
+                c.fg == white && c.symbol().chars().next().is_some_and(char::is_alphabetic)
+            }) {
+                cols.push((y, col));
+            }
+        }
+
+        assert!(!cols.is_empty(), "no entry rows detected");
+        let first = cols[0].1;
+        let drift: Vec<_> = cols.iter().filter(|(_, c)| *c != first).collect();
+        assert!(
+            drift.is_empty(),
+            "entry descriptions drift from column {first}: {drift:?}",
+        );
+    }
 
     #[test]
     fn keep_with_next_never_orphans_a_section_header() {
