@@ -365,40 +365,62 @@ fn config_path() -> Result<PathBuf> {
     Ok(p)
 }
 
-pub fn load() -> Config {
+/// Load config, collecting any warnings (unreadable file, dropped legacy keys,
+/// parse error) into the returned `Vec` instead of printing them. The shared
+/// core behind [`load`] (which prints) and [`load_quiet`] (which doesn't).
+fn load_collecting() -> (Config, Vec<String>) {
+    let mut warnings: Vec<String> = Vec::new();
     let Ok(path) = config_path() else {
-        return Config::default();
+        return (Config::default(), warnings);
     };
     let txt = match fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // No config yet — silent default; the first save will create one.
-            return Config::default();
+            return (Config::default(), warnings);
         }
         Err(e) => {
             // File present but unreadable (permissions, IO error, …) — the
-            // user expected their settings to apply. Surface the reason
-            // before falling back to defaults.
-            eprintln!(
-                "warning: could not read {}: {e}; using defaults",
+            // user expected their settings to apply, so record the reason.
+            warnings.push(format!(
+                "could not read {}: {e}; using defaults",
                 path.display()
-            );
-            return Config::default();
+            ));
+            return (Config::default(), warnings);
         }
     };
     let (migrated, dropped) = migrate_legacy(&txt);
     for key in &dropped {
-        eprintln!("warning: config.toml: removed key `{key}` ignored (see CHANGELOG)");
+        warnings.push(format!(
+            "config.toml: removed key `{key}` ignored (see CHANGELOG)"
+        ));
     }
     let mut cfg: Config = toml::from_str(&migrated).unwrap_or_else(|e| {
-        eprintln!("config.toml: {e}; using defaults");
+        warnings.push(format!("config.toml: {e}; using defaults"));
         Config::default()
     });
     cfg.reading.max_width = cfg
         .reading
         .max_width
         .clamp(MIN_READING_WIDTH, MAX_READING_WIDTH);
+    (cfg, warnings)
+}
+
+/// Load config, printing any warnings to stderr. Use before the alternate
+/// screen is entered (startup) or after it's torn down (quit).
+pub fn load() -> Config {
+    let (cfg, warnings) = load_collecting();
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
     cfg
+}
+
+/// Load config without printing — for the in-event-loop reload path, where an
+/// `eprintln!` would corrupt the alternate screen. A read/parse failure yields
+/// defaults silently (the caller is about to rewrite the file regardless).
+pub fn load_quiet() -> Config {
+    load_collecting().0
 }
 
 /// Strip lines that assign to keys we've removed in past versions, so

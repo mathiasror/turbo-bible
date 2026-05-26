@@ -1523,7 +1523,9 @@ fn switch_translation(
 }
 
 fn persist_default_translation(code: &str) -> Result<()> {
-    let mut cfg = config::load();
+    // load_quiet (not load): this runs inside the event loop, so a config-read
+    // warning must not eprintln over the alternate screen.
+    let mut cfg = config::load_quiet();
     cfg.default_translation = Some(code.to_string());
     config::save(&cfg)
 }
