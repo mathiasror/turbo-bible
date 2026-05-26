@@ -183,6 +183,18 @@ pub fn render_passage(
                 "\u{25B8}",
                 Style::new().fg(fg).bg(row_bg).add_modifier(Modifier::BOLD),
             )
+        } else if kind == RowKind::Selected
+            && selection
+                .is_some_and(|(s, e)| s != e && v.number == if cursor_verse == s { e } else { s })
+        {
+            // Anchor (fixed) end of a multi-verse selection — a subtle ┃ tick so
+            // it reads as distinct from the moving cursor (▸) end.
+            (
+                "\u{2503}",
+                Style::new()
+                    .fg(theme::dark_grey())
+                    .bg(theme::selection_bg()),
+            )
         } else if kind == RowKind::Selected {
             (" ", Style::new().bg(theme::selection_bg()))
         } else if bookmarked.contains(&v.number) {
@@ -434,19 +446,32 @@ mod render_tests {
     }
 
     #[test]
-    fn selection_gutter_is_blank_while_cursor_keeps_arrow() {
-        // Selection rows leave the gutter blank — the bright_cyan row fill
-        // already marks the extent, so a separate ▎ tick on top reads as
-        // clutter. The cursor inside the selection still shows ▸.
+    fn selection_marks_anchor_and_cursor_distinctly() {
+        // Multi-verse selection 2..4 with the cursor (head) at 4: verse 4 keeps
+        // ▸, the anchor end (2) gets a subtle ┃ tick, and the interior (3) stays
+        // blank — the bright_cyan fill marks the extent, so a tick there would
+        // be clutter.
         let p = passage_with(
             vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma"), v(4, "delta")],
             vec![],
         );
         let bookmarked = BTreeSet::new();
         let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, 80);
-        assert_eq!(gutter_glyph(line_for_verse(&lines, 2)), " ");
-        assert_eq!(gutter_glyph(line_for_verse(&lines, 3)), " ");
-        assert_eq!(gutter_glyph(line_for_verse(&lines, 4)), CURSOR_GLYPH);
+        assert_eq!(
+            gutter_glyph(line_for_verse(&lines, 2)),
+            "\u{2503}",
+            "anchor end carries the ┃ tick",
+        );
+        assert_eq!(
+            gutter_glyph(line_for_verse(&lines, 3)),
+            " ",
+            "interior blank"
+        );
+        assert_eq!(
+            gutter_glyph(line_for_verse(&lines, 4)),
+            CURSOR_GLYPH,
+            "cursor head"
+        );
     }
 
     #[test]

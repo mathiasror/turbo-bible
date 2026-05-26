@@ -494,7 +494,7 @@ impl SplashView {
         let filter_display = if self.filter.is_empty() {
             match self.mode {
                 SplashMode::Filter => " (type to filter) ".to_string(),
-                SplashMode::Normal => " /  to filter ".to_string(),
+                SplashMode::Normal => " press / to filter ".to_string(),
             }
         } else {
             format!(" {} ", self.filter)

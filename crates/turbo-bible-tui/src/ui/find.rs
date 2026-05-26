@@ -269,41 +269,33 @@ impl FindDialog {
         while lines.len() < (inner.height as usize).saturating_sub(2) {
             lines.push(blank());
         }
-        lines.push(Line::from(vec![
-            Span::styled(
-                "  Enter ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "jump   ",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-            Span::styled(
-                "↑↓ ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "navigate   ",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-            Span::styled(
-                "Esc ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "cancel",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-        ]));
+        let key_f = Style::new()
+            .fg(theme::bright_white())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
+        let dim_f = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        let mut footer = vec![
+            Span::styled("  Enter ", key_f),
+            Span::styled("jump   ", dim_f),
+            Span::styled("\u{2191}\u{2193} ", key_f),
+            Span::styled("navigate   ", dim_f),
+            Span::styled("Esc ", key_f),
+            Span::styled("cancel", dim_f),
+        ];
+        // Right-aligned position readout ("3 of 50") so the user can tell
+        // whether the wanted verse is in range or the query needs refining.
+        if !self.results.is_empty() {
+            let count = format!("{} of {} ", self.selected + 1, self.results.len());
+            let used: usize = footer.iter().map(|s| s.content.chars().count()).sum();
+            let pad = (inner.width as usize)
+                .saturating_sub(used)
+                .saturating_sub(count.chars().count());
+            if pad > 0 {
+                footer.push(Span::styled(" ".repeat(pad), bg));
+            }
+            footer.push(Span::styled(count, ref_style));
+        }
+        lines.push(Line::from(footer));
 
         Paragraph::new(lines).style(bg).render(inner, buf);
     }
