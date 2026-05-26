@@ -38,6 +38,13 @@ fn launch(tmp: &TempDir, extra: &[&str]) -> PtySession {
     cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
     cmd.env("TERM", "xterm-256color");
     cmd.env("LANG", "en_US.UTF-8");
+    // Only `en-kjv` is bundled; every other translation downloads on
+    // demand from `fetch::base_url()`. Point that at a closed loopback
+    // port so no e2e test ever touches the real network: any download
+    // attempt fails fast (connection refused, not retried) and
+    // deterministically, regardless of whether the CI runner has
+    // connectivity or the release tag exists yet.
+    cmd.env("TB_RELEASE_URL", "https://127.0.0.1:1");
     for a in extra {
         cmd.arg(a);
     }
@@ -77,62 +84,56 @@ fn key(p: &mut PtySession, s: &str) {
 /// rendered output.
 const FIRST_LAUNCH_SETUP_MS: u64 = 3000;
 
+/// Picking a not-yet-installed translation in the picker triggers an
+/// on-demand download (only `en-kjv` is bundled). With the network
+/// pointed at a dead loopback port by `launch`, that download fails;
+/// this asserts the app degrades gracefully — it stays on `en-kjv`,
+/// quits cleanly, and persists `en-kjv` as the default rather than a
+/// half-downloaded code. (The install→install swap path can't be
+/// exercised offline because no second real translation DB exists in a
+/// fresh `$HOME`, and a copied file would trip the `meta.code` ==
+/// filename check in `Db::open_ro`.)
 #[test]
-fn picker_swap_persists_default_translation() {
+fn picker_download_offline_keeps_default_and_quits_clean() {
     let tmp = TempDir::new().unwrap();
     let mut p = launch(
         &tmp,
         &["--translation", "en-kjv", "--book", "JHN", "--chapter", "3"],
     );
     sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
-    key(&mut p, "t");
-    key(&mut p, "j");
-    key(&mut p, "j");
-    key(&mut p, "\r"); // Enter — select third entry.
+    key(&mut p, "t"); // open Translations picker (cursor starts on en-kjv)
+    key(&mut p, "j"); // move to the next entry — guaranteed not-installed
+    key(&mut p, "\r"); // Enter — triggers a download that fails (no network)
     key(&mut p, "q");
     p.exp_eof().unwrap();
 
     let cfg = read(&config_path(&tmp));
-    // The picker is alphabetical by code; after en-kjv (1st), pressing
-    // j twice (down twice from cursor on en-kjv at index 4 in the
-    // 11-item slate) lands on en-ylt. The assertion below would have
-    // needed to know exact ordering of the picker; instead, just
-    // assert *some* default got persisted (not the original en-kjv).
-    assert!(
-        cfg.contains("default_translation = "),
-        "expected default_translation to be set, got:\n{cfg}"
-    );
     let cfg_default = cfg
         .lines()
         .find_map(|l| l.strip_prefix("default_translation = "))
         .map(|s| s.trim().trim_matches('"'))
         .expect("default_translation line");
-    assert_ne!(
+    assert_eq!(
         cfg_default, "en-kjv",
-        "expected picker to have switched away from en-kjv, got {cfg_default}"
+        "a failed picker download must leave en-kjv as the default, got {cfg_default}"
     );
 }
 
 #[test]
 fn quit_persists_state_book_chapter() {
     let tmp = TempDir::new().unwrap();
+    // Use the bundled `en-kjv`: it's the only translation installed in a
+    // fresh `$HOME`, so launching it doesn't depend on an on-demand fetch.
     let mut p = launch(
         &tmp,
-        &[
-            "--translation",
-            "es-rv1909",
-            "--book",
-            "ROM",
-            "--chapter",
-            "8",
-        ],
+        &["--translation", "en-kjv", "--book", "ROM", "--chapter", "8"],
     );
     sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
     key(&mut p, "q");
     p.exp_eof().unwrap();
 
     let st = read(&state_path(&tmp));
-    assert!(st.contains("translation = \"es-rv1909\""), "got:\n{st}");
+    assert!(st.contains("translation = \"en-kjv\""), "got:\n{st}");
     assert!(st.contains("book = \"ROM\""), "got:\n{st}");
     assert!(st.contains("chapter = 8"), "got:\n{st}");
 }
