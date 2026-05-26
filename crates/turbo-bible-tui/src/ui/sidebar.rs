@@ -73,19 +73,16 @@ fn build_lines(
     let body = Style::new().fg(theme::bright_white()).bg(theme::blue());
     let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
     // Section labels ("Parallel passage", "Footnotes", "Cross-references") —
-    // mid cyan: bright enough to anchor the eye and out-rank the dim xref
-    // entries, but not the electric `bright_cyan` (reserved for the visual-mode
-    // selection), so the panel still reads as subordinate to the scripture
-    // pane. The wide gap down to the teal entries (see `xref_style`) is what
-    // gives the sidebar its scan hierarchy.
-    let header = Style::new()
-        .fg(theme::mid_cyan())
-        .bg(theme::blue())
-        .add_modifier(Modifier::BOLD);
-    // Verse-label heading (e.g. "John 3:16") — the panel's subject line, on the
-    // same mid-cyan structural tier as the section headers (its position at the
-    // top, not a separate colour, sets it apart). Yellow is reserved for the
-    // scripture pane (verse numbers, mode pills); the sidebar carries no yellow.
+    // mid cyan, NOT bold: a notch below the bold verse-label anchor (see
+    // `accent`). Mid cyan (not the electric `bright_cyan`, reserved for the
+    // visual-mode selection) keeps them well above the dim teal entries while
+    // the panel stays subordinate to the scripture pane; the lighter weight
+    // makes the subject line read as the heavier of the two structural tiers.
+    let header = Style::new().fg(theme::mid_cyan()).bg(theme::blue());
+    // Verse-label heading (e.g. "John 3:16") — the panel's subject line: mid
+    // cyan BOLD, one weight above the (non-bold) section headers so the eye
+    // lands on "what's selected" first. Yellow is reserved for the scripture
+    // pane (verse numbers, mode pills); the sidebar carries no yellow.
     let accent = Style::new()
         .fg(theme::mid_cyan())
         .bg(theme::blue())

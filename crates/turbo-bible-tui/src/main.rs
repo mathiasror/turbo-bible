@@ -909,6 +909,10 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
             ));
             Ok(DispatchStep::Continue)
         }
+        SplashOutcome::OpenHelp => {
+            state.dialog = Dialog::Help(HelpDialog::new());
+            Ok(DispatchStep::Continue)
+        }
     }
 }
 
@@ -1192,6 +1196,10 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, show_sidebar: bool) -> C
 }
 
 const STATUS_SPLASH: &[Shortcut<'static>] = &[
+    Shortcut {
+        key: "F1",
+        action: "Help",
+    },
     Shortcut {
         key: "Enter",
         action: "Open",

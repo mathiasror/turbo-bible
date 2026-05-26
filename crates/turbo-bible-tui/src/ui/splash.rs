@@ -83,6 +83,7 @@ pub enum SplashOutcome {
     OpenGoto,
     OpenFind,
     OpenTranslations,
+    OpenHelp,
     Quit,
 }
 
@@ -299,6 +300,7 @@ impl SplashView {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') if !ctrl => SplashOutcome::Quit,
             KeyCode::Char('c') if ctrl => SplashOutcome::Quit,
+            KeyCode::F(1) => SplashOutcome::OpenHelp,
             KeyCode::F(2) | KeyCode::Char(':') => SplashOutcome::OpenGoto,
             KeyCode::F(3) => SplashOutcome::OpenFind,
             KeyCode::F(5) | KeyCode::Char('t') => SplashOutcome::OpenTranslations,
@@ -475,9 +477,11 @@ impl SplashView {
         inner_w: usize,
         lines: &mut Vec<Line<'static>>,
     ) {
-        // No leading blank: the verse's reference line (or the subtitle, when
-        // the daily quote is off) sits directly above the filter row. The
-        // trailing blank below still separates it from Continue / the columns.
+        // A blank row sets the filter input apart from the daily-verse
+        // attribution (or the subtitle, when the quote is off) directly above,
+        // so the verse block and the input affordance don't read as one strip.
+        // The trailing blank below still separates it from Continue / columns.
+        lines.push(blank_line(inner_w, styles.bg));
         let mode_label = match self.mode {
             SplashMode::Normal => " NORMAL ",
             SplashMode::Filter => " FILTER ",
@@ -576,8 +580,21 @@ impl SplashView {
     ) {
         let (col_left, col_right, gap) = split_columns(inner_w);
         let (ot_label, nt_label) = testament_labels(&self.translation_code);
-        let ot_header = format!(" {}  ({}) ", ot_label, entries_ot.len());
-        let nt_header = format!(" {}  ({}) ", nt_label, entries_nt.len());
+        // When filtering, show "matched / total" so the count reads as a result
+        // ("4 of 39 match"); unfiltered, show the plain total as a static label.
+        let (ot_count, nt_count) = if self.filter.is_empty() {
+            (
+                self.books_ot.len().to_string(),
+                self.books_nt.len().to_string(),
+            )
+        } else {
+            (
+                format!("{} / {}", entries_ot.len(), self.books_ot.len()),
+                format!("{} / {}", entries_nt.len(), self.books_nt.len()),
+            )
+        };
+        let ot_header = format!(" {ot_label}  ({ot_count}) ");
+        let nt_header = format!(" {nt_label}  ({nt_count}) ");
         let ot_focused = self.focus == SplashColumn::OT && !self.on_continue;
         let nt_focused = self.focus == SplashColumn::NT && !self.on_continue;
         let ot_header_style = if ot_focused {

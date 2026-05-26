@@ -53,7 +53,12 @@ impl Widget for PassageView<'_> {
             .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
-                Style::new().fg(theme::bright_white()).bg(theme::blue()),
+                // Bold the location reference so the eye lands on "where am I"
+                // first when navigating in from Goto — heavier than verse body.
+                Style::new()
+                    .fg(theme::bright_white())
+                    .bg(theme::blue())
+                    .add_modifier(Modifier::BOLD),
             )))
             .title(pill)
             .style(Style::new().bg(theme::blue()));

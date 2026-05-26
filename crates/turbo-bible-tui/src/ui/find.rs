@@ -117,7 +117,7 @@ impl FindDialog {
         let w: u16 = outer.width.saturating_sub(6).min(90);
         let h: u16 = outer.height.saturating_sub(4).min(22);
         let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_modal_dialog(outer, area, "Find", buf);
+        let inner = dialog::draw_modal_dialog(outer, area, "Find (full-text)", buf);
 
         let bg = Style::new().bg(theme::blue());
         let label = Style::new().fg(theme::bright_white()).bg(theme::blue());

@@ -99,23 +99,29 @@ impl GotoDialog {
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_modal_dialog(outer, area, "Goto reference", buf);
 
-        // Preview must match exactly what Enter resolves to: Enter jumps to the
-        // verse when one is typed (and lands the cursor there), so show it —
-        // with the locale separator — behind an explicit "Enter opens:" label.
-        let preview = parse_reference(&self.input, books).map_or_else(
-            || "(type a book and chapter)".to_string(),
-            |p| {
-                let name = books
-                    .iter()
-                    .find(|b| b.code == p.book)
-                    .map_or_else(|| p.book.clone(), |b| b.name.clone());
-                let target = match p.verse {
-                    Some(v) => crate::reference::format(&name, p.chapter, v, &self.translation),
-                    None => format!("{name} {}", p.chapter),
-                };
-                format!("Enter opens: {target}")
-            },
-        );
+        // The preview names the resolved destination, so "joh 3 16" visibly
+        // becomes "John 3:16" — confirming the parse. An untouched pre-fill
+        // (Goto opened on the current verse) shows a hint instead: echoing the
+        // current reference back as "Will jump to: …" reads as a redundant
+        // duplicate of the input field directly above it.
+        let preview = if self.prefilled {
+            "(type a reference, or Enter to stay here)".to_string()
+        } else {
+            parse_reference(&self.input, books).map_or_else(
+                || "(type a book and chapter)".to_string(),
+                |p| {
+                    let name = books
+                        .iter()
+                        .find(|b| b.code == p.book)
+                        .map_or_else(|| p.book.clone(), |b| b.name.clone());
+                    let target = match p.verse {
+                        Some(v) => crate::reference::format(&name, p.chapter, v, &self.translation),
+                        None => format!("{name} {}", p.chapter),
+                    };
+                    format!("Will jump to: {target}")
+                },
+            )
+        };
 
         let blank = Span::styled(
             " ".repeat(inner.width as usize),

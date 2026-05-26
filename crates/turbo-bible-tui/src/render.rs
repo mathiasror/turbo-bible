@@ -193,7 +193,10 @@ pub fn render_passage(
         } else {
             (" ", Style::new().bg(theme::blue()))
         };
-        let num_str = format!("{:>width$}  ", v.number, width = VERSE_NUM_WIDTH);
+        // Just the right-aligned number; the two-space gutter gap is a separate
+        // span below so it carries the row bg, not the (cursor) number chip's
+        // yellow — keeping the chip tight to its digits.
+        let num_str = format!("{:>width$}", v.number, width = VERSE_NUM_WIDTH);
 
         let mut markers = String::new();
         if v.footnote_count > 0 {
@@ -267,6 +270,9 @@ pub fn render_passage(
                 Span::styled(" ".repeat(PANEL_PAD), pad_style),
                 Span::styled(gutter_glyph.to_string(), gutter_style),
                 Span::styled(num_str, verse_num_style(kind)),
+                // Two-space gutter gap in the row bg (see `num_str` above) so the
+                // body text breathes after the number on every row treatment.
+                Span::styled("  ".to_string(), pad_style),
             ],
             first,
         );
@@ -654,19 +660,24 @@ mod render_tests {
 
     #[test]
     fn three_digit_verse_number_keeps_body_aligned() {
-        // The number field is exactly VERSE_NUM_WIDTH + 2 cells for both 1-
-        // and 3-digit numbers, so Psalm-119-style verses don't shift the body.
-        // Span layout: [PANEL_PAD pad][gutter][number][body…].
+        // The number field is exactly VERSE_NUM_WIDTH cells for both 1- and
+        // 3-digit numbers, followed by a fixed 2-space gutter gap, so
+        // Psalm-119-style verses don't shift the body. Span layout:
+        // [PANEL_PAD pad][gutter][number][2-space gap][body…].
         let p = passage_with(vec![v(9, "alpha"), v(119, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
         let lines = render_passage(&p, 1, None, &bookmarked, 40);
         for verse in [9, 119] {
-            let num = &line_for_verse(&lines, verse).line.spans[PANEL_PAD + 1];
+            let spans = &line_for_verse(&lines, verse).line.spans;
             assert_eq!(
-                num.content.chars().count(),
-                VERSE_NUM_WIDTH + 2,
-                "verse {verse} number field must be a fixed {} cells",
-                VERSE_NUM_WIDTH + 2,
+                spans[PANEL_PAD + 1].content.chars().count(),
+                VERSE_NUM_WIDTH,
+                "verse {verse} number field must be a fixed {VERSE_NUM_WIDTH} cells",
+            );
+            assert_eq!(
+                spans[PANEL_PAD + 2].content,
+                "  ",
+                "verse {verse} number is followed by a fixed 2-space gutter gap",
             );
         }
     }
