@@ -231,3 +231,66 @@ fn load_translation_json(path: &Path) -> Result<TranslationJson> {
     let parsed: TranslationJson = serde_json::from_str(&body)?;
     Ok(parsed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The single most fragile parsing branch: `populate_verse` drops books
+    /// `lookup_osis` doesn't recognise (deuterocanonical / a future scrollmapper
+    /// rename). Pin it on a synthetic fixture so a regression that silently
+    /// dropped a *canonical* book — shipping a truncated Bible — fails in CI
+    /// without needing a scrollmapper checkout.
+    #[test]
+    fn populate_verse_skips_noncanonical_books_and_trims_text() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(crate::schema::TRANSLATION_SCHEMA_SQL)
+            .expect("apply schema");
+        let tx = conn.transaction().expect("begin tx");
+        populate_book(&tx).expect("populate canonical books");
+
+        // Genesis (canonical) + Tobit (deuterocanonical — must be dropped).
+        let json = r#"{
+            "translation": "test",
+            "books": [
+                { "name": "Genesis", "chapters": [
+                    { "chapter": 1, "verses": [
+                        { "verse": 1, "text": "In the beginning" },
+                        { "verse": 2, "text": "  and the earth was without form  " }
+                    ] }
+                ] },
+                { "name": "Tobit", "chapters": [
+                    { "chapter": 1, "verses": [ { "verse": 1, "text": "deuterocanonical" } ] }
+                ] }
+            ]
+        }"#;
+        let parsed: TranslationJson = serde_json::from_str(json).expect("parse synthetic json");
+        let count = populate_verse(&tx, "en-test", &parsed).expect("populate_verse");
+        tx.commit().expect("commit");
+
+        // Tobit is skipped; only Genesis 1:1–2 are counted and stored.
+        assert_eq!(count, 2, "only the two canonical verses should count");
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM verse", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 2);
+        // Nothing landed outside the canonical book set.
+        let noncanon: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verse WHERE book NOT IN (SELECT code FROM book)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(noncanon, 0, "no verse may reference a non-canonical book");
+        // Verse text is trimmed before insert.
+        let v2: String = conn
+            .query_row(
+                "SELECT text FROM verse WHERE book = 'GEN' AND chapter = 1 AND verse = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(v2, "and the earth was without form");
+    }
+}
