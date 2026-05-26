@@ -40,8 +40,52 @@ env:
   SCROLLMAPPER_REF: a228a19a29099a41c196c2a310cd93e50a390e30
 
 jobs:
+  # Build the translation assets exactly once and hand them to the
+  # downstream jobs as an artifact. Previously every job (5 build matrix
+  # legs + upload-translations + publish-crate) re-cloned the large
+  # scrollmapper repo and re-ran the pipeline — ~7× the work for a
+  # deterministic, ref-pinned output.
+  prepare-assets:
+    name: build translation assets (once)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone scrollmapper at pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
+          # Only formats/json/*.json + formats/sqlite/extras/*.db are read
+          # by the pipeline; sparse-checkout skips the rest of the repo.
+          sparse-checkout: |
+            formats/json
+            formats/sqlite/extras
+          sparse-checkout-cone-mode: true
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: prepare-assets
+
+      - name: Build + compress all translations
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+
+      - name: Upload translations artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: translations
+          path: dist/translations
+          if-no-files-found: error
+
   build:
     name: build / ${{ matrix.target }}
+    needs: prepare-assets
     permissions:
       contents: write   # Upload release assets.
     strategy:
@@ -68,13 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone scrollmapper at pinned ref
-        uses: actions/checkout@v4
-        with:
-          repository: scrollmapper/bible_databases
-          ref: ${{ env.SCROLLMAPPER_REF }}
-          path: data/scrollmapper-checkout
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -84,23 +121,29 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
-      - name: Bundle translations into TUI assets/
+      - name: Download translations artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: translations
+          path: dist/translations
+
+      - name: Stage TUI assets/
         shell: bash
         # build.rs reads assets/manifest.json; bundled.rs embeds only
         # en-kjv. The other translations + xrefs are uploaded as
-        # individual release assets below for the binary to fetch.
+        # individual release assets (by upload-translations) for the
+        # binary to fetch, so the binary only needs these two files.
         run: |
-          cargo run -p turbo-bible-data --release -- build \
-            --scrollmapper data/scrollmapper-checkout \
-            --manifest data/manifest_source.toml
-          cargo run -p turbo-bible-data --release -- compress
           mkdir -p crates/turbo-bible-tui/assets
           cp dist/translations/en-kjv.db.zst crates/turbo-bible-tui/assets/
           cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
 
       - name: Install cross (linux-arm64 only)
         if: matrix.cross == true
-        run: cargo install cross --locked
+        # Prebuilt binary — `cargo install cross` builds it from source.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
 
       - name: Build release binary
         shell: bash
@@ -162,19 +205,11 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Clone scrollmapper at pinned ref
-        uses: actions/checkout@v4
+      - name: Download translations artifact
+        uses: actions/download-artifact@v4
         with:
-          repository: scrollmapper/bible_databases
-          ref: ${{ env.SCROLLMAPPER_REF }}
-          path: data/scrollmapper-checkout
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: translations-assets
+          name: translations
+          path: dist/translations
 
       # Each <code>.db.zst (and xrefs.db.zst) lands as an individual
       # release asset so the binary's fetch::translation can grab
@@ -183,12 +218,8 @@ jobs:
       # translations.tar.gz bundles all 12 for install.sh to
       # pre-fetch in one HTTP request, keeping the curl-install
       # experience offline-from-the-jump.
-      - name: Build translation assets
+      - name: Bundle translations tarball
         run: |
-          cargo run -p turbo-bible-data --release -- build \
-            --scrollmapper data/scrollmapper-checkout \
-            --manifest data/manifest_source.toml
-          cargo run -p turbo-bible-data --release -- compress
           (cd dist/translations && tar -czf ../translations.tar.gz *.db.zst manifest.json)
 
       - name: Compute SHA256 sidecar for translations bundle
@@ -218,24 +249,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone scrollmapper at pinned ref
-        uses: actions/checkout@v4
-        with:
-          repository: scrollmapper/bible_databases
-          ref: ${{ env.SCROLLMAPPER_REF }}
-          path: data/scrollmapper-checkout
-
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: publish
 
-      - name: Bundle translations
+      - name: Download translations artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: translations
+          path: dist/translations
+
+      - name: Stage TUI assets/
+        # build.rs reads assets/manifest.json; bundled.rs embeds en-kjv.
+        # The crate's `include = [...]` whitelists these for the
+        # published tarball, so they must exist at publish time.
         run: |
-          cargo run -p turbo-bible-data --release -- build \
-            --scrollmapper data/scrollmapper-checkout \
-            --manifest data/manifest_source.toml
-          cargo run -p turbo-bible-data --release -- compress
           mkdir -p crates/turbo-bible-tui/assets
           cp dist/translations/en-kjv.db.zst crates/turbo-bible-tui/assets/
           cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
