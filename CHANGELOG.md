@@ -6,70 +6,64 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
 
 ## [Unreleased]
 
-### Changed (breaking)
-- Reading view redesigned for prose flow: verse numbers sit in a left
-  gutter, the active verse is marked by a `▸` glyph plus brighter body
-  text (no full-width cyan row), consecutive verses run without a blank
-  line, the in-body chapter banner is gone (the border title already
-  carries the reference), and the frame uses a single-line border.
-- The two-line / single-line verse layout toggle has been removed:
-  `[reading] two_line_verses` and `[keys] toggle_verse_layout` are no
-  longer accepted in `config.toml` (the new gutter layout supersedes
-  both modes), and the runtime `Shift-T` binding is gone. With
-  `deny_unknown_fields`, existing configs that set either key must be
-  updated before they will parse.
-- **Cross-reference schema redesigned and now populated.** The `xref`
-  table was previously footnote-coupled (`translation`,
-  `footnote_id`, `position`, `target_osis`, `label`) and never
-  populated; it's now keyed by source verse with a normalized
-  target-range layout (`from_book`, `from_chapter`, `from_verse`,
-  `to_book`, `to_chapter`, `to_verse_start`, `to_verse_end`,
-  `votes`). **Existing installations must re-run `turbo-bible import`
-  to pick up the new schema**; an old DB will error on first chapter
-  load.
+## [0.1.0] - 2026-05-26
 
-### Added
-- **Cross-reference ingest.** `turbo-bible import` now also downloads
-  `scrollmapper/bible_databases`'s
-  `formats/sqlite/extras/cross_references_0..6.db` (openbible.info
-  data), dedupes the symmetric `A→B`/`B→A` pairs through the new
-  `xref` PK, and lands ~430 000 unique cross-references. The
-  reference sidebar's "Cross-references" section is now live; the
-  K-popup ("Notes") shows the full xref list for the cursor verse
-  ordered by openbible vote. Headings and footnotes remain
-  unsourced (no upstream data at the pinned commit) and their UI
+Initial release.
+
+### Reading
+
+- Turbo Vision–styled terminal UI (ratatui + crossterm): a splash
+  screen with title art, a daily verse, and a filterable two-column
+  OT/NT book picker; a prose-flow reading view with verse numbers in a
+  left gutter, a `▸` cursor marker, consecutive verses running without
+  blank lines, and a single-line border that carries the chapter
+  reference.
+- A References sidebar (shown when the terminal is ≥ ~120 cols) that
+  follows the cursor verse, plus a `K` popup — both surfacing
+  parallel-passage refs and cross-references.
+- vim + Turbo keymap profiles: count prefixes (`5j`), multi-key chords
+  (`gg`, `[b`, `]b`, `ZZ`), chapter/book/verse navigation, and a jump
+  history bounded at 100 entries (`Ctrl-O` / `Ctrl-I`). Triggers are
+  user-extensible via `[keys]` in `config.toml`.
+- Visual selection, bookmarks, and clipboard copy (`y`) of the current
+  verse and reference.
+
+### Translations
+
+- Eleven public-domain / CC0 / CC-BY translations across seven
+  languages, derived from `scrollmapper/bible_databases` by the offline
+  `turbo-bible-data` pipeline. The King James Version is embedded in the
+  binary and extracted into `$XDG_DATA_HOME/turbo-bible/translations/`
+  on first launch; the other ten translations and the shared
+  cross-references DB are published as GitHub Release assets and fetched
+  on demand, each verified against a SHA-256 in the embedded manifest.
+- ~430,000 openbible.info cross-references, shipped as a prebuilt
+  `xrefs.db` release asset (symmetric `A→B`/`B→A` pairs deduped, ordered
+  by vote). The pipeline builds it from scrollmapper's
+  `cross_references_*.db`; the binary fetches it like any other asset.
+  Headings and footnotes are unsourced at the pinned commit, so their UI
   surfaces stay inert pending a future source.
-- `CHANGELOG.md`.
+
+### Search & navigation
+
+- FTS5 full-text search with BM25 ranking, a diacritic-folding
+  tokenizer, and a prefix index (rebuilt and cached on first launch,
+  ~1 s).
+- Goto dialog with multi-language book-name parsing
+  (`Mark 1:1`, `MRK 1`, `Génesis 1`, `Sal 23,4`).
+
+### Configuration & state
+
+- XDG-style `config.toml` (theme, keybindings, reading layout),
+  `state.toml` (last position), and `bookmarks.toml`, with one-time
+  migration from the legacy JSON formats.
+- `turbo-bible install --force` re-extracts the embedded translation.
+- A `website/install.sh` curl-installer that pre-stages all eleven
+  translations, so a curl-installed copy is fully offline from first
+  launch.
+
+### Internals
+
 - `#![deny(unsafe_code)]` at the crate root.
-- `History` jump stack is now bounded at 100 entries; long sessions no
-  longer grow the stack unbounded.
-- Clipboard failures (`y` to copy verse) now surface via the deferred
-  warning channel instead of being silently swallowed.
-- `config::load` distinguishes "file missing" (silent default) from
-  "file unreadable" (logged); previously both were silent.
-- RAII `TerminalGuard` restores the terminal even if a draw panics,
-  replacing the manual `init_terminal` / `restore_terminal` pair.
-- Shared XDG path resolution in `src/paths.rs` (was duplicated across
-  `config.rs`, `state.rs`, `bookmark.rs`).
-- Shared `word_wrap` in `src/text.rs` (was duplicated between
-  `render.rs` and `ui/splash.rs`).
-
-### Changed
-- `switch_translation` is now atomic: a failed translation swap restores
-  the previous translation instead of leaving a half-swapped state.
-- `search()` and `quote::pick()` take the translation as an explicit
-  parameter rather than reading it off `Db`.
-- Cast cleanups: `as i64` / `as u16` replaced with `From::from` /
-  `try_from` where it makes infallibility obvious; remaining truncating
-  casts carry per-site justifications.
-- Bulk pedantic-clippy clean-up: `map(_).unwrap_or(_)` → `map_or`,
-  inlined format args, `const fn` where applicable, identical match arms
-  merged.
-- Internal `pub` surface tightened to `pub(crate)`; `Db::translation`
-  is now method-gated via `Db::set_translation`.
-
-## [0.1.0] - 2026-05-20
-
-Initial release. Three translations (KJV, Bibelen 1930, Reina-Valera
-1909), FTS5 search, bookmarks, history, vim+turbo keymap profiles, XDG
-state.
+- A RAII terminal guard that restores the terminal even if a draw
+  panics, and atomic translation switching that rolls back on failure.
