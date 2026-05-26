@@ -406,10 +406,15 @@ impl SplashView {
         avail: usize,
         lines: &mut Vec<Line<'static>>,
     ) {
-        // Prefer side-by-side ("TURBO  BIBLE" on one 6-row logo). Fall back
-        // to stacked, then to plain text on narrow terminals.
+        // The full block-letter banner is the home screen's "moment" — but only
+        // on first launch / when there's no saved reading position. For
+        // returning users (a Continue target exists) it collapses to the
+        // one-line title so the daily verse + book picker own the screen.
+        // Narrow terminals also fall back to compact. Side-by-side, then
+        // stacked, then the one-liner.
         let combined_w = TITLE_TURBO[0].chars().count() + 2 + TITLE_BIBLE[0].chars().count();
-        if inner_w >= combined_w && avail >= 10 {
+        let want_full = self.last.is_none();
+        if want_full && inner_w >= combined_w && avail >= 10 {
             for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(
                     inner_w,
@@ -418,7 +423,7 @@ impl SplashView {
                     styles.title,
                 ));
             }
-        } else if inner_w >= TITLE_TURBO[0].chars().count() && avail >= 18 {
+        } else if want_full && inner_w >= TITLE_TURBO[0].chars().count() && avail >= 18 {
             for row in TITLE_TURBO.iter().chain(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(inner_w, styles.bg, row, styles.title));
             }
@@ -1079,6 +1084,36 @@ mod tests {
         assert!(
             found_combined,
             "expected TURBO and BIBLE block letters on the same row"
+        );
+    }
+
+    #[test]
+    fn returning_user_gets_compact_title() {
+        // A saved reading position (Continue target) must collapse the banner
+        // to the one-line title, even on a terminal wide/tall enough that a
+        // first-launch splash would draw the full block-letter art.
+        let last = Some((
+            Position {
+                book: "O00".into(),
+                chapter: 1,
+                verse: None,
+            },
+            "OT Book 0 1".to_string(),
+        ));
+        let splash = SplashView::new(fake_books(39, 27), last, "t".into(), "en-kjv".into(), None);
+        let styles = RenderStyles::new(splash.mode);
+        let mut lines = Vec::new();
+        splash.render_title(&styles, 110, 30, &mut lines);
+        assert_eq!(
+            lines.len(),
+            2,
+            "compact title is one art row + the subtitle, got {}",
+            lines.len(),
+        );
+        let title: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            title.contains("T U R B O"),
+            "expected the compact one-liner, got {title:?}",
         );
     }
 

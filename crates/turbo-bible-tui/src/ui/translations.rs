@@ -155,7 +155,7 @@ impl TranslationsDialog {
                     " "
                 };
                 let install = if t.installed { "[*]" } else { "[ ]" };
-                let mark = format!(" {focus_mark}{active_mark} {install} ");
+                let mark = format!(" {focus_mark} {active_mark} {install} ");
                 let code_w = 14usize;
                 // 3 (not 4) leaves a single space between the 2-letter language
                 // and the translation name, tightening per-row cohesion.
@@ -193,14 +193,25 @@ impl TranslationsDialog {
             }
         }
 
-        while lines.len() < (inner.height as usize).saturating_sub(2) {
+        while lines.len() < (inner.height as usize).saturating_sub(3) {
             lines.push(blank());
         }
+        // Legend so the install box + active marker don't read as decorative
+        // noise: ▸ cursor (universal) is left implicit; these three aren't.
+        lines.push(Line::from(vec![
+            Span::styled("  ", bg),
+            Span::styled("[*] ", key_style),
+            Span::styled("installed   ", dim),
+            Span::styled("[ ] ", key_style),
+            Span::styled("available   ", dim),
+            Span::styled("\u{00BB} ", key_style),
+            Span::styled("current", dim),
+        ]));
         lines.push(blank());
         lines.push(Line::from(vec![
             Span::styled("  ", bg),
             Span::styled("Enter ", key_style),
-            Span::styled("select / download  ", dim),
+            Span::styled("install / select  ", dim),
             Span::styled("\u{2191}\u{2193}/j k ", key_style),
             Span::styled("navigate  ", dim),
             Span::styled("Esc ", key_style),
