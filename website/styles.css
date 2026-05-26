@@ -202,6 +202,19 @@
     cursor: pointer;
     font-family: inherit;
   }
+  .install-alt {
+    text-align: center;
+    color: var(--cyan-2);
+    font-size: 13px;
+    margin: 2px auto 6px;
+    opacity: .85;
+  }
+  .install-alt code {
+    background: var(--bg-dark);
+    padding: 1px 6px;
+    color: var(--yellow);
+    font-family: inherit;
+  }
 
   /* ---------- section heading inside panels ---------- */
   .section-h {
