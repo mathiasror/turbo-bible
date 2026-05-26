@@ -5,8 +5,8 @@
 //! tour and [`docs/USAGE.md`] for a feature walk-through; the source
 //! tree mirrors the README's "Layout" section.
 //!
-//! [`README.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/README.md
-//! [`docs/USAGE.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/docs/USAGE.md
+//! [`README.md`]: https://github.com/mathiasror/turbo-bible/blob/main/README.md
+//! [`docs/USAGE.md`]: https://github.com/mathiasror/turbo-bible/blob/main/docs/USAGE.md
 #![forbid(unsafe_code)]
 
 mod bookmark;
