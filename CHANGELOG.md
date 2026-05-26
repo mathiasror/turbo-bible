@@ -6,6 +6,54 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **Reading-view readability pass.** The cursor verse is toned from
+  full-saturation cyan down to a calmer teal with full-bright white text so
+  scripture dominates, while the cursor's verse *number* is inverse-video'd (a
+  yellow chip) so position still pops; every other number keeps its yellow
+  scanning rhythm. Footnote / cross-reference markers are now `*` and `+`
+  (CP437-safe) and dimmed to read as secondary metadata. The verse-number
+  column is a fixed 3 cells — 3-digit Psalm numbers no longer shift the body —
+  wrapped lines hang-indent under the verse text, and the pane gained a
+  one-cell text inset while the full-row highlight still spans border to
+  border.
+- **Visual selection** fills the whole anchor→cursor range with the brightest
+  cyan slab (the loudest "active right now" signal) and keeps the `▸` marker on
+  the cursor end; pressing `v` lights the anchor verse immediately. A
+  `[ NORMAL ]` / `[ VISUAL ]` pill on the reading-view title row mirrors the
+  splash mode pills.
+- **Colour hierarchy.** The overloaded cyan is split into four named,
+  configurable theme slots — `bright_cyan` (selection), `cyan` (list focus),
+  `teal` (cursor row), `input_teal` (input fields) — referenced by role.
+- Locale-aware reference formatting: the chapter–verse separator is a colon for
+  English / Spanish / Portuguese and a comma for Norwegian / German / French /
+  Latin, applied to the daily verse, bookmarks, sidebar, find results, and the
+  Goto preview.
+- Splash: the daily verse is bold and the vertical spacing tightened; the
+  focused OT/NT column header and rule brighten while the other dims.
+- Translations picker: `[*]` / `[ ]` install boxes and a `»` active-translation
+  marker (distinct from the `▸` focus cursor) replace the old `✓`.
+- The Bookmarks dialog title shows a count, e.g. `Bookmarks (3)`.
+- Modal dialogs float over the desktop with the menu and status bars left
+  visible (period-correct Turbo Vision), and Goto and Find share one
+  input-field widget. The sidebar-off state shows a persistent
+  `-- NORMAL | NOREFS --` cue in the status bar.
+
+### Fixed
+
+- The status-bar mode tag no longer clips to a single letter (`-- N` →
+  `-- NORMAL --`); shortcut entries are elided before the pill instead.
+- The splash hint line is budgeted to the dialog width — it never clips a token
+  mid-word or leaves a `(…)` group unclosed.
+- The Help dialog scrolls (with a pinned dismiss-hint footer and a `▲` / `▼`
+  indicator) instead of truncating its later sections on short terminals.
+- Find result snippets wrap to up to two lines, preserving the match
+  highlights, with an ellipsis when longer — no more mid-word clipping.
+- The Goto preview shows the verse Enter resolves to (`Enter opens: Genesis
+  1:1`) rather than dropping it.
+- The English daily verse reference reads `Romans 12:2`, not `Romans 12,2`.
+
 ## [0.1.0] - 2026-05-26
 
 Initial release.

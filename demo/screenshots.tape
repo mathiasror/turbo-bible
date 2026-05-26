@@ -11,8 +11,12 @@
 Output demo/_screenshots-trace.gif
 
 Set Shell        "bash"
-Set Width        1200
-Set Height       720
+# ~130 cols × ~34 rows: wide enough to clear the 120-col References-sidebar
+# threshold (reading-pane 80 + sidebar 34 + gaps) and tall enough that the
+# Help dialog shows without scrolling.
+Set Width        1600
+Set Height       860
+Set FontSize     19
 Set Padding      18
 Set Theme        "Catppuccin Mocha"
 Set TypingSpeed  20ms

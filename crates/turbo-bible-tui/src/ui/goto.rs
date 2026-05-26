@@ -20,6 +20,9 @@ pub struct GotoDialog {
     /// `Enter`-without-edits stays put, typing fresh starts a new
     /// reference, and Backspace begins editing the pre-fill in place.
     prefilled: bool,
+    /// Active translation code — drives the locale reference separator in the
+    /// pre-fill and the live preview.
+    translation: String,
 }
 
 #[non_exhaustive]
@@ -37,20 +40,22 @@ pub enum GotoCommand {
 }
 
 impl GotoDialog {
-    pub const fn new() -> Self {
+    pub fn new(translation: &str) -> Self {
         Self {
             input: String::new(),
             prefilled: false,
+            translation: translation.to_string(),
         }
     }
 
     /// Open with the field pre-populated to the current reference. Lets
     /// `Enter` act as "stay here" and turns "edit the chapter/verse" into
     /// a few keystrokes rather than typing the whole reference from scratch.
-    pub fn with_position(book_name: &str, chapter: i64, verse: i64) -> Self {
+    pub fn with_position(book_name: &str, chapter: i64, verse: i64, translation: &str) -> Self {
         Self {
-            input: format!("{book_name} {chapter}:{verse}"),
+            input: crate::reference::format(book_name, chapter, verse, translation),
             prefilled: true,
+            translation: translation.to_string(),
         }
     }
 
@@ -86,76 +91,63 @@ impl GotoDialog {
 
     pub fn render(&self, outer: Rect, buf: &mut Buffer, books: &[Book]) {
         let w: u16 = 60;
-        let h: u16 = 9;
+        // 5 content rows (blank, input, preview, blank, footer) + 2 border rows.
+        // The preview sits flush under the input — its live feedback on what you
+        // typed — mirroring Find's input→hint adjacency and trimming the dialog's
+        // former empty vertical slack.
+        let h: u16 = 7;
         let area = dialog::center(outer, w, h);
         let inner = dialog::draw_modal_dialog(outer, area, "Goto reference", buf);
 
-        let preview = parse_reference(&self.input, books).map_or_else(
-            || "\u{2192} (type a book and chapter)".into(),
-            |p| {
-                let name = books
-                    .iter()
-                    .find(|b| b.code == p.book)
-                    .map_or_else(|| p.book.clone(), |b| b.name.clone());
-                format!("\u{2192} {} {}", name, p.chapter)
-            },
-        );
-
-        let label = Span::styled(
-            " Reference: ",
-            Style::new().fg(theme::bright_white()).bg(theme::blue()),
-        );
-        let input_style = Style::new()
-            .fg(theme::black())
-            .bg(theme::cyan())
-            .add_modifier(Modifier::BOLD);
-        let cursor_style = Style::new()
-            .fg(theme::black())
-            .bg(theme::bright_white())
-            .add_modifier(Modifier::BOLD);
-        // Sunken-cell edges around the input field: dark sliver on the left
-        // suggests a recessed rim, bright sliver on the right catches the
-        // light. The pair gives the field an inset feel without needing a
-        // second row of chrome.
-        let edge_left = Style::new().fg(theme::dark_grey()).bg(theme::cyan());
-        let edge_right = Style::new().fg(theme::bright_white()).bg(theme::cyan());
-
-        // Empty-state placeholder shown inside the field — disappears the
-        // moment the user starts typing. Faster to read than the hint below.
-        let placeholder_style = Style::new().fg(theme::dark_grey()).bg(theme::cyan());
-        let typed_len = self.input.chars().count();
-        let mut input_spans: Vec<Span<'static>> = Vec::new();
-        input_spans.push(Span::styled("\u{258F}", edge_left));
-        if self.input.is_empty() {
-            input_spans.push(Span::styled(" ".to_string(), input_style));
-            input_spans.push(Span::styled("\u{2588}", cursor_style));
-            input_spans.push(Span::styled("John 3:16".to_string(), placeholder_style));
+        // The preview names the resolved destination, so "joh 3 16" visibly
+        // becomes "John 3:16" — confirming the parse. An untouched pre-fill
+        // (Goto opened on the current verse) shows a hint instead: echoing the
+        // current reference back as "Will jump to: …" reads as a redundant
+        // duplicate of the input field directly above it.
+        let preview = if self.prefilled {
+            "(type a reference, or Enter to stay here)".to_string()
         } else {
-            input_spans.push(Span::styled(format!(" {}", self.input), input_style));
-            input_spans.push(Span::styled("\u{2588}", cursor_style));
-        }
-        let placeholder_len = if self.input.is_empty() { 9 } else { 0 };
-        // Account for the typed text + leading space + cursor + placeholder +
-        // the two edge cells (2 + 12 = leading "  " indent + " Reference: ").
-        let pad = (inner.width as usize).saturating_sub(typed_len + 2 + 12 + placeholder_len + 2);
-        if pad > 0 {
-            input_spans.push(Span::styled(" ".repeat(pad), input_style));
-        }
-        input_spans.push(Span::styled("\u{2595}", edge_right));
+            parse_reference(&self.input, books).map_or_else(
+                || "(type a book and chapter)".to_string(),
+                |p| {
+                    let name = books
+                        .iter()
+                        .find(|b| b.code == p.book)
+                        .map_or_else(|| p.book.clone(), |b| b.name.clone());
+                    let target = match p.verse {
+                        Some(v) => crate::reference::format(&name, p.chapter, v, &self.translation),
+                        None => format!("{name} {}", p.chapter),
+                    };
+                    format!("Will jump to: {target}")
+                },
+            )
+        };
+
         let blank = Span::styled(
             " ".repeat(inner.width as usize),
             Style::new().bg(theme::blue()),
         );
+        // Shared sunken input field — frames/pads/cursors identically to Find.
+        // The "John 3:16" placeholder shows inside the field while it's empty.
+        let label = Span::styled(
+            "  Reference: ",
+            Style::new().fg(theme::bright_white()).bg(theme::blue()),
+        );
+        // Leave a 2-cell inset before the inner right border so the field
+        // reads as framed. Find applies the same rule, so the two dialogs'
+        // input fields end at the same margin.
+        let field_w = u16::try_from(
+            (inner.width as usize)
+                .saturating_sub(label.content.chars().count())
+                .saturating_sub(2),
+        )
+        .unwrap_or(0);
+        let mut input_line = vec![label];
+        input_line.extend(dialog::input_field(&self.input, "John 3:16", field_w));
 
         let lines = vec![
             Line::from(blank.clone()),
-            Line::from(vec![label, Span::raw("")]),
-            Line::from({
-                let mut v = vec![Span::styled("  ", Style::new().bg(theme::blue()))];
-                v.extend(input_spans);
-                v
-            }),
-            Line::from(blank.clone()),
+            Line::from(input_line),
             Line::from(vec![
                 Span::styled("  ", Style::new().bg(theme::blue())),
                 Span::styled(
@@ -320,7 +312,7 @@ mod tests {
         // string must parse back into the same book/chapter/verse it was
         // built from. This pins the round-trip so future formatting tweaks
         // can't silently break the "stay here" interaction.
-        let d = GotoDialog::with_position("Matteus", 5, 3);
+        let d = GotoDialog::with_position("Matteus", 5, 3, "en-kjv");
         assert_eq!(d.input, "Matteus 5:3");
         let p = parse_reference(&d.input, &books()).expect("must parse back");
         assert_eq!(p.book, "MAT");
@@ -334,7 +326,7 @@ mod tests {
         // must replace it in one keystroke. Without this, the e2e
         // ":John 3:16" flow would land on the wrong book because the
         // pre-fill would be silently appended to.
-        let mut d = GotoDialog::with_position("Matteus", 5, 3);
+        let mut d = GotoDialog::with_position("Matteus", 5, 3, "en-kjv");
         let bs = books();
         d.handle(
             KeyEvent::new(KeyCode::Char('J'), crossterm::event::KeyModifiers::NONE),
@@ -354,7 +346,7 @@ mod tests {
     fn backspace_edits_prefilled_input_in_place() {
         // Backspace from a pre-fill should chip away at it (not wipe
         // wholesale), so a "bump the verse" flow is just a few keystrokes.
-        let mut d = GotoDialog::with_position("Matteus", 5, 3);
+        let mut d = GotoDialog::with_position("Matteus", 5, 3, "en-kjv");
         let bs = books();
         d.handle(
             KeyEvent::new(KeyCode::Backspace, crossterm::event::KeyModifiers::NONE),

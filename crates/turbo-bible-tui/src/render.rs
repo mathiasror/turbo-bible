@@ -17,9 +17,31 @@ pub struct RenderedLine {
 }
 
 const VERSE_NUM_WIDTH: usize = 3;
-/// Number column + two spaces of gutter — used both for the verse prefix and
-/// for the hanging indent of wrapped lines.
-const VERSE_PREFIX: usize = VERSE_NUM_WIDTH + 2;
+/// One-cell gutter (cursor ▸ / bookmark ★ / blank) before the verse number.
+const GUTTER_WIDTH: usize = 1;
+/// Gutter + number column + two-space gap — the chrome before the verse body
+/// on the first line, and the hanging indent of wrapped continuation lines so
+/// they align under the body, not the number.
+const VERSE_PREFIX: usize = GUTTER_WIDTH + VERSE_NUM_WIDTH + 2;
+/// Horizontal padding inside the verse panel so prose doesn't run flush to the
+/// inner border. The full-row highlight still spans border-to-border (the pad
+/// cells carry the row background); only the text is inset.
+const PANEL_PAD: usize = 1;
+/// Maximum readable text-column width. Caps the verse body even when the pane
+/// is wider (≥120 cols with the sidebar on), keeping lines in the comfortable
+/// ~50–70 char range for sustained reading. The row fill still spans the pane.
+const MAX_BODY_WIDTH: usize = 70;
+
+/// Per-verse row treatment. `Selected` (the brightest-cyan visual-selection
+/// slab) outranks `Cursor` so entering visual mode — which makes the cursor
+/// verse a one-verse selection — lights it immediately instead of leaving it
+/// on the calmer cursor teal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowKind {
+    Selected,
+    Cursor,
+    Idle,
+}
 
 #[allow(
     clippy::too_many_lines,
@@ -41,41 +63,37 @@ pub fn render_passage(
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
     // Three-tier row palette, period-correct Turbo Vision:
-    //   idle:                  blue pane bg, light_grey body, yellow num
-    //   in selection (no cur): light_grey bg, black body, black BOLD num — the
-    //                          classic TV "selected list item / selected text"
-    //                          look (reverse-video on dialog grey)
-    //   cursor:                cyan bg, bright_white BOLD body, yellow BOLD
-    //                          num — the brightest row anywhere in the pane
-    let verse_num_style = |is_cursor: bool, in_selection: bool| {
-        if is_cursor {
-            Style::new()
-                .fg(theme::yellow())
-                .bg(theme::cyan())
-                .add_modifier(Modifier::BOLD)
-        } else if in_selection {
-            Style::new()
-                .fg(theme::black())
-                .bg(theme::light_grey())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::new()
-                .fg(theme::yellow())
-                .bg(theme::blue())
-                .add_modifier(Modifier::BOLD)
-        }
+    //   idle:     blue pane bg, light_grey body, full yellow num
+    //   cursor:   darker-teal bg, bright_white body — NOT bold: a bold white
+    //             slab drew too much attention against the calm pane. The teal
+    //             fill, the ▸ gutter arrow, and the inverse-video yellow number
+    //             chip already mark the active row, so the body stays
+    //             regular-weight (still bright_white, so it reads as active).
+    //   selected: brightest-cyan slab, black BOLD body/num — the classic TV
+    //             reverse-video selection, and the loudest row in the pane
+    let verse_num_style = |kind: RowKind| match kind {
+        RowKind::Cursor => Style::new()
+            .fg(theme::cursor_row_bg())
+            .bg(theme::yellow())
+            .add_modifier(Modifier::BOLD),
+        RowKind::Selected => Style::new()
+            .fg(theme::black())
+            .bg(theme::selection_bg())
+            .add_modifier(Modifier::BOLD),
+        RowKind::Idle => Style::new()
+            .fg(theme::yellow())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD),
     };
-    let verse_text_style = |is_cursor: bool, in_sel: bool| {
-        if is_cursor {
-            Style::new()
-                .fg(theme::bright_white())
-                .bg(theme::cyan())
-                .add_modifier(Modifier::BOLD)
-        } else if in_sel {
-            Style::new().fg(theme::black()).bg(theme::light_grey())
-        } else {
-            Style::new().fg(theme::light_grey()).bg(theme::blue())
-        }
+    let verse_text_style = |kind: RowKind| match kind {
+        RowKind::Cursor => Style::new()
+            .fg(theme::bright_white())
+            .bg(theme::cursor_row_bg()),
+        RowKind::Selected => Style::new()
+            .fg(theme::black())
+            .bg(theme::selection_bg())
+            .add_modifier(Modifier::BOLD),
+        RowKind::Idle => Style::new().fg(theme::light_grey()).bg(theme::blue()),
     };
 
     // Pre-bucket headings by `before_verse`.
@@ -110,7 +128,10 @@ pub fn render_passage(
                     emitted = true;
                 }
                 out.push(RenderedLine {
-                    line: Line::from(Span::styled(h.text.clone(), heading_style)),
+                    line: Line::from(vec![
+                        Span::styled(" ".repeat(PANEL_PAD), heading_style),
+                        Span::styled(h.text.clone(), heading_style),
+                    ]),
                     verse: 0,
                 });
             }
@@ -121,46 +142,65 @@ pub fn render_passage(
 
         let in_selection = selection.is_some_and(|(s, e)| v.number >= s && v.number <= e);
         let is_cursor_verse = v.number == cursor_verse;
-        // Per-verse row bg: cyan for the cursor's full-row highlight,
-        // light_grey for the rest of a visual selection (period-correct TV
-        // selection), blue elsewhere. Gutter, number, body, marker and
-        // right-edge padding all share this bg so each row reads as one
-        // continuous bar.
-        let row_bg = if is_cursor_verse {
-            theme::cyan()
-        } else if in_selection {
-            theme::light_grey()
+        // Row treatment. `Selected` outranks `Cursor` so pressing `v` (which
+        // makes the cursor verse a one-verse selection) lights it immediately
+        // as the brightest-cyan slab; the cursor keeps its ▸ glyph so anchor
+        // and cursor stay distinguishable inside a range. In normal mode
+        // `selection` is None, so the cursor falls through to the teal tier.
+        let kind = if in_selection {
+            RowKind::Selected
+        } else if is_cursor_verse {
+            RowKind::Cursor
         } else {
-            theme::blue()
+            RowKind::Idle
         };
-        // Markers (ᶠ / ˣ) ride the row bg. Cursor row keeps yellow accent;
-        // selection row uses black to match the inverted body text — dark_grey
-        // on light_grey was too low-contrast to spot footnote/xref glyphs at
-        // the end of a selected verse.
-        let marker_fg = if in_selection && !is_cursor_verse {
-            theme::black()
-        } else {
-            theme::yellow()
+        let show_cursor_arrow = is_cursor_verse;
+        // Gutter, number, body, marker and right-edge padding share this bg so
+        // each row reads as one continuous bar (the cursor's number chip is the
+        // one intentional exception — see verse_num_style).
+        let row_bg = match kind {
+            RowKind::Selected => theme::selection_bg(),
+            RowKind::Cursor => theme::cursor_row_bg(),
+            RowKind::Idle => theme::blue(),
         };
-        let marker_style = Style::new()
-            .fg(marker_fg)
-            .bg(row_bg)
-            .add_modifier(Modifier::BOLD);
-        // Gutter glyph (1 col): cursor's ▸ in bright_white reads as a
-        // pointer, not a number-tone accent. Selection rows leave the
-        // gutter blank — the row fill already marks the extent, and a
-        // ▎ tick on top reads as redundant clutter. Bookmark star and
-        // idle space unchanged.
-        let (gutter_glyph, gutter_style) = if is_cursor_verse {
+        // Footnote/xref markers (* / +) are secondary metadata: dim and never
+        // bold so they don't compete with prose. light_grey reads quietly on
+        // the blue pane and the teal cursor row; the brightest-cyan selection
+        // needs black to stay legible (light_grey washes out on #55ffff).
+        let marker_fg = match kind {
+            RowKind::Selected => theme::black(),
+            _ => theme::light_grey(),
+        };
+        let marker_style = Style::new().fg(marker_fg).bg(row_bg);
+        // Gutter glyph (1 col): the cursor's ▸ pointer survives even inside a
+        // visual selection, so anchor (blank gutter) and cursor (▸) stay
+        // distinguishable on the same brightest-cyan fill. Non-cursor
+        // selection rows leave the gutter blank — the fill marks the extent.
+        // Bookmark star and idle space unchanged.
+        let (gutter_glyph, gutter_style) = if show_cursor_arrow {
+            let fg = if kind == RowKind::Selected {
+                theme::black()
+            } else {
+                theme::bright_white()
+            };
             (
                 "\u{25B8}",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::cyan())
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(fg).bg(row_bg).add_modifier(Modifier::BOLD),
             )
-        } else if in_selection {
-            (" ", Style::new().bg(theme::light_grey()))
+        } else if kind == RowKind::Selected
+            && selection
+                .is_some_and(|(s, e)| s != e && v.number == if cursor_verse == s { e } else { s })
+        {
+            // Anchor (fixed) end of a multi-verse selection — a subtle ┃ tick so
+            // it reads as distinct from the moving cursor (▸) end.
+            (
+                "\u{2503}",
+                Style::new()
+                    .fg(theme::dark_grey())
+                    .bg(theme::selection_bg()),
+            )
+        } else if kind == RowKind::Selected {
+            (" ", Style::new().bg(theme::selection_bg()))
         } else if bookmarked.contains(&v.number) {
             (
                 "\u{2605}",
@@ -169,21 +209,26 @@ pub fn render_passage(
         } else {
             (" ", Style::new().bg(theme::blue()))
         };
-        let num_str = format!("{:>width$}  ", v.number, width = VERSE_NUM_WIDTH - 1);
+        // Just the right-aligned number; the two-space gutter gap is a separate
+        // span below so it carries the row bg, not the (cursor) number chip's
+        // yellow — keeping the chip tight to its digits.
+        let num_str = format!("{:>width$}", v.number, width = VERSE_NUM_WIDTH);
 
         let mut markers = String::new();
         if v.footnote_count > 0 {
-            markers.push('ᶠ');
+            markers.push('*');
         }
         if v.xref_note_count > 0 {
-            markers.push('ˣ');
+            markers.push('+');
         }
 
         // Pre-wrap the verse text so wrapped lines hang-indent under the
         // verse number gutter. Append the marker glyph to the last chunk so
         // it sits at the very end of the verse, not on a row of its own.
         let text = v.text.replace('\n', " ");
-        let body_w = (wrap_width as usize).saturating_sub(VERSE_PREFIX).max(20);
+        let body_w = (wrap_width as usize)
+            .saturating_sub(PANEL_PAD + VERSE_PREFIX)
+            .clamp(20, MAX_BODY_WIDTH);
         let mut chunks = word_wrap(&text, body_w);
         if chunks.is_empty() {
             chunks.push(String::new());
@@ -203,7 +248,10 @@ pub fn render_passage(
         // First chunk owns the verse-number prefix; later chunks indent
         // under it. Splitting the loop lets us move `num_str` into the
         // first span instead of cloning it.
-        let body_style = verse_text_style(is_cursor_verse, in_selection);
+        let body_style = verse_text_style(kind);
+        // Left panel inset; the highlight bar still reaches the border because
+        // the pad cell carries the row bg.
+        let pad_style = Style::new().bg(row_bg);
         let mut push_line = |prefix: Vec<Span<'static>>, chunk: &str| {
             let mut spans = prefix;
             let (body, tail) = match chunk.rfind(' ') {
@@ -220,7 +268,7 @@ pub fn render_passage(
             // wrap width so the row fill runs unbroken to the pane's right
             // edge — otherwise the highlight stops at the last word and
             // the row reads as a ragged tag instead of a clean bar.
-            if is_cursor_verse || in_selection {
+            if kind != RowKind::Idle {
                 let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
                 let pad = (wrap_width as usize).saturating_sub(used);
                 if pad > 0 {
@@ -235,14 +283,21 @@ pub fn render_passage(
         let (first, rest) = chunks.split_first().expect("chunks is non-empty above");
         push_line(
             vec![
+                Span::styled(" ".repeat(PANEL_PAD), pad_style),
                 Span::styled(gutter_glyph.to_string(), gutter_style),
-                Span::styled(num_str, verse_num_style(is_cursor_verse, in_selection)),
+                Span::styled(num_str, verse_num_style(kind)),
+                // Two-space gutter gap in the row bg (see `num_str` above) so the
+                // body text breathes after the number on every row treatment.
+                Span::styled("  ".to_string(), pad_style),
             ],
             first,
         );
         for chunk in rest {
             push_line(
-                vec![Span::styled(" ".repeat(VERSE_PREFIX), body_style)],
+                vec![Span::styled(
+                    " ".repeat(PANEL_PAD + VERSE_PREFIX),
+                    body_style,
+                )],
                 chunk,
             );
         }
@@ -252,7 +307,7 @@ pub fn render_passage(
 }
 
 const fn is_marker_glyph(c: char) -> bool {
-    c == 'ᶠ' || c == 'ˣ' || c == ' '
+    c == '*' || c == '+' || c == ' '
 }
 
 /// Find the first line index that belongs to a given verse, for scroll
@@ -350,21 +405,26 @@ mod render_tests {
         rl.line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
+    /// The gutter glyph span sits just after the PANEL_PAD left inset.
+    fn gutter_glyph(rl: &RenderedLine) -> &str {
+        rl.line.spans[PANEL_PAD].content.as_ref()
+    }
+
     #[test]
-    fn cursor_verse_renders_gutter_glyph_first() {
+    fn cursor_verse_renders_gutter_arrow() {
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
         let lines = render_passage(&p, 2, None, &bookmarked, 80);
         let cursor_line = line_for_verse(&lines, 2);
         assert_eq!(
-            cursor_line.line.spans[0].content.as_ref(),
+            gutter_glyph(cursor_line),
             CURSOR_GLYPH,
-            "cursor row's first span should be the ▸ glyph; got {:?}",
+            "cursor row's gutter should be the ▸ glyph; got {:?}",
             line_text(cursor_line),
         );
         // Non-cursor row's gutter is a single space, not any of the marker glyphs.
         let other = line_for_verse(&lines, 1);
-        let g = other.line.spans[0].content.as_ref();
+        let g = gutter_glyph(other);
         assert_eq!(g, " ", "non-cursor gutter should be blank, got {g:?}");
     }
 
@@ -376,24 +436,25 @@ mod render_tests {
         let lines = render_passage(&p, 1, None, &bookmarked, 80);
         let starred = line_for_verse(&lines, 2);
         assert_eq!(
-            starred.line.spans[0].content.as_ref(),
+            gutter_glyph(starred),
             BOOKMARK_GLYPH,
             "bookmarked non-cursor row should display ★",
         );
         // When the cursor sits on the bookmarked verse, the cursor glyph wins.
         let lines = render_passage(&p, 2, None, &bookmarked, 80);
         assert_eq!(
-            line_for_verse(&lines, 2).line.spans[0].content.as_ref(),
+            gutter_glyph(line_for_verse(&lines, 2)),
             CURSOR_GLYPH,
             "cursor glyph must outrank the bookmark glyph on the same row",
         );
     }
 
     #[test]
-    fn selection_gutter_is_blank_while_cursor_keeps_arrow() {
-        // Selection rows leave the gutter blank — the light_grey row fill
-        // already marks the extent, so a separate ▎ tick on top reads as
-        // clutter. The cursor inside the selection still shows ▸.
+    fn selection_marks_anchor_and_cursor_distinctly() {
+        // Multi-verse selection 2..4 with the cursor (head) at 4: verse 4 keeps
+        // ▸, the anchor end (2) gets a subtle ┃ tick, and the interior (3) stays
+        // blank — the bright_cyan fill marks the extent, so a tick there would
+        // be clutter.
         let p = passage_with(
             vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma"), v(4, "delta")],
             vec![],
@@ -401,35 +462,39 @@ mod render_tests {
         let bookmarked = BTreeSet::new();
         let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, 80);
         assert_eq!(
-            line_for_verse(&lines, 2).line.spans[0].content.as_ref(),
-            " ",
+            gutter_glyph(line_for_verse(&lines, 2)),
+            "\u{2503}",
+            "anchor end carries the ┃ tick",
         );
         assert_eq!(
-            line_for_verse(&lines, 3).line.spans[0].content.as_ref(),
+            gutter_glyph(line_for_verse(&lines, 3)),
             " ",
+            "interior blank"
         );
         assert_eq!(
-            line_for_verse(&lines, 4).line.spans[0].content.as_ref(),
+            gutter_glyph(line_for_verse(&lines, 4)),
             CURSOR_GLYPH,
+            "cursor head"
         );
     }
 
     #[test]
-    fn cursor_row_has_full_width_cyan_fill() {
-        // Cursor verse should render with a continuous cyan row fill: the
-        // gutter, verse-number column, body text and trailing pad all share
-        // the cyan bg so the highlight reads as one horizontal bar. Other
-        // verses keep the pane's blue bg.
+    fn cursor_row_has_full_width_teal_fill() {
+        // Cursor verse renders as a continuous teal bar: pad, gutter, body and
+        // trailing pad all share the teal bg. The verse NUMBER is the one
+        // intentional exception — an inverse-video yellow chip. Other verses
+        // keep the pane's blue bg.
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
         let lines = render_passage(&p, 2, None, &bookmarked, 40);
 
         let cursor_line = line_for_verse(&lines, 2);
         for (i, span) in cursor_line.line.spans.iter().enumerate() {
-            assert_eq!(
-                span.style.bg,
-                Some(theme::cyan()),
-                "cursor row span #{i} ({:?}) must sit on cyan bg for the row fill to be continuous",
+            let bg = span.style.bg;
+            assert!(
+                bg == Some(theme::cursor_row_bg()) || bg == Some(theme::yellow()),
+                "cursor row span #{i} ({:?}) bg {bg:?} should be the teal row fill \
+                 or the yellow number chip",
                 span.content,
             );
         }
@@ -458,11 +523,11 @@ mod render_tests {
     }
 
     #[test]
-    fn selection_rows_use_light_grey_row_fill() {
-        // Visual-selection non-cursor verses get a continuous light_grey
-        // row fill — the classic Turbo Vision "selected item" look. The
-        // cursor inside the selection keeps the brighter cyan fill so the
-        // focus is unambiguous.
+    fn selection_rows_use_bright_cyan_row_fill() {
+        // Every verse in a visual selection — including the cursor end — gets
+        // the brightest-cyan slab; the cursor is set apart only by its ▸ glyph
+        // (see selection_gutter_is_blank_while_cursor_keeps_arrow), not a
+        // different fill. Idle rows stay on the blue pane.
         let p = passage_with(
             vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma"), v(4, "delta")],
             vec![],
@@ -476,9 +541,13 @@ mod render_tests {
                 .bg
                 .expect("span must have a bg")
         };
-        assert_eq!(row_bg(2), theme::light_grey(), "selected non-cursor");
-        assert_eq!(row_bg(3), theme::light_grey(), "selected non-cursor");
-        assert_eq!(row_bg(4), theme::cyan(), "cursor verse keeps cyan fill");
+        assert_eq!(row_bg(2), theme::selection_bg(), "selected non-cursor");
+        assert_eq!(row_bg(3), theme::selection_bg(), "selected non-cursor");
+        assert_eq!(
+            row_bg(4),
+            theme::selection_bg(),
+            "cursor verse is part of the bright-cyan range",
+        );
         assert_eq!(row_bg(1), theme::blue(), "idle row stays on pane bg");
 
         // Selection rows pad to full wrap width, same as the cursor row.
@@ -559,13 +628,138 @@ mod render_tests {
             let prefix = cont.line.spans[0].content.as_ref();
             assert_eq!(
                 prefix.chars().count(),
-                VERSE_PREFIX,
-                "wrapped line's first span should be VERSE_PREFIX spaces, got {prefix:?}",
+                PANEL_PAD + VERSE_PREFIX,
+                "wrapped line's first span should be PANEL_PAD+VERSE_PREFIX spaces, got {prefix:?}",
             );
             assert!(
                 prefix.chars().all(|c| c == ' '),
                 "wrapped indent prefix should be all spaces",
             );
         }
+    }
+
+    #[test]
+    fn pressing_v_with_no_movement_highlights_one_verse() {
+        // Visual mode with anchor == cursor (`v` then no motion) yields
+        // selection == Some((c, c)). That single verse must read as the
+        // brightest-cyan selection (immediate confirmation) AND keep its ▸
+        // glyph — not as the calmer normal-mode teal cursor.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma")], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 2, Some((2, 2)), &bookmarked, 40);
+        let row = line_for_verse(&lines, 2);
+        assert_eq!(gutter_glyph(row), CURSOR_GLYPH, "cursor keeps its arrow");
+        assert!(
+            row.line
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(theme::selection_bg())),
+            "the single visual verse must use the brightest-cyan selection fill",
+        );
+        assert!(
+            row.line
+                .spans
+                .iter()
+                .all(|s| s.style.bg != Some(theme::cursor_row_bg())),
+            "it must not read as the normal-mode teal cursor",
+        );
+    }
+
+    #[test]
+    fn cursor_verse_number_is_inverse_video() {
+        // The cursor verse's number is the one inverse-video chip: teal text
+        // on a yellow bg, so the position pops while other numbers keep the
+        // yellow-on-blue scanning rhythm.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 2, None, &bookmarked, 40);
+        let row = line_for_verse(&lines, 2);
+        let num = row
+            .line
+            .spans
+            .iter()
+            .find(|s| {
+                let t = s.content.trim();
+                !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
+            })
+            .expect("verse-number span");
+        assert_eq!(num.style.bg, Some(theme::yellow()));
+        assert_eq!(num.style.fg, Some(theme::cursor_row_bg()));
+    }
+
+    #[test]
+    fn three_digit_verse_number_keeps_body_aligned() {
+        // The number field is exactly VERSE_NUM_WIDTH cells for both 1- and
+        // 3-digit numbers, followed by a fixed 2-space gutter gap, so
+        // Psalm-119-style verses don't shift the body. Span layout:
+        // [PANEL_PAD pad][gutter][number][2-space gap][body…].
+        let p = passage_with(vec![v(9, "alpha"), v(119, "beta")], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 1, None, &bookmarked, 40);
+        for verse in [9, 119] {
+            let spans = &line_for_verse(&lines, verse).line.spans;
+            assert_eq!(
+                spans[PANEL_PAD + 1].content.chars().count(),
+                VERSE_NUM_WIDTH,
+                "verse {verse} number field must be a fixed {VERSE_NUM_WIDTH} cells",
+            );
+            assert_eq!(
+                spans[PANEL_PAD + 2].content,
+                "  ",
+                "verse {verse} number is followed by a fixed 2-space gutter gap",
+            );
+        }
+    }
+
+    #[test]
+    fn footnote_and_xref_markers_use_cp437_glyphs() {
+        // Footnotes render `*`, cross-refs `+`, both dim (light_grey) and
+        // non-bold so they read as secondary metadata, not prose.
+        let mut verse = v(1, "alpha");
+        verse.footnote_count = 1;
+        verse.xref_note_count = 1;
+        let p = passage_with(vec![verse], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 5, None, &bookmarked, 80);
+        let row = line_for_verse(&lines, 1);
+        let text = line_text(row);
+        assert!(text.contains('*'), "footnote marker * missing: {text:?}");
+        assert!(text.contains('+'), "xref marker + missing: {text:?}");
+        let marker = row
+            .line
+            .spans
+            .iter()
+            .find(|s| s.content.contains('*') || s.content.contains('+'))
+            .expect("marker span");
+        assert_eq!(
+            marker.style.fg,
+            Some(theme::light_grey()),
+            "markers are dim"
+        );
+        assert!(
+            !marker
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD),
+            "markers must not be bold",
+        );
+    }
+
+    #[test]
+    fn body_text_caps_at_max_width_on_wide_panes() {
+        // On a very wide pane the verse body must still wrap at the readable
+        // cap (MAX_BODY_WIDTH), not stretch to the full width. Without the cap
+        // this ~180-char verse would fit on a single line at wrap_width 200.
+        let long = "the quick brown fox jumps over the lazy dog and then keeps \
+                    jumping through several more clauses written purely to ensure \
+                    we comfortably clear the seventy-column boundary on a wide pane";
+        let p = passage_with(vec![v(1, long)], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 1, None, &bookmarked, 200);
+        let body_lines = lines.iter().filter(|rl| rl.verse == 1).count();
+        assert!(
+            body_lines >= 2,
+            "wide pane must still wrap the body at the cap, got {body_lines} line(s)",
+        );
     }
 }

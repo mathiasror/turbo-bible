@@ -22,11 +22,14 @@ use crate::theme;
 use crate::ui::dialog;
 use crate::ui::listnav::{ListNav, Step};
 
+// 5-row block letters (the classic ANSI-Shadow glyphs with one redundant
+// middle row dropped) so the splash logo carries less vertical bulk and the
+// book picker rises. Keep both arrays the same height; `render_title` zips them
+// side by side.
 const TITLE_TURBO: &[&str] = &[
     "████████╗██╗   ██╗██████╗ ██████╗  ██████╗ ",
     "╚══██╔══╝██║   ██║██╔══██╗██╔══██╗██╔═══██╗",
     "   ██║   ██║   ██║██████╔╝██████╔╝██║   ██║",
-    "   ██║   ██║   ██║██╔══██╗██╔══██╗██║   ██║",
     "   ██║   ╚██████╔╝██║  ██║██████╔╝╚██████╔╝",
     "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝  ╚═════╝ ",
 ];
@@ -34,7 +37,6 @@ const TITLE_BIBLE: &[&str] = &[
     "██████╗ ██╗██████╗ ██╗     ███████╗",
     "██╔══██╗██║██╔══██╗██║     ██╔════╝",
     "██████╔╝██║██████╔╝██║     █████╗  ",
-    "██╔══██╗██║██╔══██╗██║     ██╔══╝  ",
     "██████╔╝██║██████╔╝███████╗███████╗",
     "╚═════╝ ╚═╝╚═════╝ ╚══════╝╚══════╝",
 ];
@@ -81,6 +83,7 @@ pub enum SplashOutcome {
     OpenGoto,
     OpenFind,
     OpenTranslations,
+    OpenHelp,
     Quit,
 }
 
@@ -297,6 +300,7 @@ impl SplashView {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') if !ctrl => SplashOutcome::Quit,
             KeyCode::Char('c') if ctrl => SplashOutcome::Quit,
+            KeyCode::F(1) => SplashOutcome::OpenHelp,
             KeyCode::F(2) | KeyCode::Char(':') => SplashOutcome::OpenGoto,
             KeyCode::F(3) => SplashOutcome::OpenFind,
             KeyCode::F(5) | KeyCode::Char('t') => SplashOutcome::OpenTranslations,
@@ -375,7 +379,6 @@ impl SplashView {
         let styles = RenderStyles::new(self.mode);
         let inner_w = inner.width as usize;
         let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(blank_line(inner_w, styles.bg));
 
         self.render_title(&styles, inner_w, inner.height as usize, &mut lines);
         self.render_quote(&styles, inner_w, &mut lines);
@@ -391,7 +394,7 @@ impl SplashView {
             &entries_nt,
             &mut lines,
         );
-        self.render_footer(&styles, &entries_ot, &entries_nt, &mut lines);
+        self.render_footer(&styles, inner_w, &entries_ot, &entries_nt, &mut lines);
 
         Paragraph::new(lines).style(styles.bg).render(inner, buf);
     }
@@ -403,10 +406,15 @@ impl SplashView {
         avail: usize,
         lines: &mut Vec<Line<'static>>,
     ) {
-        // Prefer side-by-side ("TURBO  BIBLE" on one 6-row logo). Fall back
-        // to stacked, then to plain text on narrow terminals.
+        // The full block-letter banner is the home screen's "moment" — but only
+        // on first launch / when there's no saved reading position. For
+        // returning users (a Continue target exists) it collapses to the
+        // one-line title so the daily verse + book picker own the screen.
+        // Narrow terminals also fall back to compact. Side-by-side, then
+        // stacked, then the one-liner.
         let combined_w = TITLE_TURBO[0].chars().count() + 2 + TITLE_BIBLE[0].chars().count();
-        if inner_w >= combined_w && avail >= 12 {
+        let want_full = self.last.is_none();
+        if want_full && inner_w >= combined_w && avail >= 10 {
             for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(
                     inner_w,
@@ -415,7 +423,7 @@ impl SplashView {
                     styles.title,
                 ));
             }
-        } else if inner_w >= TITLE_TURBO[0].chars().count() && avail >= 22 {
+        } else if want_full && inner_w >= TITLE_TURBO[0].chars().count() && avail >= 18 {
             for row in TITLE_TURBO.iter().chain(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(inner_w, styles.bg, row, styles.title));
             }
@@ -427,7 +435,6 @@ impl SplashView {
                 styles.title,
             ));
         }
-        lines.push(blank_line(inner_w, styles.bg));
         lines.push(center_padded(
             inner_w,
             styles.bg,
@@ -438,7 +445,9 @@ impl SplashView {
 
     fn render_quote(&self, styles: &RenderStyles, inner_w: usize, lines: &mut Vec<Line<'static>>) {
         let Some(q) = &self.quote else { return };
-        lines.push(blank_line(inner_w, styles.bg));
+        // No leading blank: the subtitle sits directly above the verse so the
+        // book picker rises (the verse's own dim reference line below provides
+        // separation from the filter row).
         let max_width = inner_w.saturating_sub(8).max(20);
         // Wrap the body so it renders as one block; the open and close curly
         // quotes hug the first/last words.
@@ -449,8 +458,15 @@ impl SplashView {
         if let Some(last) = body_lines.last_mut() {
             *last = format!("{last}\u{201D}");
         }
+        // The daily verse is the second-strongest element after the title —
+        // bold it so it doesn't read at the same weight as the book picker.
         for body_line in &body_lines {
-            lines.push(center_padded(inner_w, styles.bg, body_line, styles.label));
+            lines.push(center_padded(
+                inner_w,
+                styles.bg,
+                body_line,
+                styles.label.add_modifier(Modifier::BOLD),
+            ));
         }
         lines.push(center_padded(
             inner_w,
@@ -466,6 +482,10 @@ impl SplashView {
         inner_w: usize,
         lines: &mut Vec<Line<'static>>,
     ) {
+        // A blank row sets the filter input apart from the daily-verse
+        // attribution (or the subtitle, when the quote is off) directly above,
+        // so the verse block and the input affordance don't read as one strip.
+        // The trailing blank below still separates it from Continue / columns.
         lines.push(blank_line(inner_w, styles.bg));
         let mode_label = match self.mode {
             SplashMode::Normal => " NORMAL ",
@@ -474,7 +494,7 @@ impl SplashView {
         let filter_display = if self.filter.is_empty() {
             match self.mode {
                 SplashMode::Filter => " (type to filter) ".to_string(),
-                SplashMode::Normal => " /  to filter ".to_string(),
+                SplashMode::Normal => " press / to filter ".to_string(),
             }
         } else {
             format!(" {} ", self.filter)
@@ -482,13 +502,13 @@ impl SplashView {
         // Mode pill bevel: bright_white left + dark_grey right edge cells
         // give the pill a raised look. The pill's own bg fills the rest of
         // each bevel cell so the highlight reads as a soft rim.
-        let pill_bg = styles.mode.bg.unwrap_or_else(theme::cyan);
+        let pill_bg = styles.mode.bg.unwrap_or_else(theme::mode_pill_bg);
         let bevel_left = Style::new().fg(theme::bright_white()).bg(pill_bg);
         let bevel_right = Style::new().fg(theme::dark_grey()).bg(pill_bg);
         // Input field "sunken" edges: dark sliver on the left rim, bright
         // sliver on the right rim. Mirrors the bevel direction so an input
         // reads as inset where a pill reads as raised.
-        let input_bg = styles.filter.bg.unwrap_or_else(theme::cyan);
+        let input_bg = styles.filter.bg.unwrap_or_else(theme::input_field_bg);
         let input_edge_left = Style::new().fg(theme::dark_grey()).bg(input_bg);
         let input_edge_right = Style::new().fg(theme::bright_white()).bg(input_bg);
         let mut filter_row = vec![
@@ -500,8 +520,6 @@ impl SplashView {
             Span::styled("\u{258F}", input_edge_left),
             Span::styled(filter_display.clone(), styles.filter),
         ];
-        let used_filter: usize =
-            2 + 1 + mode_label.chars().count() + 1 + 2 + 1 + filter_display.chars().count();
         let cursor_extra = if self.mode == SplashMode::Filter {
             filter_row.push(Span::styled(
                 "\u{2588}",
@@ -511,13 +529,23 @@ impl SplashView {
         } else {
             0
         };
-        filter_row.push(Span::styled("\u{2595}", input_edge_right));
-        let trailing_edge = 1;
-        if (used_filter + cursor_extra + trailing_edge) < inner_w {
+        // Give the input a deliberate width (mode pill + a cushion) so the
+        // field doesn't pinch around short queries like "jo": pad the well's
+        // own background out to `well_target`, then close the right rim.
+        let well_target = mode_label.chars().count() + 32;
+        let well_used = filter_display.chars().count() + cursor_extra;
+        if well_used < well_target {
             filter_row.push(Span::styled(
-                " ".repeat(inner_w - used_filter - cursor_extra - trailing_edge),
-                styles.bg,
+                " ".repeat(well_target - well_used),
+                styles.filter,
             ));
+        }
+        filter_row.push(Span::styled("\u{2595}", input_edge_right));
+        // Lead = "  " + ▌ + mode + ▐ + "  " + ▏ = mode + 7; then the well and
+        // the closing ▕ (1). Fill the rest of the row with the desktop bg.
+        let used = mode_label.chars().count() + 7 + well_used.max(well_target) + 1;
+        if used < inner_w {
+            filter_row.push(Span::styled(" ".repeat(inner_w - used), styles.bg));
         }
         lines.push(Line::from(filter_row));
         lines.push(blank_line(inner_w, styles.bg));
@@ -557,14 +585,29 @@ impl SplashView {
     ) {
         let (col_left, col_right, gap) = split_columns(inner_w);
         let (ot_label, nt_label) = testament_labels(&self.translation_code);
-        let ot_header = format!(" {}  ({}) ", ot_label, entries_ot.len());
-        let nt_header = format!(" {}  ({}) ", nt_label, entries_nt.len());
-        let ot_header_style = if self.focus == SplashColumn::OT && !self.on_continue {
+        // When filtering, show "matched / total" so the count reads as a result
+        // ("4 of 39 match"); unfiltered, show the plain total as a static label.
+        let (ot_count, nt_count) = if self.filter.is_empty() {
+            (
+                self.books_ot.len().to_string(),
+                self.books_nt.len().to_string(),
+            )
+        } else {
+            (
+                format!("{} / {}", entries_ot.len(), self.books_ot.len()),
+                format!("{} / {}", entries_nt.len(), self.books_nt.len()),
+            )
+        };
+        let ot_header = format!(" {ot_label}  ({ot_count}) ");
+        let nt_header = format!(" {nt_label}  ({nt_count}) ");
+        let ot_focused = self.focus == SplashColumn::OT && !self.on_continue;
+        let nt_focused = self.focus == SplashColumn::NT && !self.on_continue;
+        let ot_header_style = if ot_focused {
             styles.column_focused
         } else {
             styles.column_header
         };
-        let nt_header_style = if self.focus == SplashColumn::NT && !self.on_continue {
+        let nt_header_style = if nt_focused {
             styles.column_focused
         } else {
             styles.column_header
@@ -574,10 +617,20 @@ impl SplashView {
             Span::styled(" ".repeat(gap), styles.bg),
             Span::styled(left_padded(&nt_header, col_right), nt_header_style),
         ]));
+        // The focused column's rule stays bright; the other dims to dark_grey
+        // so the underline echoes which side h/l/Tab is acting on.
+        let bright_rule = Style::new().fg(theme::bright_white()).bg(theme::blue());
+        let dim_rule = Style::new().fg(theme::dark_grey()).bg(theme::blue());
         lines.push(Line::from(vec![
-            Span::styled("─".repeat(col_left), styles.dim),
+            Span::styled(
+                "─".repeat(col_left),
+                if ot_focused { bright_rule } else { dim_rule },
+            ),
             Span::styled(" ".repeat(gap), styles.bg),
-            Span::styled("─".repeat(col_right), styles.dim),
+            Span::styled(
+                "─".repeat(col_right),
+                if nt_focused { bright_rule } else { dim_rule },
+            ),
         ]));
 
         // Entries: side-by-side.
@@ -591,7 +644,6 @@ impl SplashView {
 
         let entry_styles = EntryStyles {
             sel: styles.sel,
-            label: styles.label,
             dim: styles.dim,
             bg: styles.bg,
         };
@@ -625,64 +677,103 @@ impl SplashView {
     fn render_footer(
         &self,
         styles: &RenderStyles,
+        inner_w: usize,
         entries_ot: &[&Book],
         entries_nt: &[&Book],
         lines: &mut Vec<Line<'static>>,
     ) {
         let total_count = entries_ot.len() + entries_nt.len();
-        let count_text = if self.on_continue {
-            "Continue".to_string()
+        // Split the readout into an always-kept core ("n/m" or "Continue") and
+        // a droppable "(N total)" suffix so the budgeter can shed the suffix as
+        // a unit rather than clip it mid-token.
+        let (count_core, count_suffix) = if self.on_continue {
+            ("Continue".to_string(), String::new())
         } else {
             let entries_focused = match self.focus {
                 SplashColumn::OT => entries_ot,
                 SplashColumn::NT => entries_nt,
             };
             let len = entries_focused.len();
-            if len == 0 {
-                format!("0/0 ({total_count} total)")
+            let cur = if len == 0 {
+                0
             } else {
-                format!(
-                    "{}/{} ({} total)",
-                    self.current_cursor() + 1,
-                    len,
-                    total_count
-                )
-            }
+                self.current_cursor() + 1
+            };
+            (format!("{cur}/{len}"), format!(" ({total_count} total)"))
         };
         // The in-dialog footer carries only what's unique to this dialog —
         // splash-local motions and the live cursor/total readout. Global
         // shortcuts (Enter / F2 / F3 / Esc) live in the bottom status bar so
-        // we don't show them twice.
-        let footer = match self.mode {
-            SplashMode::Normal => vec![
-                Span::styled("  ", styles.bg),
-                Span::styled("j k ", styles.key),
-                Span::styled("move  ", styles.dim),
-                Span::styled("h l Tab ", styles.key),
-                Span::styled("column  ", styles.dim),
-                Span::styled("gg G ", styles.key),
-                Span::styled("ends  ", styles.dim),
-                Span::styled("/ ", styles.key),
-                Span::styled("filter  ", styles.dim),
-                Span::styled("t ", styles.key),
-                Span::styled("translation   ", styles.dim),
-                Span::styled(count_text, styles.key),
+        // we don't show them twice. Highest-priority hint group first; the
+        // budgeter drops from the end when the line would overflow.
+        let groups: &[(&str, &str)] = match self.mode {
+            SplashMode::Normal => &[
+                ("j k ", "move  "),
+                ("h l Tab ", "column  "),
+                ("gg G ", "ends  "),
+                ("/ ", "filter  "),
+                ("t ", "translation  "),
             ],
-            SplashMode::Filter => vec![
-                Span::styled("  ", styles.bg),
-                Span::styled("type ", styles.key),
-                Span::styled("to filter  ", styles.dim),
-                Span::styled("Enter ", styles.key),
-                Span::styled("done  ", styles.dim),
-                Span::styled("Esc ", styles.key),
-                Span::styled("clear  ", styles.dim),
-                Span::styled("Ctrl-U ", styles.key),
-                Span::styled("wipe   ", styles.dim),
-                Span::styled(count_text, styles.key),
+            SplashMode::Filter => &[
+                ("type ", "to filter  "),
+                ("Enter ", "done  "),
+                ("Esc ", "clear  "),
+                ("Ctrl-U ", "wipe  "),
             ],
         };
-        lines.push(Line::from(footer));
+        lines.push(assemble_footer(
+            groups,
+            &count_core,
+            &count_suffix,
+            inner_w,
+            styles,
+        ));
     }
+}
+
+/// Lay out the splash footer within `inner_w`: always keep the readout core,
+/// add the `(N total)` suffix only if it fits whole, then fill hint groups in
+/// priority order, dropping low-priority groups (and all after them) rather
+/// than letting ratatui hard-clip the line mid-token.
+fn assemble_footer(
+    groups: &[(&str, &str)],
+    count_core: &str,
+    count_suffix: &str,
+    inner_w: usize,
+    styles: &RenderStyles,
+) -> Line<'static> {
+    const LEAD: usize = 2;
+    let core_w = count_core.chars().count();
+    let suffix_w = count_suffix.chars().count();
+    // Never start a `(…)` we can't close: show the suffix only if it fits
+    // alongside the core.
+    let show_suffix = !count_suffix.is_empty() && LEAD + core_w + suffix_w <= inner_w;
+    let count_w = core_w + if show_suffix { suffix_w } else { 0 };
+
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ".repeat(LEAD), styles.bg)];
+    let mut groups_w = 0;
+    for (k, l) in groups {
+        let gw = k.chars().count() + l.chars().count();
+        if LEAD + groups_w + gw + count_w > inner_w {
+            break; // drop this group and every lower-priority one after it
+        }
+        spans.push(Span::styled((*k).to_string(), styles.key));
+        spans.push(Span::styled((*l).to_string(), styles.dim));
+        groups_w += gw;
+    }
+    // Right-align the readout in its own slot at the line's end, so it reads as
+    // a position indicator rather than one more trailing hint group.
+    let pad = inner_w.saturating_sub(LEAD + groups_w + count_w);
+    if pad > 0 {
+        spans.push(Span::styled(" ".repeat(pad), styles.bg));
+    }
+    let count = if show_suffix {
+        format!("{count_core}{count_suffix}")
+    } else {
+        count_core.to_string()
+    };
+    spans.push(Span::styled(count, styles.key));
+    Line::from(spans)
 }
 
 /// Style table built once per render pass and shared across helpers.
@@ -723,11 +814,11 @@ impl RenderStyles {
                 .add_modifier(bold),
             sel: Style::new()
                 .fg(theme::bright_white())
-                .bg(theme::cyan())
+                .bg(theme::list_focus_bg())
                 .add_modifier(bold),
             filter: Style::new()
                 .fg(theme::black())
-                .bg(theme::cyan())
+                .bg(theme::input_field_bg())
                 .add_modifier(bold),
             mode: match mode {
                 SplashMode::Filter => Style::new()
@@ -736,11 +827,13 @@ impl RenderStyles {
                     .add_modifier(bold),
                 SplashMode::Normal => Style::new()
                     .fg(theme::black())
-                    .bg(theme::cyan())
+                    .bg(theme::mode_pill_bg())
                     .add_modifier(bold),
             },
+            // Unfocused column header — dimmed so the focused (bright_white +
+            // underline) side reads as "this is where j/k moves".
             column_header: Style::new()
-                .fg(theme::yellow())
+                .fg(theme::light_grey())
                 .bg(theme::blue())
                 .add_modifier(bold),
             column_focused: Style::new()
@@ -802,7 +895,6 @@ fn left_padded(s: &str, width: usize) -> String {
 /// render pass and shared across every cell.
 struct EntryStyles {
     sel: Style,
-    label: Style,
     dim: Style,
     bg: Style,
 }
@@ -815,12 +907,7 @@ fn render_entry_cell(
     width: usize,
     styles: &EntryStyles,
 ) -> Vec<Span<'static>> {
-    let EntryStyles {
-        sel,
-        label,
-        dim,
-        bg,
-    } = *styles;
+    let EntryStyles { sel, dim, bg } = *styles;
     let Some(b) = book else {
         return vec![Span::styled(" ".repeat(width), bg)];
     };
@@ -829,7 +916,12 @@ fn render_entry_cell(
     // hints at it — avoids the "ghost cursor" effect.
     let is_cursor = idx == cursor_idx && column_has_focus;
 
-    let row_style = if is_cursor { sel } else { label };
+    // Non-cursor book names sit at light_grey, one step below the bright_white
+    // daily verse above the columns — so the verse reads as the second-
+    // strongest element after the title (bright_white is already the ceiling,
+    // so the hierarchy comes from dimming the picker, not brightening the verse).
+    // The cursor row stays full-bright on its cyan slab.
+    let row_style = if is_cursor { sel } else { dim };
     let mark_style = if is_cursor { sel } else { dim };
     let detail_style = if is_cursor { sel } else { dim };
 
@@ -998,6 +1090,36 @@ mod tests {
         assert!(
             found_combined,
             "expected TURBO and BIBLE block letters on the same row"
+        );
+    }
+
+    #[test]
+    fn returning_user_gets_compact_title() {
+        // A saved reading position (Continue target) must collapse the banner
+        // to the one-line title, even on a terminal wide/tall enough that a
+        // first-launch splash would draw the full block-letter art.
+        let last = Some((
+            Position {
+                book: "O00".into(),
+                chapter: 1,
+                verse: None,
+            },
+            "OT Book 0 1".to_string(),
+        ));
+        let splash = SplashView::new(fake_books(39, 27), last, "t".into(), "en-kjv".into(), None);
+        let styles = RenderStyles::new(splash.mode);
+        let mut lines = Vec::new();
+        splash.render_title(&styles, 110, 30, &mut lines);
+        assert_eq!(
+            lines.len(),
+            2,
+            "compact title is one art row + the subtitle, got {}",
+            lines.len(),
+        );
+        let title: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            title.contains("T U R B O"),
+            "expected the compact one-liner, got {title:?}",
         );
     }
 

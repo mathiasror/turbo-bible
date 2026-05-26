@@ -127,7 +127,7 @@ impl FootnoteDialog {
             .add_modifier(Modifier::BOLD);
         let sel = Style::new()
             .fg(theme::bright_white())
-            .bg(theme::cyan())
+            .bg(theme::list_focus_bg())
             .add_modifier(Modifier::BOLD);
         let xref_color = Style::new()
             .fg(theme::yellow())
@@ -209,7 +209,7 @@ impl FootnoteDialog {
                 Span::styled("  ", bg),
                 Span::styled("Enter ", key_style),
                 Span::styled("follow xref   ", dim),
-                Span::styled("\u{2191}\u{2193} ", key_style),
+                Span::styled("\u{2191}\u{2193}/j k ", key_style),
                 Span::styled("navigate   ", dim),
                 Span::styled("Esc ", key_style),
                 Span::styled("close", dim),

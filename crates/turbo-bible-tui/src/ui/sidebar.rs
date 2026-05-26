@@ -27,14 +27,19 @@ impl Widget for SidebarView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         theme::draw_shadow(buf, area);
 
-        // Subordinate the sidebar visually: dim border + dim title so the
-        // reading pane is unambiguously the primary surface. Single-line
-        // border (vs the reading pane's double) further demotes it.
+        // Subordinate the sidebar visually: a dim dark_grey border + dim title
+        // so the reading pane — same single-line frame, but a bright_white
+        // border — stays the unambiguous primary surface. The demotion is
+        // carried by border COLOUR; both panes use a single-line frame (only
+        // the modal dialogs use the heavier double border).
         let title = " References ";
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::new().fg(theme::light_grey()).bg(theme::blue()))
+            // Dim the border to dark_grey so the panel reads as clearly
+            // subordinate to the scripture pane's bright_white border — the
+            // hierarchy comes from the difference between the two borders.
+            .border_style(Style::new().fg(theme::dark_grey()).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
                 Style::new().fg(theme::light_grey()).bg(theme::blue()),
@@ -67,18 +72,25 @@ fn build_lines(
     let bg = Style::new().bg(theme::blue());
     let body = Style::new().fg(theme::bright_white()).bg(theme::blue());
     let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
-    let header = Style::new()
-        .fg(theme::cyan())
-        .bg(theme::blue())
-        .add_modifier(Modifier::BOLD);
+    // Section labels ("Parallel passage", "Footnotes", "Cross-references") —
+    // mid cyan, NOT bold: a notch below the bold verse-label anchor (see
+    // `accent`). Mid cyan (not the electric `bright_cyan`, reserved for the
+    // visual-mode selection) keeps them well above the dim teal entries while
+    // the panel stays subordinate to the scripture pane; the lighter weight
+    // makes the subject line read as the heavier of the two structural tiers.
+    let header = Style::new().fg(theme::mid_cyan()).bg(theme::blue());
+    // Verse-label heading (e.g. "John 3:16") — the panel's subject line: mid
+    // cyan BOLD, one weight above the (non-bold) section headers so the eye
+    // lands on "what's selected" first. Yellow is reserved for the scripture
+    // pane (verse numbers, mode pills); the sidebar carries no yellow.
     let accent = Style::new()
-        .fg(theme::yellow())
+        .fg(theme::mid_cyan())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    let xref_style = Style::new()
-        .fg(theme::yellow())
-        .bg(theme::blue())
-        .add_modifier(Modifier::UNDERLINED);
+    // Cross-reference entries — dim cyan (teal), well below the mid-cyan section
+    // labels, and no underline: DOS/Turbo Vision TUIs never underlined whole
+    // entries (the `→` arrow already signals navigability).
+    let xref_style = Style::new().fg(theme::teal()).bg(theme::blue());
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from(Span::styled("", bg)));
@@ -87,14 +99,14 @@ fn build_lines(
     // can see how many verses they have selected without doing arithmetic.
     let verse_label = match selection {
         Some((s, e)) if s != e => format!(
-            " {} {}:{}-{}  ({} verses)",
-            p.book_abbrev,
-            p.chapter,
-            s,
-            e,
+            " {}  ({} verses)",
+            crate::reference::format_range(&p.book_abbrev, p.chapter, s, e, &p.translation),
             e - s + 1
         ),
-        _ => format!(" {} {}:{}", p.book_abbrev, p.chapter, cursor_verse),
+        _ => format!(
+            " {}",
+            crate::reference::format(&p.book_abbrev, p.chapter, cursor_verse, &p.translation)
+        ),
     };
     lines.push(Line::from(Span::styled(verse_label, accent)));
     lines.push(Line::from(Span::styled("", bg)));
@@ -142,7 +154,7 @@ fn build_lines(
         lines.push(Line::from(Span::styled(" Cross-references", header)));
         for x in &xrefs {
             lines.push(Line::from(vec![
-                Span::styled("   \u{2192} ", body),
+                Span::styled("   \u{2192} ", xref_style),
                 Span::styled(x.target_label(), xref_style),
             ]));
         }

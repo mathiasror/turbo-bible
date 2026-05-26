@@ -4,7 +4,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
@@ -24,11 +24,14 @@ pub fn draw_dialog(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
     theme::draw_shadow(buf, area);
 
     // Fill window background with blue so cells under the border are clean.
+    // `Style::reset()` (not `Style::new()`) clears any residual modifier left
+    // by content underneath the dialog — otherwise an underlined/bold cell
+    // (e.g. a sidebar xref) keeps its modifier through the fill.
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
             cell.set_symbol(" ");
-            cell.set_style(Style::new().bg(theme::blue()));
+            cell.set_style(Style::reset().bg(theme::blue()));
         }
     }
 
@@ -44,6 +47,42 @@ pub fn draw_dialog(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
     let inner = block.inner(area);
     block.render(area, buf);
     inner
+}
+
+/// A Turbo-Vision "sunken" text input field, shared by Goto and Find so the
+/// two frame, pad, and render the cursor identically: a dark left rim `▏`, a
+/// one-space inset, the typed `text`, a block cursor `█`, an optional
+/// `placeholder` (shown only while `text` is empty), padding out to `width`
+/// columns, closed by a bright right rim `▕`. Returns the field's spans; the
+/// caller prepends any label. `width` is the whole field including both rims.
+pub fn input_field(text: &str, placeholder: &str, width: u16) -> Vec<Span<'static>> {
+    let field_bg = theme::input_field_bg();
+    let body = Style::new()
+        .fg(theme::black())
+        .bg(field_bg)
+        .add_modifier(Modifier::BOLD);
+    let ghost = Style::new().fg(theme::dark_grey()).bg(field_bg);
+    let cursor = Style::new()
+        .fg(theme::black())
+        .bg(theme::bright_white())
+        .add_modifier(Modifier::BOLD);
+    let edge_left = Style::new().fg(theme::dark_grey()).bg(field_bg);
+    let edge_right = Style::new().fg(theme::bright_white()).bg(field_bg);
+
+    let interior = (width as usize).saturating_sub(2).max(1);
+    let mut spans = vec![Span::styled("\u{258F}", edge_left)];
+    let mut content_w = 1 + text.chars().count() + 1; // leading space + text + cursor
+    spans.push(Span::styled(format!(" {text}"), body));
+    spans.push(Span::styled("\u{2588}", cursor));
+    if text.is_empty() && !placeholder.is_empty() {
+        spans.push(Span::styled(placeholder.to_string(), ghost));
+        content_w += placeholder.chars().count();
+    }
+    if content_w < interior {
+        spans.push(Span::styled(" ".repeat(interior - content_w), body));
+    }
+    spans.push(Span::styled("\u{2595}", edge_right));
+    spans
 }
 
 /// Center a w×h rect within `outer`. Clamps if outer is too small.

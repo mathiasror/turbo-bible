@@ -184,7 +184,14 @@ max_width        = 80     # reading pane max width in cols
 [theme]
 # CGA palette by default. Any 24-bit hex color works.
 blue         = "#0000aa"
+# Cyan/teal tiers — selection (bright_cyan), structural labels such as sidebar
+# headers (mid_cyan), list focus (cyan), cursor row (teal), input wells
+# (input_teal).
 cyan         = "#00aaaa"
+mid_cyan     = "#2ad4d4"
+bright_cyan  = "#55ffff"
+teal         = "#006a6a"
+input_teal   = "#005f5f"
 bright_white = "#ffffff"
 light_grey   = "#aaaaaa"
 dark_grey    = "#555555"

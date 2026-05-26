@@ -20,6 +20,7 @@ mod manifest;
 mod nav;
 mod paths;
 mod quote;
+mod reference;
 mod render;
 mod search;
 mod state;
@@ -515,9 +516,11 @@ fn run(
             let raw_event = event::read()?;
             let synth: Option<KeyEvent> = match raw_event {
                 Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
-                Event::Mouse(me) => {
-                    mouse_to_key(me, term_height, make_status(&state.bg, state.show_sidebar))
-                }
+                Event::Mouse(me) => mouse_to_key(
+                    me,
+                    term_height,
+                    make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some()),
+                ),
                 _ => None,
             };
             if let Some(key) = synth {
@@ -606,7 +609,7 @@ fn draw_frame(
     passage: &Passage,
     cursor_verse: i64,
 ) -> Result<()> {
-    let status = make_status(&state.bg, state.show_sidebar);
+    let status = make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some());
     state.refresh_bookmarks_cache(passage);
     // SAFETY (logical): refresh_bookmarks_cache guarantees Some(...) on return.
     let bookmarked_in_chapter = &state
@@ -634,8 +637,12 @@ fn draw_frame(
                     ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
                     buf,
                 );
-                let mode_tag =
-                    mode_tag_for(&state.bg, &state.dialog, state.visual_anchor.is_some());
+                let mode_tag = mode_tag_for(
+                    &state.bg,
+                    &state.dialog,
+                    state.visual_anchor.is_some(),
+                    state.show_sidebar,
+                );
                 crate::ui::statusbar::render(
                     status,
                     ratatui::layout::Rect::new(area.x, area.y + area.height - 1, area.width, 1),
@@ -651,8 +658,12 @@ fn draw_frame(
                 s.render(body, buf);
             }
             Bg::Reading => {
-                let mode_tag =
-                    mode_tag_for(&state.bg, &state.dialog, state.visual_anchor.is_some());
+                let mode_tag = mode_tag_for(
+                    &state.bg,
+                    &state.dialog,
+                    state.visual_anchor.is_some(),
+                    state.show_sidebar,
+                );
                 let selection = state.visual_anchor.map(|a| {
                     let c = cursor_verse;
                     if a <= c { (a, c) } else { (c, a) }
@@ -676,7 +687,7 @@ fn draw_frame(
             Dialog::Goto(d) => d.render(area, buf, &state.books),
             Dialog::Find(d) => d.render(area, buf, &state.books),
             Dialog::Footnote(d) => d.render(area, buf),
-            Dialog::Help(_) => HelpDialog::render(area, buf),
+            Dialog::Help(d) => d.render(area, buf),
             Dialog::Bookmarks(d) => d.render(area, buf, &state.books),
             Dialog::Translations(d) => d.render(area, buf),
         }
@@ -763,8 +774,8 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 Ok(DispatchStep::Continue)
             }
         },
-        Dialog::Help(_) => {
-            if matches!(HelpDialog::handle(key), HelpOutcome::Cancel) {
+        Dialog::Help(d) => {
+            if matches!(d.handle(key), HelpOutcome::Cancel) {
                 state.dialog = Dialog::None;
             }
             Ok(DispatchStep::Continue)
@@ -868,11 +879,11 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
         SplashOutcome::Continue => Ok(DispatchStep::Continue),
         SplashOutcome::Quit => Ok(DispatchStep::Quit),
         SplashOutcome::OpenGoto => {
-            state.dialog = Dialog::Goto(GotoDialog::new());
+            state.dialog = Dialog::Goto(GotoDialog::new(ctx.db.translation()));
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenFind => {
-            state.dialog = Dialog::Find(FindDialog::new());
+            state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation()));
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenBook(p) => {
@@ -898,6 +909,10 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 picker_entries(ctx.db),
                 ctx.db.translation(),
             ));
+            Ok(DispatchStep::Continue)
+        }
+        SplashOutcome::OpenHelp => {
+            state.dialog = Dialog::Help(HelpDialog::new());
             Ok(DispatchStep::Continue)
         }
     }
@@ -1011,8 +1026,8 @@ impl LoopState {
         self.bookmarks_cache = Some((key, set));
     }
 
-    fn open_bookmarks_dialog(&mut self) {
-        let mut d = crate::ui::bookmarks::BookmarksDialog::new(&self.bookmarks);
+    fn open_bookmarks_dialog(&mut self, ctx: &AppCtx) {
+        let mut d = crate::ui::bookmarks::BookmarksDialog::new(&self.bookmarks, ctx.db);
         d.sort_canonical(&self.books);
         self.dialog = Dialog::Bookmarks(d);
     }
@@ -1098,9 +1113,10 @@ fn dispatch_reading(
                 &book_name,
                 ctx.pos.chapter,
                 *ctx.cursor_verse,
+                ctx.db.translation(),
             ));
         }
-        Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new()),
+        Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation())),
         Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
         Action::OpenFootnote => state.open_footnote_dialog(ctx),
         Action::JumpBack => state.history_step(ctx, HistoryDir::Back)?,
@@ -1109,7 +1125,7 @@ fn dispatch_reading(
         Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
         Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
         Action::AddBookmark => state.add_bookmark(ctx),
-        Action::OpenBookmarks => state.open_bookmarks_dialog(),
+        Action::OpenBookmarks => state.open_bookmarks_dialog(ctx),
         Action::OpenTranslations => state.open_translations_dialog(ctx)?,
         Action::Back => state.enter_splash(ctx),
         Action::Quit => return Ok(DispatchStep::Quit),
@@ -1154,7 +1170,7 @@ fn build_bookmarks_set(
     out
 }
 
-fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> Cow<'static, str> {
+fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, show_sidebar: bool) -> Cow<'static, str> {
     match dialog {
         Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
         Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
@@ -1167,11 +1183,14 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> Cow<'static, str> {
                 crate::ui::splash::SplashMode::Normal => Cow::Borrowed("-- NORMAL --"),
                 crate::ui::splash::SplashMode::Filter => Cow::Borrowed("-- FILTER --"),
             },
+            // NOREFS is a persistent cue that the sidebar is toggled off, so
+            // the reading area looking different on return is self-explained.
             Bg::Reading => {
-                if visual {
-                    Cow::Borrowed("-- VISUAL --")
+                let base = if visual { "VISUAL" } else { "NORMAL" };
+                if show_sidebar {
+                    Cow::Owned(format!("-- {base} --"))
                 } else {
-                    Cow::Borrowed("-- NORMAL --")
+                    Cow::Owned(format!("-- {base} | NOREFS --"))
                 }
             }
         },
@@ -1179,6 +1198,10 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool) -> Cow<'static, str> {
 }
 
 const STATUS_SPLASH: &[Shortcut<'static>] = &[
+    Shortcut {
+        key: "F1",
+        action: "Help",
+    },
     Shortcut {
         key: "Enter",
         action: "Open",
@@ -1237,9 +1260,32 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
     ]
 }
 
-const fn make_status(bg: &Bg, show_sidebar: bool) -> &'static [Shortcut<'static>] {
+const STATUS_VISUAL: &[Shortcut<'static>] = &[
+    Shortcut {
+        key: "y",
+        action: "Copy",
+    },
+    Shortcut {
+        key: "b",
+        action: "Bookmark",
+    },
+    Shortcut {
+        key: "V",
+        action: "Exit",
+    },
+    Shortcut {
+        key: "Esc",
+        action: "Cancel",
+    },
+];
+
+const fn make_status(bg: &Bg, show_sidebar: bool, visual: bool) -> &'static [Shortcut<'static>] {
     match bg {
         Bg::Splash(_) => STATUS_SPLASH,
+        // In a visual selection the relevant actions are copy / bookmark /
+        // exit, so swap the reading hints for those (mirrors how the dialogs
+        // carry their own mode-specific footers).
+        Bg::Reading if visual => STATUS_VISUAL,
         Bg::Reading if show_sidebar => STATUS_READING_HIDE,
         Bg::Reading => STATUS_READING_REFS,
     }

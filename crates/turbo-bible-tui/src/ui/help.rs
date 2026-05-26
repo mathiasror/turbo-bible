@@ -1,16 +1,27 @@
 //! Help dialog (F1) — keymap cheat sheet.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use std::cell::Cell;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{
+    Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
+};
 
 use crate::theme;
 use crate::ui::dialog;
 
-pub struct HelpDialog;
+/// The keymap cheat sheet scrolls when the terminal is too short to show every
+/// row. `scroll` is the top content row; `max_scroll` is recorded by `render`
+/// (which alone knows the viewport height) so `handle` can clamp `G`/paging
+/// without re-deriving the layout.
+pub struct HelpDialog {
+    scroll: usize,
+    max_scroll: Cell<usize>,
+}
 
 #[non_exhaustive]
 pub enum HelpOutcome {
@@ -49,8 +60,8 @@ const ROWS: &[Row] = &[
     Entry("K", "footnote / cross-ref popup"),
     Section("Dialogs"),
     Entry("F1", "this help"),
-    Entry("F2  :", "Goto reference  (e.g. John 3:16)"),
-    Entry("F3  /", "Find  (FTS5 search)"),
+    Entry("F2  :", "Goto reference (e.g. John 3:16)"),
+    Entry("F3  /", "Find (FTS5 search)"),
     Entry("n  N", "repeat last find forward / backward"),
     Entry("F4  M", "Bookmarks"),
     Entry("F5  t", "Translations"),
@@ -58,21 +69,80 @@ const ROWS: &[Row] = &[
     Entry("q  Esc  ZZ  ZQ  :q", "quit"),
 ];
 
+/// Rows scrolled per half-page / Space, used by `handle` (which can't see the
+/// real viewport height — `render` clamps the final value via `max_scroll`).
+const PAGE_STEP: usize = 8;
+
+/// Pick the top content row to actually render so a section header is never
+/// the last visible body row with its entries below the fold ("keep with
+/// next"). If the requested scroll would orphan a header at the bottom, nudge
+/// down one row to pull the header's first entry into view. The result is
+/// clamped to `[0, max_scroll]` and used for both the scroll offset and the
+/// `▲`/`▼` indicator so the two always agree.
+fn keep_with_next(requested: usize, body_h: usize, len: usize, is_section: &[bool]) -> usize {
+    let max_scroll = len.saturating_sub(body_h);
+    let scroll = requested.min(max_scroll);
+    if body_h >= 2 {
+        let bottom = scroll + body_h - 1;
+        if bottom + 1 < len && is_section.get(bottom).copied().unwrap_or(false) {
+            return (scroll + 1).min(max_scroll);
+        }
+    }
+    scroll
+}
+
 impl HelpDialog {
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self {
+            scroll: 0,
+            max_scroll: Cell::new(0),
+        }
     }
 
-    pub const fn handle(key: KeyEvent) -> HelpOutcome {
+    pub fn handle(&mut self, key: KeyEvent) -> HelpOutcome {
+        let max = self.max_scroll.get();
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::F(1) => {
                 HelpOutcome::Cancel
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.scroll = (self.scroll + 1).min(max);
+                HelpOutcome::Continue
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.scroll = self.scroll.saturating_sub(1);
+                HelpOutcome::Continue
+            }
+            KeyCode::Char('d') if ctrl => {
+                self.scroll = (self.scroll + PAGE_STEP).min(max);
+                HelpOutcome::Continue
+            }
+            KeyCode::Char('u') if ctrl => {
+                self.scroll = self.scroll.saturating_sub(PAGE_STEP);
+                HelpOutcome::Continue
+            }
+            KeyCode::Char(' ') | KeyCode::PageDown => {
+                self.scroll = (self.scroll + PAGE_STEP).min(max);
+                HelpOutcome::Continue
+            }
+            KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(PAGE_STEP);
+                HelpOutcome::Continue
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
+                self.scroll = 0;
+                HelpOutcome::Continue
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                self.scroll = max;
+                HelpOutcome::Continue
             }
             _ => HelpOutcome::Continue,
         }
     }
 
-    pub fn render(outer: Rect, buf: &mut Buffer) {
+    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
         let w: u16 = outer.width.saturating_sub(6).min(64);
         let h: u16 = outer.height.saturating_sub(4).min(30);
         let area = dialog::center(outer, w, h);
@@ -84,61 +154,208 @@ impl HelpDialog {
             .fg(theme::yellow())
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
-        let header = Style::new()
-            .fg(theme::cyan())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
+        // Section headers: cyan but *not* bold. The bold-yellow key column is
+        // the primary scan target; dropping bold here a half-step keeps the
+        // headers as quiet grouping labels instead of buzzing against the keys.
+        let header = Style::new().fg(theme::cyan()).bg(theme::blue());
 
-        let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut content: Vec<Line<'static>> = Vec::new();
+        // Parallel to `content`: marks which rows are section headers, so the
+        // scroll logic can keep a header glued to its first entry.
+        let mut is_section: Vec<bool> = Vec::new();
+        // No leading blank row: the cheat-sheet is 25 rows, which then fits a
+        // standard ~32-row terminal without scrolling — so the scroll arrows
+        // stay suppressed (see the overflow gate below) instead of a phantom ▲.
         for row in ROWS {
             match row {
                 Section(name) => {
-                    lines.push(Line::from(vec![
+                    content.push(Line::from(vec![
                         Span::styled("  ", bg),
-                        Span::styled(name.to_string(), header),
+                        Span::styled((*name).to_string(), header),
                     ]));
+                    is_section.push(true);
                 }
                 Entry(k, desc) => {
-                    lines.push(Line::from(vec![
+                    content.push(Line::from(vec![
                         Span::styled("    ", bg),
                         Span::styled(format!("{k:<22}"), key),
-                        Span::styled(desc.to_string(), label),
+                        Span::styled((*desc).to_string(), label),
                     ]));
+                    is_section.push(false);
                 }
             }
         }
-        while lines.len() < (inner.height as usize).saturating_sub(2) {
-            lines.push(blank());
-        }
-        lines.push(Line::from(vec![
-            Span::styled("  ", bg),
-            Span::styled(
-                "Esc / Enter ",
-                Style::new()
-                    .fg(theme::bright_white())
-                    .bg(theme::blue())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "close",
-                Style::new().fg(theme::light_grey()).bg(theme::blue()),
-            ),
-        ]));
 
-        Paragraph::new(lines).style(bg).render(inner, buf);
+        // Pin the footer to the last inner row; everything above it scrolls.
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let max_scroll = content.len().saturating_sub(body_h);
+        self.max_scroll.set(max_scroll);
+        // Never leave a section header stranded at the bottom of the viewport
+        // with its entries below the fold (used for the offset *and* the
+        // indicator below, so they agree).
+        let scroll = keep_with_next(self.scroll, body_h, content.len(), &is_section);
+        // Captured before `content` is moved into the Paragraph below.
+        let content_len = content.len();
+        let overflow = content_len > body_h;
+
+        let body_area = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.saturating_sub(1),
+        );
+        Paragraph::new(content)
+            .style(bg)
+            .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
+            .render(body_area, buf);
+
+        // Footer: dismiss cue (always shown) + a right-aligned scroll indicator.
+        let key_f = Style::new()
+            .fg(theme::bright_white())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        let mut footer: Vec<Span<'static>> = vec![
+            Span::styled("  ", bg),
+            Span::styled("\u{2191}\u{2193}/j k ", key_f),
+            Span::styled("scroll  ", dim),
+            Span::styled("Esc / Enter ", key_f),
+            Span::styled("close", dim),
+        ];
+        // Only show scroll arrows when the content actually overflows the body
+        // (content_height <= viewport_height ⇒ no indicator at all).
+        let mut indicator = String::new();
+        if overflow && scroll > 0 {
+            indicator.push('\u{25B2}');
+        }
+        if overflow && scroll < max_scroll {
+            indicator.push('\u{25BC}');
+        }
+        if !indicator.is_empty() {
+            let used: usize = footer.iter().map(|s| s.content.chars().count()).sum();
+            let ind = format!(" {indicator} ");
+            let pad = (inner.width as usize)
+                .saturating_sub(used)
+                .saturating_sub(ind.chars().count());
+            if pad > 0 {
+                footer.push(Span::styled(" ".repeat(pad), bg));
+            }
+            footer.push(Span::styled(ind, key_f));
+        }
+        let footer_area = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
+        Paragraph::new(Line::from(footer))
+            .style(bg)
+            .render(footer_area, buf);
+
+        // Period-correct scroll thumb in the right border when the sheet
+        // overflows: a ░ track with a ▓ thumb, like Turbo Vision's dialogs. The
+        // footer's ▲/▼ answers "is there more?"; the thumb shows how far down.
+        if overflow {
+            let mut sb = ScrollbarState::new(content_len)
+                .position(scroll)
+                .viewport_content_length(body_h);
+            let track = Rect::new(area.x, body_area.y, area.width, body_area.height);
+            StatefulWidget::render(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None)
+                    .track_symbol(Some("\u{2591}"))
+                    .thumb_symbol("\u{2593}")
+                    .track_style(Style::new().fg(theme::dark_grey()).bg(theme::blue()))
+                    .thumb_style(Style::new().fg(theme::bright_white()).bg(theme::blue())),
+                track,
+                buf,
+                &mut sb,
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
 
     /// Tokens that have been removed from the runtime keymap. If you remove
     /// a binding from `src/keys.rs`, add it here so the help table can't
     /// silently lag behind.
     const REMOVED_KEYS: &[&str] = &["T"];
+
+    /// The cheat sheet is a two-column grid: a fixed-width key field then a
+    /// description. Every entry's description must begin at the same buffer
+    /// column so the table reads as one grid with no per-section drift. Keys
+    /// render yellow and descriptions bright_white, so we locate each column
+    /// by style. Guards against a future key string outgrowing the key field
+    /// (which would silently shove that one row's description to the right).
+    #[test]
+    fn entry_descriptions_share_one_column() {
+        let dlg = HelpDialog::new();
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf);
+
+        let yellow = theme::yellow();
+        let white = theme::bright_white();
+
+        let mut cols: Vec<(u16, u16)> = Vec::new();
+        for y in area.top()..area.bottom() {
+            // Only entry rows carry a yellow key cell (section headers are cyan;
+            // the footer is white/grey, with no yellow).
+            let has_key = (area.left()..area.right()).any(|x| buf[(x, y)].fg == yellow);
+            if !has_key {
+                continue;
+            }
+            // The description's first glyph is a letter; the white left border
+            // (║) and any white padding are skipped by the alphabetic test.
+            if let Some(col) = (area.left()..area.right()).find(|&x| {
+                let c = &buf[(x, y)];
+                c.fg == white && c.symbol().chars().next().is_some_and(char::is_alphabetic)
+            }) {
+                cols.push((y, col));
+            }
+        }
+
+        assert!(!cols.is_empty(), "no entry rows detected");
+        let first = cols[0].1;
+        let drift: Vec<_> = cols.iter().filter(|(_, c)| *c != first).collect();
+        assert!(
+            drift.is_empty(),
+            "entry descriptions drift from column {first}: {drift:?}",
+        );
+    }
+
+    #[test]
+    fn keep_with_next_never_orphans_a_section_header() {
+        // Build `is_section` exactly as `render` does: a leading blank, then
+        // one flag per ROW.
+        let mut is_section = Vec::new();
+        for row in ROWS {
+            is_section.push(matches!(row, Section(_)));
+        }
+        let len = is_section.len();
+        // Across every short viewport and every reachable scroll position, the
+        // bottom visible row must never be a section header that still has
+        // content beneath it — that's the "empty Quit section" artifact.
+        for body_h in 2..=len {
+            let max_scroll = len.saturating_sub(body_h);
+            for requested in 0..=max_scroll {
+                let scroll = keep_with_next(requested, body_h, len, &is_section);
+                assert!(
+                    scroll <= max_scroll,
+                    "scroll {scroll} exceeds max {max_scroll}"
+                );
+                let bottom = scroll + body_h - 1;
+                if bottom + 1 < len {
+                    assert!(
+                        !is_section[bottom],
+                        "orphaned section header at row {bottom} \
+                         (body_h={body_h}, requested={requested})"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn help_table_does_not_list_removed_keys() {
@@ -156,5 +373,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn scroll_thumb_drawn_when_help_overflows() {
+        // A short terminal forces the cheat sheet to overflow; the right border
+        // should then carry a ░ track and a ▓ thumb (distinct from the ▒
+        // backdrop dither).
+        let dlg = HelpDialog::new();
+        let area = Rect::new(0, 0, 70, 14);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf);
+        let mut track = false;
+        let mut thumb = false;
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                match buf[(x, y)].symbol() {
+                    "\u{2591}" => track = true,
+                    "\u{2593}" => thumb = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            track && thumb,
+            "overflowing help must draw a ░ track + ▓ thumb"
+        );
     }
 }
