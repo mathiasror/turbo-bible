@@ -98,7 +98,7 @@ tags matching `v*` and runs three things in parallel/serial:
    populate `crates/turbo-bible-tui/assets/`, then `cargo build
    --release`. Tarballs land as release assets, named
    `turbo-bible-<target>.{tar.gz,zip}`.
-2. Publish `turbo-bible` to crates.io. Requires a `CRATES_IO_TOKEN`
+2. Publish `turbo-bible` to crates.io. Requires a `CARGO_REGISTRY_TOKEN`
    secret in the repo settings (Settings → Secrets and variables →
    Actions). Same pre-step bundles translations into the published
    tarball — they're gitignored locally but pulled in via the
