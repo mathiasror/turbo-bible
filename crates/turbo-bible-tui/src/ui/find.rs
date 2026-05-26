@@ -94,7 +94,7 @@ impl FindDialog {
             self.error = None;
             return;
         }
-        match search::search(db, db.translation(), &self.input, 50) {
+        match search::search(db, &self.input, 50) {
             Ok(rows) => {
                 self.results = rows;
                 self.error = None;

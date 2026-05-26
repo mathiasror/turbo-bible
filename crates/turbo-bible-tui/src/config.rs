@@ -107,6 +107,13 @@ impl Default for ReadingConfig {
     }
 }
 
+/// Clamp bounds for `reading.max_width`, applied on load so an out-of-range
+/// value (hand-edited, or a future bug) can't overflow the pane-layout
+/// arithmetic in [`crate::ui`]'s `body_layout`, and can't shrink the reading
+/// pane to something unusable.
+const MIN_READING_WIDTH: u16 = 20;
+const MAX_READING_WIDTH: u16 = 400;
+
 // --------------------------- Theme ---------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,7 +187,11 @@ impl<'de> Deserialize<'de> for HexColor {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(d)?;
         let hex = raw.strip_prefix('#').unwrap_or(&raw);
-        if hex.len() != 6 {
+        // Require ASCII hex *before* slicing: `hex.len()` is a byte count, so a
+        // 6-byte value with a multibyte char straddling index 2 or 4 (e.g.
+        // "a£bcd") would otherwise panic on a non-char-boundary slice and abort
+        // startup. ASCII-only guarantees the 2/4 byte splits are char boundaries.
+        if hex.len() != 6 || !hex.as_bytes().iter().all(u8::is_ascii_hexdigit) {
             return Err(D::Error::custom(format!(
                 "expected 6-digit hex color, got {raw:?}"
             )));
@@ -354,35 +365,62 @@ fn config_path() -> Result<PathBuf> {
     Ok(p)
 }
 
-pub fn load() -> Config {
+/// Load config, collecting any warnings (unreadable file, dropped legacy keys,
+/// parse error) into the returned `Vec` instead of printing them. The shared
+/// core behind [`load`] (which prints) and [`load_quiet`] (which doesn't).
+fn load_collecting() -> (Config, Vec<String>) {
+    let mut warnings: Vec<String> = Vec::new();
     let Ok(path) = config_path() else {
-        return Config::default();
+        return (Config::default(), warnings);
     };
     let txt = match fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // No config yet — silent default; the first save will create one.
-            return Config::default();
+            return (Config::default(), warnings);
         }
         Err(e) => {
             // File present but unreadable (permissions, IO error, …) — the
-            // user expected their settings to apply. Surface the reason
-            // before falling back to defaults.
-            eprintln!(
-                "warning: could not read {}: {e}; using defaults",
+            // user expected their settings to apply, so record the reason.
+            warnings.push(format!(
+                "could not read {}: {e}; using defaults",
                 path.display()
-            );
-            return Config::default();
+            ));
+            return (Config::default(), warnings);
         }
     };
     let (migrated, dropped) = migrate_legacy(&txt);
     for key in &dropped {
-        eprintln!("warning: config.toml: removed key `{key}` ignored (see CHANGELOG)");
+        warnings.push(format!(
+            "config.toml: removed key `{key}` ignored (see CHANGELOG)"
+        ));
     }
-    toml::from_str(&migrated).unwrap_or_else(|e| {
-        eprintln!("config.toml: {e}; using defaults");
+    let mut cfg: Config = toml::from_str(&migrated).unwrap_or_else(|e| {
+        warnings.push(format!("config.toml: {e}; using defaults"));
         Config::default()
-    })
+    });
+    cfg.reading.max_width = cfg
+        .reading
+        .max_width
+        .clamp(MIN_READING_WIDTH, MAX_READING_WIDTH);
+    (cfg, warnings)
+}
+
+/// Load config, printing any warnings to stderr. Use before the alternate
+/// screen is entered (startup) or after it's torn down (quit).
+pub fn load() -> Config {
+    let (cfg, warnings) = load_collecting();
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
+    cfg
+}
+
+/// Load config without printing — for the in-event-loop reload path, where an
+/// `eprintln!` would corrupt the alternate screen. A read/parse failure yields
+/// defaults silently (the caller is about to rewrite the file regardless).
+pub fn load_quiet() -> Config {
+    load_collecting().0
 }
 
 /// Strip lines that assign to keys we've removed in past versions, so
@@ -531,6 +569,20 @@ blue = "not-a-color"
         assert!(
             err.to_string().to_lowercase().contains("hex"),
             "wanted hex-color error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_six_byte_multibyte_hex_without_panicking() {
+        // Regression: a 6-*byte* value whose chars don't land on the 2/4 byte
+        // boundaries used to panic the deserializer (slicing mid-char) and
+        // abort startup. It must degrade to a clean error instead. "a£bcd" is
+        // 6 bytes — 'a'(1) + '£'(2) + 'b','c','d'(3) — so it passes the old
+        // len()==6 check yet straddles index 2.
+        let err = toml::from_str::<Config>("[theme]\nblue = \"a\u{00A3}bcd\"\n").unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("hex"),
+            "wanted a clean hex-color error, got: {err}"
         );
     }
 

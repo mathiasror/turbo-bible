@@ -20,6 +20,13 @@ tempfile = "3"
 time = "0.3"
 toml = "0.8"
 
+[workspace.lints.clippy]
+# Encode the CI gate (`cargo clippy -- -D warnings` denies clippy::all) so a
+# bare `cargo clippy` is as strict locally as in CI. priority = -1 keeps
+# specific per-lint `#[allow(..., reason = ...)]` overrides working. Affects
+# clippy runs only, not `cargo build`.
+all = { level = "deny", priority = -1 }
+
 [profile.release]
 codegen-units = 1 # Allows compiler to perform better optimization.
 lto = true # Enables Link-time Optimization.

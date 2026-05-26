@@ -30,6 +30,9 @@ include = [
     "NOTICE",
 ]
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 arboard = "3"

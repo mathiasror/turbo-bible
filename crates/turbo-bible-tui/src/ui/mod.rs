@@ -83,7 +83,13 @@ fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Opt
     // Geometry per pane: 1 col outer margin + drop shadow (2 cols right).
     const GAP: u16 = 2;
     const SIDEBAR_W: u16 = 34;
-    let min_terminal_w_for_sidebar = max_reading_w + GAP + SIDEBAR_W + 4;
+    // Saturating: a pathological `max_reading_w` (e.g. a malformed config) must
+    // not overflow — it should just saturate high so this branch falls through
+    // to the centered single pane below.
+    let min_terminal_w_for_sidebar = max_reading_w
+        .saturating_add(GAP)
+        .saturating_add(SIDEBAR_W)
+        .saturating_add(4);
 
     let h = body.height.saturating_sub(2);
     let y = body.y + 1;
@@ -97,14 +103,41 @@ fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Opt
 
     // Two-pane layout: reading flush-left of the centered group, sidebar to
     // its right.
-    let total = max_reading_w + GAP + SIDEBAR_W;
+    let total = max_reading_w.saturating_add(GAP).saturating_add(SIDEBAR_W);
     let left = body.x + (body.width.saturating_sub(total)) / 2;
     let reading = Rect::new(left, y, max_reading_w.saturating_sub(2), h);
     let sidebar = Rect::new(
-        left + max_reading_w + GAP,
+        left.saturating_add(max_reading_w).saturating_add(GAP),
         y,
         SIDEBAR_W.saturating_sub(2),
         h,
     );
     (reading, Some(sidebar))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::body_layout;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn body_layout_survives_absurd_max_width() {
+        // A pathological max_reading_width (e.g. a malformed config that slipped
+        // past clamping) must not overflow the layout arithmetic; it falls back
+        // to the centered single pane.
+        let body = Rect::new(0, 0, 120, 40);
+        let (reading, sidebar) = body_layout(body, true, u16::MAX);
+        assert!(sidebar.is_none(), "absurd width must force single-pane");
+        assert!(reading.width <= body.width);
+    }
+
+    #[test]
+    fn body_layout_two_pane_when_wide_enough() {
+        let body = Rect::new(0, 0, 200, 40);
+        let (_reading, sidebar) = body_layout(body, true, 80);
+        assert!(
+            sidebar.is_some(),
+            "wide terminal + sidebar on should yield two panes"
+        );
+    }
 }

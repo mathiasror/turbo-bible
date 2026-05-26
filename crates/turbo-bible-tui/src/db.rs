@@ -676,15 +676,34 @@ pub fn installed_codes(translations_dir: &Path) -> Result<Vec<String>> {
 }
 
 fn attach_ro(conn: &Connection, path: &Path, alias: &str) -> Result<()> {
-    // `file://...?mode=ro` is the official URI-form opt-in to a
-    // read-only ATTACH. SQLite has no `ATTACH ... READONLY` syntax;
-    // the URI is the workaround.
+    // `file:...?mode=ro` is the official URI-form opt-in to a read-only
+    // ATTACH — SQLite has no `ATTACH ... READONLY` syntax. The filename is
+    // bound as a parameter (so a `'` in the path can't break out of the SQL
+    // string literal) and the path is percent-encoded (so a space or a
+    // `?`/`#`/`%` can't be misread as a URI delimiter). `alias` is a
+    // compile-time constant identifier (XREFS_SCHEMA), not user input, so it
+    // stays inline — identifiers can't be bound.
     let abs = fs::canonicalize(path).with_context(|| format!("canonicalize {}", path.display()))?;
-    let uri = format!("file://{}?mode=ro", abs.display());
-    let stmt = format!("ATTACH DATABASE '{uri}' AS {alias}");
-    conn.execute(&stmt, [])
+    let uri = format!("file://{}?mode=ro", encode_uri_path(&abs.to_string_lossy()));
+    conn.execute(&format!("ATTACH DATABASE ?1 AS {alias}"), params![uri])
         .with_context(|| format!("ATTACH {alias} ({})", path.display()))?;
     Ok(())
+}
+
+/// Percent-encode the characters that would otherwise break a SQLite `file:`
+/// URI path: a space, the `?`/`#` URI delimiters, and `%` itself (so an
+/// existing `%` isn't read as an escape introducer). `/` and non-ASCII UTF-8
+/// pass through unchanged — SQLite's URI parser accepts them as-is, matching
+/// the pre-encoding behaviour for ordinary paths.
+fn encode_uri_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            ' ' | '?' | '#' | '%' => out.push_str(&format!("%{:02X}", c as u32)),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Create an empty `xrefs.db` stand-in at `path` with the columns
@@ -832,6 +851,34 @@ mod tests {
         crate::install::ensure_installed(tmp.path()).expect("install");
         let err = Db::open_ro(tmp.path(), "xx-bogus").unwrap_err();
         assert!(format!("{err}").contains("xx-bogus"));
+    }
+
+    #[test]
+    fn open_ro_handles_paths_with_space_and_apostrophe() {
+        // Regression: `attach_ro` used to interpolate the canonicalized path
+        // into both a SQL string literal and a `file:` URI. A path with a
+        // single quote broke the literal; a space/`?`/`#` broke the URI parse.
+        // Open a Db under a dir whose path has both a space and an apostrophe
+        // and confirm the xrefs ATTACH still resolves (load_passage queries
+        // the ATTACHed `xrefs.xref` table, so a failed ATTACH would surface).
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("we ird's bibles");
+        fs::create_dir_all(&dir).expect("create funky dir");
+        crate::install::ensure_installed(&dir).expect("install into funky path");
+
+        let db = Db::open_ro(&dir, "en-kjv").expect("open_ro under space+apostrophe path");
+        let passage = db
+            .load_passage("JHN", 3)
+            .expect("load John 3 (ATTACH must resolve)");
+        assert!(passage.verses.iter().any(|v| v.number == 16));
+    }
+
+    #[test]
+    fn encode_uri_path_escapes_only_uri_breakers() {
+        assert_eq!(encode_uri_path("/Users/bob/bibles"), "/Users/bob/bibles");
+        assert_eq!(encode_uri_path("/Users/O'Brien/x"), "/Users/O'Brien/x"); // `'` is fine in a URI
+        assert_eq!(encode_uri_path("/a b/c?d#e%f"), "/a%20b/c%3Fd%23e%25f");
+        assert_eq!(encode_uri_path("/Bøker/blå"), "/Bøker/blå"); // non-ASCII passes through
     }
 
     #[test]

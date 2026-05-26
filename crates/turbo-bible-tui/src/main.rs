@@ -5,8 +5,8 @@
 //! tour and [`docs/USAGE.md`] for a feature walk-through; the source
 //! tree mirrors the README's "Layout" section.
 //!
-//! [`README.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/README.md
-//! [`docs/USAGE.md`]: https://github.com/rorvikxyz/turbo-bible/blob/main/docs/USAGE.md
+//! [`README.md`]: https://github.com/mathiasror/turbo-bible/blob/main/README.md
+//! [`docs/USAGE.md`]: https://github.com/mathiasror/turbo-bible/blob/main/docs/USAGE.md
 #![forbid(unsafe_code)]
 
 mod bookmark;
@@ -566,7 +566,7 @@ impl LoopState {
             ))),
             None => Bg::Reading,
         };
-        let bookmarks = bookmark::BookmarkStore::load();
+        let bookmarks = bookmark::BookmarkStore::load(warnings);
         // Persist the migrated bookmarks immediately so the file on disk is
         // in the new TOML format with translation rewritten — survives a
         // crash before any user action triggers another save.
@@ -611,12 +611,14 @@ fn draw_frame(
 ) -> Result<()> {
     let status = make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some());
     state.refresh_bookmarks_cache(passage);
-    // SAFETY (logical): refresh_bookmarks_cache guarantees Some(...) on return.
-    let bookmarked_in_chapter = &state
+    // refresh_bookmarks_cache populates the cache for this passage; read it back
+    // with an empty-set fallback rather than an `expect`, so a future change to
+    // that invariant degrades to "no bookmark stars" instead of a panic.
+    let empty_bookmarks = std::collections::BTreeSet::new();
+    let bookmarked_in_chapter = state
         .bookmarks_cache
         .as_ref()
-        .expect("refresh_bookmarks_cache always sets the cache")
-        .1;
+        .map_or(&empty_bookmarks, |(_, set)| set);
     let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
     term.draw(|f| {
         let area = f.area();
@@ -1448,7 +1450,7 @@ fn repeat_search(
     cursor_verse: i64,
     forward: bool,
 ) -> Option<Position> {
-    let mut hits = search::search(db, db.translation(), query, search::REPEAT_LIMIT).ok()?;
+    let mut hits = search::search(db, query, search::REPEAT_LIMIT).ok()?;
     if hits.is_empty() {
         return None;
     }
@@ -1523,7 +1525,9 @@ fn switch_translation(
 }
 
 fn persist_default_translation(code: &str) -> Result<()> {
-    let mut cfg = config::load();
+    // load_quiet (not load): this runs inside the event loop, so a config-read
+    // warning must not eprintln over the alternate screen.
+    let mut cfg = config::load_quiet();
     cfg.default_translation = Some(code.to_string());
     config::save(&cfg)
 }
