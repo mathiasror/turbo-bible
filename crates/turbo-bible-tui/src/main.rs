@@ -1024,8 +1024,8 @@ impl LoopState {
         self.bookmarks_cache = Some((key, set));
     }
 
-    fn open_bookmarks_dialog(&mut self) {
-        let mut d = crate::ui::bookmarks::BookmarksDialog::new(&self.bookmarks);
+    fn open_bookmarks_dialog(&mut self, ctx: &AppCtx) {
+        let mut d = crate::ui::bookmarks::BookmarksDialog::new(&self.bookmarks, ctx.db);
         d.sort_canonical(&self.books);
         self.dialog = Dialog::Bookmarks(d);
     }
@@ -1123,7 +1123,7 @@ fn dispatch_reading(
         Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
         Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
         Action::AddBookmark => state.add_bookmark(ctx),
-        Action::OpenBookmarks => state.open_bookmarks_dialog(),
+        Action::OpenBookmarks => state.open_bookmarks_dialog(ctx),
         Action::OpenTranslations => state.open_translations_dialog(ctx)?,
         Action::Back => state.enter_splash(ctx),
         Action::Quit => return Ok(DispatchStep::Quit),

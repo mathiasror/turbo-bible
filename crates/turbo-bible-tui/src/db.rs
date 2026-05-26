@@ -493,6 +493,21 @@ impl Db {
     /// # Errors
     /// Fails when the `book_label` lookup returns no row or any of the
     /// verse/heading/footnote queries error.
+    /// Fetch a single verse's body text in the active translation. `Ok(None)`
+    /// when the reference doesn't resolve there (e.g. a bookmark whose
+    /// versification differs from the current translation). Cheaper than
+    /// loading the whole chapter; used for bookmark previews.
+    pub fn verse_text(&self, book: &str, chapter: i64, verse: i64) -> Result<Option<String>> {
+        let conn = self.active_conn();
+        let mut stmt = conn
+            .prepare_cached("SELECT text FROM verse WHERE book=?1 AND chapter=?2 AND verse=?3")?;
+        match stmt.query_row(params![book, chapter, verse], |r| r.get::<_, String>(0)) {
+            Ok(text) => Ok(Some(text)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn load_passage(&self, book: &str, chapter: i64) -> Result<Passage> {
         let conn = self.active_conn();
         let (book_name, book_abbrev) = {
