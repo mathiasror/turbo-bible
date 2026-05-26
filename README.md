@@ -101,6 +101,7 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 | --- | --- |
 | `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `Génesis 1`) |
 | `F3` / `/` | Find dialog (FTS5; BM25-ranked) |
+| `n` / `N` | repeat last search forward / backward |
 | `K` | Footnote / cross-reference popup for current verse |
 | `t` / `F5` | Translations picker |
 | `M` / `F4` | Bookmarks |

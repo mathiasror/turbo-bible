@@ -22,17 +22,21 @@ reference, see the [README](../README.md). For an animated overview, see
 
 ## First launch
 
-After running the importer once (`turbo-bible import`), launch with
-`cargo run --release`. The first launch rebuilds the FTS5 index
-with a diacritic-folding tokenizer and a prefix index. This takes about a
-second and is cached — subsequent launches start instantly.
+The King James Version is embedded in the binary and extracted into
+`$XDG_DATA_HOME/turbo-bible/translations/` on first launch, so there is
+nothing to install before reading. Launch with `cargo run -p turbo-bible
+--release`. The first launch rebuilds the FTS5 index with a
+diacritic-folding tokenizer and a prefix index. This takes about a
+second and is cached — subsequent launches start instantly. (The other
+ten translations and the shared cross-references DB download from GitHub
+Releases the first time you open them.)
 
 You land on the splash screen. If you'd rather skip it and jump straight
 into a passage, pass `--book` and `--chapter`:
 
 ```sh
-cargo run --release -- --book JHN --chapter 3
-cargo run --release -- --translation nb-1930 --book GEN
+cargo run -p turbo-bible --release -- --book JHN --chapter 3
+cargo run -p turbo-bible --release -- --translation nb-1930 --book GEN
 ```
 
 Translation resolution at startup follows this order:

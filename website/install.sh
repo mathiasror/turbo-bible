@@ -78,8 +78,9 @@ case "$uname_s" in
   Linux)  os=unknown-linux-gnu ;;
   Darwin) os=apple-darwin ;;
   MINGW*|MSYS*|CYGWIN*)
-    red "Windows: use the PowerShell installer instead, or download a tarball directly from"
-    red "  https://github.com/$REPO/releases"
+    red "This installer doesn't support Windows. Download the Windows zip"
+    red "(turbo-bible-x86_64-pc-windows-msvc.zip) from:"
+    red "  https://github.com/$REPO/releases/latest"
     exit 1
     ;;
   *)
