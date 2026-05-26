@@ -33,15 +33,19 @@ crates/turbo-bible-data  ──build──▶  dist/build/*.db
         │                                  │
         │                              compress
         ▼                                  ▼
-dist/translations/*.db.zst   ──just bundle-translations──▶
+dist/translations/*.db.zst + manifest.json
         │
-        ▼
-crates/turbo-bible-tui/assets/*.db.zst
+        ▼ just bundle-translations (copies en-kjv.db.zst + manifest.json only)
+crates/turbo-bible-tui/assets/
         │
-        ▼ include_bytes!
+        ▼ include_bytes! (en-kjv only)
 turbo-bible binary
         │
-        ▼ install::ensure_installed (first launch)
+        ▼ install::ensure_installed (first launch: extract en-kjv)
+~/.local/share/turbo-bible/translations/en-kjv.db
+        │
+        ▼ fetch::translation (other 10 + xrefs from GitHub Releases,
+        │                     sha256-checked against embedded manifest)
 ~/.local/share/turbo-bible/translations/*.db
         │
         ▼ Db::open_ro
@@ -70,13 +74,18 @@ runtime queries
 
 ## Architecture quirks
 
-- **The TUI binary embeds all 11 translations + xrefs** as
-  zstd-compressed bytes via `include_bytes!` in
-  `crates/turbo-bible-tui/src/bundled.rs`. First launch decompresses
-  them into `~/.local/share/turbo-bible/translations/`. The
-  `crates/turbo-bible-tui/assets/` directory is gitignored and
-  populated by `just bundle-translations` — building the binary with
-  an empty `assets/` fails loudly at the `include_bytes!` site.
+- **The TUI binary embeds only `en-kjv`** (~4 MB) as zstd-compressed
+  bytes via `include_bytes!` in
+  `crates/turbo-bible-tui/src/bundled.rs`. The other ten translations
+  + `xrefs.db` are fetched from GitHub Releases on demand by
+  `src/fetch.rs`, verified against the sha256s in the embedded
+  `manifest.json` (`src/manifest.rs`). First launch decompresses the
+  embedded KJV into `~/.local/share/turbo-bible/translations/`
+  (`src/install.rs`). The `crates/turbo-bible-tui/assets/` directory
+  is gitignored and populated by `just bundle-translations` — building
+  the binary with an empty `assets/` fails loudly at the
+  `include_bytes!` site (it needs at least `assets/en-kjv.db.zst` +
+  `assets/manifest.json`).
 - **One `Connection` per translation.** `Db::open_ro` opens N read-only
   connections (one per `<code>.db`), each with the shared `xrefs.db`
   ATTACHed under alias `xrefs`. SQLite's compile-time

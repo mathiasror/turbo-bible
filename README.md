@@ -28,17 +28,25 @@ the reference; the guide is the tutorial.
 
 All eleven translations are derived from
 [`scrollmapper/bible_databases`][scrollmapper] by the offline data
-pipeline in `crates/turbo-bible-data` and bundled into the TUI binary
-as zstd-compressed assets.
+pipeline in `crates/turbo-bible-data`. The King James Version is
+embedded in the binary as a zstd-compressed asset; the other ten
+translations and the shared cross-references DB are published as
+GitHub Release assets and fetched on demand.
 
 [scrollmapper]: https://github.com/scrollmapper/bible_databases
 
 ## Setup
 
-Nothing to install — the binary embeds all eleven translations plus
-the shared cross-references DB. First launch extracts them into
-`$XDG_DATA_HOME/turbo-bible/translations/` (typically
-`~/.local/share/turbo-bible/translations/`). Re-extract at any time:
+Nothing to install — the King James Version is embedded in the binary
+and extracted into `$XDG_DATA_HOME/turbo-bible/translations/` (typically
+`~/.local/share/turbo-bible/translations/`) on first launch, so reading
+works offline straight away. The other ten translations and the shared
+cross-references DB are downloaded from GitHub Releases the first time
+you open them, each verified against a SHA-256 in the embedded manifest.
+The `install.sh` curl-installer pre-stages all eleven, so a
+curl-installed copy is fully offline from the first launch.
+
+Re-extract the embedded translation at any time:
 
 ```sh
 turbo-bible install --force

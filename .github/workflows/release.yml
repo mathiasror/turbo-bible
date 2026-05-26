@@ -11,7 +11,8 @@ name: Release
 #
 # Migrating to cargo-dist later: run `cargo dist init`, copy the
 # `bundle` step from the matrix job below into `dist-workspace.toml`
-# under `github-build-setup`, and delete this file. See RELEASING.md.
+# under `github-build-setup`, and delete this file. See the
+# "Cutting a release" section in CONTRIBUTING.md.
 
 on:
   # Tag-driven release. The matching `workflow_dispatch` knob used to
