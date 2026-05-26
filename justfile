@@ -92,9 +92,11 @@ screenshots:
     cargo build -p turbo-bible --release
     vhs demo/screenshots.tape
 
-# Re-render website/og-image.png (the social card). Requires Pillow (`pip install pillow`).
+# Re-render website/og-image.png (the 1200x630 social card) — a real VHS
+# capture of the splash, same toolchain as `demo` / `screenshots`.
 og-image:
-    python3 demo/og-image.py
+    cargo build -p turbo-bible --release
+    vhs demo/og-image.tape
 
 # Re-render website/apple-touch-icon.png (the 180x180 home-screen icon). Requires Pillow.
 apple-touch-icon:

@@ -19,8 +19,12 @@ apex pointing at GitHub Pages (`185.199.108.153`, `.109.153`,
 Open `index.html` in a browser. There's no dev server.
 
 `og-image.png` (the 1200x630 social card referenced by the OG/Twitter
-meta tags) is generated, not hand-edited — regenerate with `just
-og-image` (source: `demo/og-image.py`, needs Pillow).
+meta tags) is a real VHS capture of the splash screen — regenerate with
+`just og-image` (source: `demo/og-image.tape`, needs VHS and the bundled
+translations, same toolchain as the demo GIF and the user-guide shots).
+
+`reading.png` (the reading-view screenshot in the page body) is a copy
+of `docs/screenshots/03-reading.png`, produced by `just screenshots`.
 
 `apple-touch-icon.png` (the 180x180 home-screen icon, a raster twin of
 the inline-SVG favicon) is likewise generated — regenerate with `just
