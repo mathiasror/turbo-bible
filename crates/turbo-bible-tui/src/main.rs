@@ -543,7 +543,12 @@ fn run(
 }
 
 impl LoopState {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "constructs the loop-local state from the values `main` resolves \
+                  at startup; bundling them into a struct would just move the \
+                  long signature up one frame"
+    )]
     fn new(
         books: Vec<Book>,
         translation_label: String,
