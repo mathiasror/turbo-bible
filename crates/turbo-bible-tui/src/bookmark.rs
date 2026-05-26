@@ -101,13 +101,31 @@ impl BookmarkStore {
                 }
             }
         }
-        // Fallback: legacy JSON file from v1.
-        if let Ok(legacy) = legacy_bookmarks_path()
-            && let Ok(txt) = fs::read_to_string(&legacy)
-            && let Ok(mut s) = serde_json::from_str::<Self>(&txt)
-        {
-            s.rewrite_legacy_translation();
-            return s;
+        // Fallback: legacy JSON file from v1. A present-but-unparsable file is
+        // surfaced via `warnings` (parity with the TOML path above) rather than
+        // silently discarded.
+        if let Ok(legacy) = legacy_bookmarks_path() {
+            match fs::read_to_string(&legacy) {
+                Ok(txt) => match serde_json::from_str::<Self>(&txt) {
+                    Ok(mut s) => {
+                        s.rewrite_legacy_translation();
+                        return s;
+                    }
+                    Err(e) => {
+                        warnings.push(format!(
+                            "legacy bookmarks.json is unparsable ({e}); starting with no \
+                             bookmarks — it will be replaced by bookmarks.toml on the next change"
+                        ));
+                    }
+                },
+                // No legacy file either — clean first run, nothing to warn about.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    warnings.push(format!(
+                        "could not read legacy bookmarks.json ({e}); starting with no bookmarks"
+                    ));
+                }
+            }
         }
         Self::default()
     }
