@@ -7,7 +7,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{
+    Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
+};
 
 use crate::theme;
 use crate::ui::dialog;
@@ -193,7 +195,8 @@ impl HelpDialog {
         // indicator below, so they agree).
         let scroll = keep_with_next(self.scroll, body_h, content.len(), &is_section);
         // Captured before `content` is moved into the Paragraph below.
-        let overflow = content.len() > body_h;
+        let content_len = content.len();
+        let overflow = content_len > body_h;
 
         let body_area = Rect::new(
             inner.x,
@@ -243,6 +246,28 @@ impl HelpDialog {
         Paragraph::new(Line::from(footer))
             .style(bg)
             .render(footer_area, buf);
+
+        // Period-correct scroll thumb in the right border when the sheet
+        // overflows: a ░ track with a ▓ thumb, like Turbo Vision's dialogs. The
+        // footer's ▲/▼ answers "is there more?"; the thumb shows how far down.
+        if overflow {
+            let mut sb = ScrollbarState::new(content_len)
+                .position(scroll)
+                .viewport_content_length(body_h);
+            let track = Rect::new(area.x, body_area.y, area.width, body_area.height);
+            StatefulWidget::render(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None)
+                    .track_symbol(Some("\u{2591}"))
+                    .thumb_symbol("\u{2593}")
+                    .track_style(Style::new().fg(theme::dark_grey()).bg(theme::blue()))
+                    .thumb_style(Style::new().fg(theme::bright_white()).bg(theme::blue())),
+                track,
+                buf,
+                &mut sb,
+            );
+        }
     }
 }
 
@@ -348,5 +373,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn scroll_thumb_drawn_when_help_overflows() {
+        // A short terminal forces the cheat sheet to overflow; the right border
+        // should then carry a ░ track and a ▓ thumb (distinct from the ▒
+        // backdrop dither).
+        let dlg = HelpDialog::new();
+        let area = Rect::new(0, 0, 70, 14);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf);
+        let mut track = false;
+        let mut thumb = false;
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                match buf[(x, y)].symbol() {
+                    "\u{2591}" => track = true,
+                    "\u{2593}" => thumb = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            track && thumb,
+            "overflowing help must draw a ░ track + ▓ thumb"
+        );
     }
 }
