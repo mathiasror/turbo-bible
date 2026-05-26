@@ -40,6 +40,9 @@ rust-review.md
 # .claude/settings.json (tracked) instead.
 .claude/settings.local.json
 
+# Claude Code scheduler runtime lock — per-session, never shared.
+.claude/scheduled_tasks.lock
+
 # rustc will dump stack traces when hitting an internal compiler error to PWD
 rustc-ice-*.txt
 
