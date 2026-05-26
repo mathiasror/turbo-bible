@@ -480,7 +480,8 @@
     font-size: 15px;
   }
   .showcase .mini .verse .t { line-height: 1.6; }
-  .showcase .demo-video {
+  .showcase .demo-video,
+  .showcase .shot {
     display: block;
     max-width: 920px;
     width: 100%;
