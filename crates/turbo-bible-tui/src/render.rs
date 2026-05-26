@@ -27,6 +27,10 @@ const VERSE_PREFIX: usize = GUTTER_WIDTH + VERSE_NUM_WIDTH + 2;
 /// inner border. The full-row highlight still spans border-to-border (the pad
 /// cells carry the row background); only the text is inset.
 const PANEL_PAD: usize = 1;
+/// Maximum readable text-column width. Caps the verse body even when the pane
+/// is wider (≥120 cols with the sidebar on), keeping lines in the comfortable
+/// ~50–70 char range for sustained reading. The row fill still spans the pane.
+const MAX_BODY_WIDTH: usize = 70;
 
 /// Per-verse row treatment. `Selected` (the brightest-cyan visual-selection
 /// slab) outranks `Cursor` so entering visual mode — which makes the cursor
@@ -224,7 +228,7 @@ pub fn render_passage(
         let text = v.text.replace('\n', " ");
         let body_w = (wrap_width as usize)
             .saturating_sub(PANEL_PAD + VERSE_PREFIX)
-            .max(20);
+            .clamp(20, MAX_BODY_WIDTH);
         let mut chunks = word_wrap(&text, body_w);
         if chunks.is_empty() {
             chunks.push(String::new());
@@ -738,6 +742,24 @@ mod render_tests {
                 .add_modifier
                 .contains(ratatui::style::Modifier::BOLD),
             "markers must not be bold",
+        );
+    }
+
+    #[test]
+    fn body_text_caps_at_max_width_on_wide_panes() {
+        // On a very wide pane the verse body must still wrap at the readable
+        // cap (MAX_BODY_WIDTH), not stretch to the full width. Without the cap
+        // this ~180-char verse would fit on a single line at wrap_width 200.
+        let long = "the quick brown fox jumps over the lazy dog and then keeps \
+                    jumping through several more clauses written purely to ensure \
+                    we comfortably clear the seventy-column boundary on a wide pane";
+        let p = passage_with(vec![v(1, long)], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 1, None, &bookmarked, 200);
+        let body_lines = lines.iter().filter(|rl| rl.verse == 1).count();
+        assert!(
+            body_lines >= 2,
+            "wide pane must still wrap the body at the cap, got {body_lines} line(s)",
         );
     }
 }

@@ -712,13 +712,13 @@ impl SplashView {
                 ("h l Tab ", "column  "),
                 ("gg G ", "ends  "),
                 ("/ ", "filter  "),
-                ("t ", "translation   "),
+                ("t ", "translation  "),
             ],
             SplashMode::Filter => &[
                 ("type ", "to filter  "),
                 ("Enter ", "done  "),
                 ("Esc ", "clear  "),
-                ("Ctrl-U ", "wipe   "),
+                ("Ctrl-U ", "wipe  "),
             ],
         };
         lines.push(assemble_footer(
@@ -750,16 +750,22 @@ fn assemble_footer(
     let show_suffix = !count_suffix.is_empty() && LEAD + core_w + suffix_w <= inner_w;
     let count_w = core_w + if show_suffix { suffix_w } else { 0 };
 
-    let mut used = LEAD + count_w;
     let mut spans: Vec<Span<'static>> = vec![Span::styled(" ".repeat(LEAD), styles.bg)];
+    let mut groups_w = 0;
     for (k, l) in groups {
         let gw = k.chars().count() + l.chars().count();
-        if used + gw > inner_w {
+        if LEAD + groups_w + gw + count_w > inner_w {
             break; // drop this group and every lower-priority one after it
         }
         spans.push(Span::styled((*k).to_string(), styles.key));
         spans.push(Span::styled((*l).to_string(), styles.dim));
-        used += gw;
+        groups_w += gw;
+    }
+    // Right-align the readout in its own slot at the line's end, so it reads as
+    // a position indicator rather than one more trailing hint group.
+    let pad = inner_w.saturating_sub(LEAD + groups_w + count_w);
+    if pad > 0 {
+        spans.push(Span::styled(" ".repeat(pad), styles.bg));
     }
     let count = if show_suffix {
         format!("{count_core}{count_suffix}")
