@@ -1,0 +1,39 @@
+turbo-bible
+Copyright 2026 Mathias Rørvik
+
+Licensed under either of Apache License, Version 2.0 (LICENSE-APACHE) or
+MIT license (LICENSE-MIT) at your option.
+
+This product bundles the following third-party text and data, each
+under its own terms:
+
+──────────────────────────────────────────────────────────────────────
+Bible translation texts and metadata, derived from:
+  scrollmapper/bible_databases
+  https://github.com/scrollmapper/bible_databases
+
+Per-translation licensing of the bundled texts:
+
+  en-kjv          King James Version (1769)            Public Domain
+  en-asv          American Standard Version (1901)     Public Domain
+  en-ylt          Young's Literal Translation (1898)   Public Domain
+  en-drc          Douay-Rheims-Challoner               Public Domain
+  en-bsb          Berean Standard Bible                CC0-1.0
+  nb-1930         Bibelen 1930 (Bokmål)                Public Domain
+  es-rv1909       Reina-Valera 1909                    Public Domain
+  de-menge        Menge-Bibel (1939)                   Public Domain
+  fr-crampon      La Bible Crampon (1923)              Public Domain
+  pt-blivre       Bíblia Livre                         CC-BY 3.0 BR
+  la-clementine   Clementine Vulgate (1592)            Public Domain
+
+The Bíblia Livre translation is distributed under
+Creative Commons Attribution 3.0 Brazil (CC-BY-3.0-BR):
+  https://creativecommons.org/licenses/by/3.0/br/
+
+The texts above are bundled byte-for-byte from scrollmapper's
+exports; turbo-bible does not edit translation content.
+
+──────────────────────────────────────────────────────────────────────
+Cross-references DB (xrefs.db) is derived from openbible.info's
+public-domain cross-reference dataset, redistributed through the
+scrollmapper/bible_databases project.

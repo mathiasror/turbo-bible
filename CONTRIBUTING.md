@@ -86,6 +86,49 @@ via `just check && just audit && just deny`.
   binaries are the only consumers so there's no need for `thiserror`
   enums today. Use `.context(...)` to add useful frames.
 
+## Cutting a release
+
+Releases are tag-driven. `.github/workflows/release.yml` watches for
+tags matching `v*` and runs three things in parallel/serial:
+
+1. Build prebuilt binaries for five targets (x86_64 + aarch64 Linux,
+   x86_64 + aarch64 macOS, x86_64 Windows). Each build job clones
+   `scrollmapper/bible_databases` at the pinned `SCROLLMAPPER_REF`
+   env var in the workflow, runs `just bundle-translations` to
+   populate `crates/turbo-bible-tui/assets/`, then `cargo build
+   --release`. Tarballs land as release assets, named
+   `turbo-bible-<target>.{tar.gz,zip}`.
+2. Publish `turbo-bible` to crates.io. Requires a `CRATES_IO_TOKEN`
+   secret in the repo settings (Settings → Secrets and variables →
+   Actions). Same pre-step bundles translations into the published
+   tarball — they're gitignored locally but pulled in via the
+   `include = [...]` field in `crates/turbo-bible-tui/Cargo.toml`.
+3. `website/install.sh` is hand-authored and downloads whichever
+   tarball matches the running platform from
+   `releases/latest/download/`. The Pages workflow keeps it served
+   from `turbo.bible/install.sh`.
+
+To cut `v0.1.0`:
+
+```sh
+# 1. Bump version in crates/turbo-bible-tui/Cargo.toml
+# 2. just check  (sanity-pass locally)
+# 3. git commit -am 'release: v0.1.0'
+# 4. git tag v0.1.0
+# 5. git push origin main --tags
+```
+
+The release workflow takes ~15 min end-to-end. Watch it in
+`/actions`. If a build fails (e.g. scrollmapper schema changed),
+fix forward and re-tag a `v0.1.1`; tags are not edited in place.
+
+The future cargo-dist migration: when the hand-rolled workflow
+becomes painful, run `cargo install cargo-dist && cargo dist init`.
+It generates a `dist-workspace.toml` and a new `release.yml`. Move
+the bundle-translations step into the `github-build-setup` config
+and delete this file. The install.sh becomes a thin pass-through to
+the cargo-dist-generated installer.
+
 ## Filing issues
 
 When reporting a bug, include:

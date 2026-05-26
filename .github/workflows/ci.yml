@@ -15,6 +15,12 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   RUST_BACKTRACE: 1
+  # Scrollmapper checkout pinned to a specific SHA so schema drift
+  # on their `master` branch can't break our build mid-week. The TUI's
+  # include_bytes! sites need crates/turbo-bible-tui/assets/*.db.zst
+  # to exist before the build runs, and those are gitignored. Bump
+  # this SHA + the matching one in release.yml when refreshing.
+  SCROLLMAPPER_REF: a228a19a29099a41c196c2a310cd93e50a390e30
 
 jobs:
   check:
@@ -22,6 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Clone scrollmapper at pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
 
       # The toolchain is pinned by rust-toolchain.toml; we add rustfmt + clippy
       # which the default profile in that file already includes.
@@ -31,16 +44,21 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
+      - name: Bundle translations into TUI assets/
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+          mkdir -p crates/turbo-bible-tui/assets
+          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      # The PTY-driven e2e tests in tests/e2e.rs skip themselves when
-      # ~/.local/share/turbo-bible/bible.sqlite isn't present, so unit-only
-      # invocation is fine in CI. If we ever want to run them, the importer
-      # script needs to populate the DB in a CI step first.
       - name: cargo test
         run: cargo test --workspace --all-features
 

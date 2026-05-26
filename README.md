@@ -18,7 +18,9 @@ languages:
 | `pt-blivre`     | Bíblia Livre                         | Portuguese | CC-BY 3.0 BR       |
 | `la-clementine` | Clementine Vulgate (1592)            | Latin      | Public Domain      |
 
-![turbo-bible demo](demo/demo.gif)
+<!-- Absolute URL so the image renders on crates.io and docs.rs, which
+     don't resolve relative repo paths. -->
+![turbo-bible demo](https://raw.githubusercontent.com/mathiasror/turbo-bible/main/demo/demo.gif)
 
 For a narrative walk-through of every feature, see
 [`docs/USAGE.md`](docs/USAGE.md). The keymap and config layout below are

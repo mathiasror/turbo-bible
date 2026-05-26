@@ -5,11 +5,14 @@ just HTML, CSS, and a sprinkle of JS.
 
 ## Deploy
 
-GitHub Pages, deployed from this directory. No workflow is wired up
-yet; when there's real content worth deploying, add
-`.github/workflows/pages.yml` that triggers on push to `main`
-filtered to `website/**` and uploads the directory as the Pages
-artifact.
+GitHub Pages. `.github/workflows/pages.yml` triggers on push to
+`main` whenever anything under `website/**` changes (or on manual
+`workflow_dispatch`) and uploads this directory as the Pages
+artifact. `CNAME` pins the custom domain to `turbo.bible`.
+
+DNS setup (do once, in the registrar): four `A` records for the
+apex pointing at GitHub Pages (`185.199.108.153`, `.109.153`,
+`.110.153`, `.111.153`) plus a `CNAME` `www → mathiasror.github.io.`.
 
 ## Working on it
 

@@ -1,0 +1,156 @@
+name: Release
+
+# Tag-driven release. Push a `v*` tag to fire the workflow:
+#   git tag v0.1.0 && git push --tags
+#
+# Builds prebuilt binaries for five targets, packages each as a tarball
+# (.zip on Windows), uploads them as GitHub release assets, and publishes
+# `turbo-bible` to crates.io. The hand-authored `website/install.sh`
+# fetches whichever tarball matches the user's platform from the
+# `latest` release.
+#
+# Migrating to cargo-dist later: run `cargo dist init`, copy the
+# `bundle` step from the matrix job below into `dist-workspace.toml`
+# under `github-build-setup`, and delete this file. See RELEASING.md.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # Scrollmapper checkout pinned to a specific SHA so the release is
+  # reproducible. Bump this + the matching SHA in ci.yml when you want
+  # to refresh the bundled translations. Data pipeline reads from
+  # `data/scrollmapper-checkout/`.
+  SCROLLMAPPER_REF: a228a19a29099a41c196c2a310cd93e50a390e30
+
+jobs:
+  build:
+    name: build / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: tar.gz
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone scrollmapper at pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Bundle translations into TUI assets/
+        shell: bash
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+          mkdir -p crates/turbo-bible-tui/assets
+          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+
+      - name: Install cross (linux-arm64 only)
+        if: matrix.cross == true
+        run: cargo install cross --locked
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build -p turbo-bible --release --target ${{ matrix.target }}
+          else
+            cargo build -p turbo-bible --release --target ${{ matrix.target }}
+          fi
+
+      - name: Package tarball
+        shell: bash
+        # Asset name is tag-less so `releases/latest/download/<name>` works.
+        # The release page still shows the tag.
+        run: |
+          name="turbo-bible-${{ matrix.target }}"
+          mkdir -p "dist-pkg/$name"
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            cp "target/${{ matrix.target }}/release/turbo-bible.exe" "dist-pkg/$name/"
+            cp README.md LICENSE-MIT LICENSE-APACHE "dist-pkg/$name/" 2>/dev/null || true
+            (cd dist-pkg && 7z a "$name.zip" "$name")
+          else
+            cp "target/${{ matrix.target }}/release/turbo-bible" "dist-pkg/$name/"
+            cp README.md LICENSE-MIT LICENSE-APACHE "dist-pkg/$name/" 2>/dev/null || true
+            (cd dist-pkg && tar -czf "$name.tar.gz" "$name")
+          fi
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-pkg/*.${{ matrix.ext }}
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+
+  publish-crate:
+    name: publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone scrollmapper at pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: publish
+
+      - name: Bundle translations
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+          mkdir -p crates/turbo-bible-tui/assets
+          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+
+      - name: cargo publish (turbo-bible)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p turbo-bible --allow-dirty
