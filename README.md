@@ -22,6 +22,8 @@ languages:
      don't resolve relative repo paths. -->
 ![turbo-bible demo](https://raw.githubusercontent.com/mathiasror/turbo-bible/main/demo/demo.gif)
 
+**Website:** [turbo.bible](https://turbo.bible) — one-line install, screenshots, and the feature tour.
+
 For a narrative walk-through of every feature, see
 [`docs/USAGE.md`](docs/USAGE.md). The keymap and config layout below are
 the reference; the guide is the tutorial.
@@ -43,8 +45,13 @@ and extracted into `$XDG_DATA_HOME/turbo-bible/translations/` (typically
 works offline straight away. The other ten translations and the shared
 cross-references DB are downloaded from GitHub Releases the first time
 you open them, each verified against a SHA-256 in the embedded manifest.
-The `install.sh` curl-installer pre-stages all eleven, so a
-curl-installed copy is fully offline from the first launch.
+For a prebuilt binary, the curl-installer hosted at
+[turbo.bible](https://turbo.bible) pre-stages all eleven translations, so a
+curl-installed copy is fully offline from the first launch:
+
+```sh
+curl -fsSL turbo.bible/install.sh | sh
+```
 
 Re-extract the embedded translation at any time:
 
@@ -235,3 +242,20 @@ Inside `crates/turbo-bible-tui/src/`:
 - Inline (mid-verse) footnote markers — markers sit at end of verse
 - Side-by-side translation diff
 - Mouse-driven verse selection (clicks on menu / status bar work)
+
+## Contributing
+
+Bug reports and PRs are welcome — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the workspace layout, the
+`just check` dev gate (fmt + clippy + tests), and the release process.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option. Unless you explicitly state
+otherwise, any contribution intentionally submitted for inclusion in the
+work by you, as defined in the Apache-2.0 license, shall be dual licensed
+as above, without any additional terms or conditions.
+
+The bundled Bible translations and cross-reference data carry their own
+terms — see [`NOTICE`](NOTICE) for per-translation licensing.

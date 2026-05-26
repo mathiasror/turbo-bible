@@ -329,10 +329,9 @@ remappable.
 | `~/.config/turbo-bible/state.toml` | last-position bookkeeping; written on quit |
 | `~/.config/turbo-bible/bookmarks.toml` | saved bookmarks |
 | `~/.config/turbo-bible/config.toml` | user preferences |
-| `~/.local/share/turbo-bible/bible.sqlite` | the verse database |
-| `~/.local/share/turbo-bible/backups/` | DB snapshots before re-imports |
-| `~/.cache/turbo-bible/scrollmapper/` | cached scrollmapper downloads |
+| `~/.local/share/turbo-bible/translations/<code>.db` | per-translation verse databases (KJV extracted on first launch; the other ten fetched on demand) |
+| `~/.local/share/turbo-bible/translations/xrefs.db` | shared cross-references database |
 
-Locations honour `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME`
-if set. Legacy `state.json` / `bookmarks.json` files are migrated to TOML
-on first launch and removed.
+Locations honour `$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` if set. Legacy
+`state.json` / `bookmarks.json` files are migrated to TOML on first launch
+and removed.
