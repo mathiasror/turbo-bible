@@ -190,6 +190,7 @@
     font-weight: 500;
     white-space: nowrap;
     overflow: auto;
+    text-align: left;
   }
   .install-cmd .sigil { color: var(--cyan-2); margin-right: .5em; }
   .install-cmd .arg   { color: var(--yellow); }
@@ -202,18 +203,38 @@
     cursor: pointer;
     font-family: inherit;
   }
-  .install-alt {
-    text-align: center;
-    color: var(--cyan-2);
-    font-size: 13px;
-    margin: 2px auto 6px;
-    opacity: .85;
+  /* ---------- tab-selectable install widget ---------- */
+  /* flex column so the tab bar can sit above or below the command row
+     just by reordering the markup; the gap stays consistent either way. */
+  .install-tabs {
+    max-width: 760px;
+    margin: 36px auto 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
-  .install-alt code {
-    background: var(--bg-dark);
-    padding: 1px 6px;
-    color: var(--yellow);
+  .tabbar { display: flex; gap: 6px; }
+  .tabbar .tab {
+    background: transparent;
+    color: var(--cyan-2);
+    border: 1px solid var(--cyan-2);
+    padding: 5px 16px;
     font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .tabbar .tab:hover { color: var(--yellow); border-color: var(--yellow); }
+  .tabbar .tab.is-active {
+    background: var(--yellow);
+    color: var(--black);
+    border-color: var(--yellow);
+  }
+  .install-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 14px;
+    align-items: center;
   }
 
   /* ---------- section heading inside panels ---------- */
@@ -889,6 +910,8 @@
     .install-label { text-align: center; }
     .install-cmd { white-space: normal; word-break: break-word; font-size: 13px; }
     .install-copy { justify-self: stretch; width: 100%; }
+    .install-row { grid-template-columns: 1fr; gap: 8px; }
+    .tabbar { justify-content: center; flex-wrap: wrap; }
 
     /* Pitch */
     .pitch { padding: 26px 16px 22px; }
