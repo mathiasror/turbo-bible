@@ -129,7 +129,7 @@ fn fetch_and_install(
 /// expand without bound (a zip bomb would OOM the process before the hash is
 /// ever checked) — then verify the SHA-256 of the result. The decoded bytes
 /// are returned only when both the size and the hash match.
-fn decode_and_verify(
+pub(crate) fn decode_and_verify(
     compressed: &[u8],
     expected_sha256: &str,
     expected_decompressed_size: u64,
