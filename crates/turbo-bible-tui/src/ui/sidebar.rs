@@ -71,14 +71,17 @@ fn build_lines(
         .fg(theme::cyan())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
+    // Verse-label heading (e.g. "John 3:16") — a medium-emphasis cyan
+    // structural anchor. Yellow is reserved for the scripture pane (verse
+    // numbers, mode pills); the sidebar carries no yellow.
     let accent = Style::new()
-        .fg(theme::yellow())
+        .fg(theme::cyan())
         .bg(theme::blue())
         .add_modifier(Modifier::BOLD);
-    let xref_style = Style::new()
-        .fg(theme::yellow())
-        .bg(theme::blue())
-        .add_modifier(Modifier::UNDERLINED);
+    // Cross-reference entries — dim cyan (teal), one tier below the cyan
+    // section labels, and no underline: DOS/Turbo Vision TUIs never
+    // underlined whole entries (the `→` arrow already signals navigability).
+    let xref_style = Style::new().fg(theme::teal()).bg(theme::blue());
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from(Span::styled("", bg)));
@@ -142,7 +145,7 @@ fn build_lines(
         lines.push(Line::from(Span::styled(" Cross-references", header)));
         for x in &xrefs {
             lines.push(Line::from(vec![
-                Span::styled("   \u{2192} ", body),
+                Span::styled("   \u{2192} ", xref_style),
                 Span::styled(x.target_label(), xref_style),
             ]));
         }

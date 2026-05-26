@@ -71,6 +71,24 @@ const ROWS: &[Row] = &[
 /// real viewport height — `render` clamps the final value via `max_scroll`).
 const PAGE_STEP: usize = 8;
 
+/// Pick the top content row to actually render so a section header is never
+/// the last visible body row with its entries below the fold ("keep with
+/// next"). If the requested scroll would orphan a header at the bottom, nudge
+/// down one row to pull the header's first entry into view. The result is
+/// clamped to `[0, max_scroll]` and used for both the scroll offset and the
+/// `▲`/`▼` indicator so the two always agree.
+fn keep_with_next(requested: usize, body_h: usize, len: usize, is_section: &[bool]) -> usize {
+    let max_scroll = len.saturating_sub(body_h);
+    let scroll = requested.min(max_scroll);
+    if body_h >= 2 {
+        let bottom = scroll + body_h - 1;
+        if bottom + 1 < len && is_section.get(bottom).copied().unwrap_or(false) {
+            return (scroll + 1).min(max_scroll);
+        }
+    }
+    scroll
+}
+
 impl HelpDialog {
     pub fn new() -> Self {
         Self {
@@ -134,27 +152,37 @@ impl HelpDialog {
             .fg(theme::yellow())
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
-        let header = Style::new()
-            .fg(theme::cyan())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
+        // Section headers: cyan but *not* bold. The bold-yellow key column is
+        // the primary scan target; dropping bold here a half-step keeps the
+        // headers as quiet grouping labels instead of buzzing against the keys.
+        let header = Style::new().fg(theme::cyan()).bg(theme::blue());
 
         let mut content: Vec<Line<'static>> = Vec::new();
+        // Parallel to `content`: marks which rows are section headers, so the
+        // scroll logic can keep a header glued to its first entry.
+        let mut is_section: Vec<bool> = Vec::new();
         content.push(Line::from(Span::styled(
             " ".repeat(inner.width as usize),
             bg,
         )));
+        is_section.push(false); // leading blank
         for row in ROWS {
             match row {
-                Section(name) => content.push(Line::from(vec![
-                    Span::styled("  ", bg),
-                    Span::styled((*name).to_string(), header),
-                ])),
-                Entry(k, desc) => content.push(Line::from(vec![
-                    Span::styled("    ", bg),
-                    Span::styled(format!("{k:<22}"), key),
-                    Span::styled((*desc).to_string(), label),
-                ])),
+                Section(name) => {
+                    content.push(Line::from(vec![
+                        Span::styled("  ", bg),
+                        Span::styled((*name).to_string(), header),
+                    ]));
+                    is_section.push(true);
+                }
+                Entry(k, desc) => {
+                    content.push(Line::from(vec![
+                        Span::styled("    ", bg),
+                        Span::styled(format!("{k:<22}"), key),
+                        Span::styled((*desc).to_string(), label),
+                    ]));
+                    is_section.push(false);
+                }
             }
         }
 
@@ -162,7 +190,10 @@ impl HelpDialog {
         let body_h = inner.height.saturating_sub(1) as usize;
         let max_scroll = content.len().saturating_sub(body_h);
         self.max_scroll.set(max_scroll);
-        let scroll = self.scroll.min(max_scroll);
+        // Never leave a section header stranded at the bottom of the viewport
+        // with its entries below the fold (used for the offset *and* the
+        // indicator below, so they agree).
+        let scroll = keep_with_next(self.scroll, body_h, content.len(), &is_section);
 
         let body_area = Rect::new(
             inner.x,
@@ -221,6 +252,38 @@ mod tests {
     /// a binding from `src/keys.rs`, add it here so the help table can't
     /// silently lag behind.
     const REMOVED_KEYS: &[&str] = &["T"];
+
+    #[test]
+    fn keep_with_next_never_orphans_a_section_header() {
+        // Build `is_section` exactly as `render` does: a leading blank, then
+        // one flag per ROW.
+        let mut is_section = vec![false];
+        for row in ROWS {
+            is_section.push(matches!(row, Section(_)));
+        }
+        let len = is_section.len();
+        // Across every short viewport and every reachable scroll position, the
+        // bottom visible row must never be a section header that still has
+        // content beneath it — that's the "empty Quit section" artifact.
+        for body_h in 2..=len {
+            let max_scroll = len.saturating_sub(body_h);
+            for requested in 0..=max_scroll {
+                let scroll = keep_with_next(requested, body_h, len, &is_section);
+                assert!(
+                    scroll <= max_scroll,
+                    "scroll {scroll} exceeds max {max_scroll}"
+                );
+                let bottom = scroll + body_h - 1;
+                if bottom + 1 < len {
+                    assert!(
+                        !is_section[bottom],
+                        "orphaned section header at row {bottom} \
+                         (body_h={body_h}, requested={requested})"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn help_table_does_not_list_removed_keys() {

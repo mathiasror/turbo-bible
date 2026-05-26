@@ -93,7 +93,12 @@ pub fn menubar_style() -> Style {
 /// so the overlay reads as period chrome, not a modern dim.
 pub fn draw_modal_backdrop(buf: &mut Buffer, outer: Rect) {
     let buf_area = buf.area;
-    let style = Style::new().fg(dark_grey()).bg(black());
+    // `Style::reset()` (not `Style::new()`) so the fill *clears* any residual
+    // modifier on the cell underneath — ratatui's `Cell::set_style` only
+    // inserts/removes per the style's add/sub masks, so a plain `Style::new()`
+    // leaves an underlying UNDERLINED/BOLD bit set. Without the reset, the
+    // sidebar's underlined xref rows bled faint lines through this backdrop.
+    let style = Style::reset().fg(dark_grey()).bg(black());
     let x_end = outer.right().min(buf_area.right());
     // Leave the top menu bar and bottom status bar uncovered so the modal
     // floats over the desktop — period-correct Turbo Vision — rather than
@@ -113,7 +118,9 @@ pub fn draw_modal_backdrop(buf: &mut Buffer, outer: Rect) {
 /// Uses solid dark cells so the shadow reads cleanly at modern font weights.
 pub fn draw_shadow(buf: &mut Buffer, rect: Rect) {
     let buf_area = buf.area;
-    let shadow = Style::new().bg(black());
+    // `Style::reset()` so the shadow fully occludes whatever was below it,
+    // modifiers included — see the note in `draw_modal_backdrop`.
+    let shadow = Style::reset().bg(black());
     // Two-column-wide vertical strip on the right.
     for dx in 1..=2u16 {
         let x = rect.x.saturating_add(rect.width).saturating_add(dx - 1);
@@ -139,6 +146,78 @@ pub fn draw_shadow(buf: &mut Buffer, rect: Rect) {
             let cell = &mut buf[(x, y)];
             cell.set_symbol(" ");
             cell.set_style(shadow);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Modifier;
+
+    /// Paint a region with the loud modifiers a sidebar xref row carries
+    /// (UNDERLINED + BOLD), so the occlusion tests below would catch a
+    /// regression to `Style::new()` fills (which leave those bits set).
+    fn dirty(buf: &mut Buffer, area: Rect) {
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                let cell = &mut buf[(x, y)];
+                cell.set_symbol("X");
+                cell.set_style(
+                    Style::new()
+                        .fg(yellow())
+                        .bg(blue())
+                        .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn modal_backdrop_fully_occludes_underlying_modifiers() {
+        let area = Rect::new(0, 0, 12, 6);
+        let mut buf = Buffer::empty(area);
+        dirty(&mut buf, area);
+        draw_modal_backdrop(&mut buf, area);
+        // The backdrop leaves the menu (row 0) and status (last row) bands
+        // uncovered; everything between must be clean dither with no leftover
+        // modifier bleeding through from the cells underneath.
+        for y in 1..area.height - 1 {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                assert!(
+                    cell.modifier.is_empty(),
+                    "backdrop left a residual modifier at ({x},{y}): {:?}",
+                    cell.modifier
+                );
+                assert_eq!(cell.symbol(), "\u{2592}", "backdrop symbol at ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn shadow_fully_occludes_underlying_modifiers() {
+        let area = Rect::new(0, 0, 12, 6);
+        let mut buf = Buffer::empty(area);
+        dirty(&mut buf, area);
+        let win = Rect::new(2, 1, 6, 3);
+        draw_shadow(&mut buf, win);
+        // Shadow strip: 2 cols to the right of the window, 1 row below it.
+        for dx in 1..=2u16 {
+            for y in win.y + 1..=win.y + win.height {
+                let cell = &buf[(win.x + win.width + dx - 1, y)];
+                assert!(
+                    cell.modifier.is_empty(),
+                    "shadow left a residual modifier at right strip ({dx},{y})"
+                );
+            }
+        }
+        for x in win.x + 2..win.x + win.width + 2 {
+            let cell = &buf[(x, win.y + win.height)];
+            assert!(
+                cell.modifier.is_empty(),
+                "shadow left a residual modifier at bottom strip ({x})"
+            );
         }
     }
 }

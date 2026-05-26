@@ -137,9 +137,14 @@ impl FindDialog {
         lines.push(blank());
         // Shared sunken input field — frames/pads/cursors identically to Goto.
         let find_label = "  Find: ";
-        let field_w =
-            u16::try_from((inner.width as usize).saturating_sub(find_label.chars().count()))
-                .unwrap_or(0);
+        // 2-cell inset before the inner right border — same rule as Goto so
+        // both input fields end at the same margin.
+        let field_w = u16::try_from(
+            (inner.width as usize)
+                .saturating_sub(find_label.chars().count())
+                .saturating_sub(2),
+        )
+        .unwrap_or(0);
         let mut find_line = vec![Span::styled(find_label, label)];
         find_line.extend(dialog::input_field(&self.input, "", field_w));
         lines.push(Line::from(find_line));

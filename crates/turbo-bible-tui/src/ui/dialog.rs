@@ -24,11 +24,14 @@ pub fn draw_dialog(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
     theme::draw_shadow(buf, area);
 
     // Fill window background with blue so cells under the border are clean.
+    // `Style::reset()` (not `Style::new()`) clears any residual modifier left
+    // by content underneath the dialog — otherwise an underlined/bold cell
+    // (e.g. a sidebar xref) keeps its modifier through the fill.
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
             cell.set_symbol(" ");
-            cell.set_style(Style::new().bg(theme::blue()));
+            cell.set_style(Style::reset().bg(theme::blue()));
         }
     }
 

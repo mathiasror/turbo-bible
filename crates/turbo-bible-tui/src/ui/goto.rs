@@ -123,9 +123,15 @@ impl GotoDialog {
             "  Reference: ",
             Style::new().fg(theme::bright_white()).bg(theme::blue()),
         );
-        let field_w =
-            u16::try_from((inner.width as usize).saturating_sub(label.content.chars().count()))
-                .unwrap_or(0);
+        // Leave a 2-cell inset before the inner right border so the field
+        // reads as framed. Find applies the same rule, so the two dialogs'
+        // input fields end at the same margin.
+        let field_w = u16::try_from(
+            (inner.width as usize)
+                .saturating_sub(label.content.chars().count())
+                .saturating_sub(2),
+        )
+        .unwrap_or(0);
         let mut input_line = vec![label];
         input_line.extend(dialog::input_field(&self.input, "John 3:16", field_w));
 

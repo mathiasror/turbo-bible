@@ -436,7 +436,9 @@ impl SplashView {
 
     fn render_quote(&self, styles: &RenderStyles, inner_w: usize, lines: &mut Vec<Line<'static>>) {
         let Some(q) = &self.quote else { return };
-        lines.push(blank_line(inner_w, styles.bg));
+        // No leading blank: the subtitle sits directly above the verse so the
+        // book picker rises (the verse's own dim reference line below provides
+        // separation from the filter row).
         let max_width = inner_w.saturating_sub(8).max(20);
         // Wrap the body so it renders as one block; the open and close curly
         // quotes hug the first/last words.
@@ -471,7 +473,9 @@ impl SplashView {
         inner_w: usize,
         lines: &mut Vec<Line<'static>>,
     ) {
-        lines.push(blank_line(inner_w, styles.bg));
+        // No leading blank: the verse's reference line (or the subtitle, when
+        // the daily quote is off) sits directly above the filter row. The
+        // trailing blank below still separates it from Continue / the columns.
         let mode_label = match self.mode {
             SplashMode::Normal => " NORMAL ",
             SplashMode::Filter => " FILTER ",
