@@ -180,7 +180,11 @@ impl<'de> Deserialize<'de> for HexColor {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(d)?;
         let hex = raw.strip_prefix('#').unwrap_or(&raw);
-        if hex.len() != 6 {
+        // Require ASCII hex *before* slicing: `hex.len()` is a byte count, so a
+        // 6-byte value with a multibyte char straddling index 2 or 4 (e.g.
+        // "a£bcd") would otherwise panic on a non-char-boundary slice and abort
+        // startup. ASCII-only guarantees the 2/4 byte splits are char boundaries.
+        if hex.len() != 6 || !hex.as_bytes().iter().all(u8::is_ascii_hexdigit) {
             return Err(D::Error::custom(format!(
                 "expected 6-digit hex color, got {raw:?}"
             )));
@@ -531,6 +535,20 @@ blue = "not-a-color"
         assert!(
             err.to_string().to_lowercase().contains("hex"),
             "wanted hex-color error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_six_byte_multibyte_hex_without_panicking() {
+        // Regression: a 6-*byte* value whose chars don't land on the 2/4 byte
+        // boundaries used to panic the deserializer (slicing mid-char) and
+        // abort startup. It must degrade to a clean error instead. "a£bcd" is
+        // 6 bytes — 'a'(1) + '£'(2) + 'b','c','d'(3) — so it passes the old
+        // len()==6 check yet straddles index 2.
+        let err = toml::from_str::<Config>("[theme]\nblue = \"a\u{00A3}bcd\"\n").unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("hex"),
+            "wanted a clean hex-color error, got: {err}"
         );
     }
 
