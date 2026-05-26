@@ -91,3 +91,7 @@ demo:
 screenshots:
     cargo build -p turbo-bible --release
     vhs demo/screenshots.tape
+
+# Re-render website/og-image.png (the social card). Requires Pillow (`pip install pillow`).
+og-image:
+    python3 demo/og-image.py

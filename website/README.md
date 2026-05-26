@@ -17,3 +17,7 @@ apex pointing at GitHub Pages (`185.199.108.153`, `.109.153`,
 ## Working on it
 
 Open `index.html` in a browser. There's no dev server.
+
+`og-image.png` (the 1200x630 social card referenced by the OG/Twitter
+meta tags) is generated, not hand-edited — regenerate with `just
+og-image` (source: `demo/og-image.py`, needs Pillow).
