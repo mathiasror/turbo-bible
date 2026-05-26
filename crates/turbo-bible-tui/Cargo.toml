@@ -48,7 +48,7 @@ smallvec = "1"
 tempfile.workspace = true
 time.workspace = true
 toml.workspace = true
-zstd = "0.13"
+zstd.workspace = true
 
 [build-dependencies]
 serde.workspace = true

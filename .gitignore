@@ -34,8 +34,9 @@ demo/_og-trace.gif
 **/mutants.out*/
 
 # Output of the /rust-review skill — point-in-time artifact, regenerated
-# each run. Baseline logs already live under target/rust-review/.
-rust-review.md
+# each run (a prior pass may be archived as rust-review.prev.md). Baseline
+# logs already live under target/rust-review/.
+rust-review*.md
 
 # Per-user Claude Code settings — keep team-shared rules in
 # .claude/settings.json (tracked) instead.

@@ -2,7 +2,7 @@
 //! `dist/build/` into `dist/translations/<code>.db.zst` and emit
 //! `manifest.json`.
 //!
-//! v1 uses plain `zstd -19 --long=27` (no dictionary). The Bible
+//! v1 uses plain `zstd -19` (no dictionary, default window). The Bible
 //! corpus already compresses to ~25–30% at this setting; the marginal
 //! gain from a trained dictionary doesn't justify a checked-in
 //! artifact until binary size becomes load-bearing in Phase C.
@@ -18,7 +18,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const ZSTD_LEVEL: i32 = 19;
-const ZSTD_WINDOW_LOG: u32 = 27;
 
 pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
     if !in_dir.is_dir() {
@@ -90,10 +89,13 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
         bail!("no translation .db files found in {}", in_dir.display());
     }
 
-    let built_at = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let built_at = i64::try_from(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("system clock is before the unix epoch")?
+            .as_secs(),
+    )
+    .context("build timestamp overflows i64")?;
 
     let manifest = Manifest {
         schema_version: 1,
@@ -122,10 +124,16 @@ fn compress_file(src: &Path, dst: &Path) -> Result<CompressStats> {
     let decompressed_sha256 = sha256_hex(&bytes);
 
     let dst_file = fs::File::create(dst).with_context(|| format!("create {}", dst.display()))?;
+    // No explicit window_log: every translation/xrefs `.db` is well under
+    // zstd's default window at level 19 (8 MiB), so a custom window is a no-op
+    // on ratio. It would also be a footgun — the TUI's decoders
+    // (`fetch::decode_and_verify`, `install`) accept only zstd's default decode
+    // window (log 27). A frame compressed with `window_log(28+)` would be
+    // *refused at runtime* by those decoders, and nothing here would catch it
+    // (small payloads clamp the frame window, hiding the mismatch in tests). If
+    // a future, larger corpus ever needs a bigger window, raise the decoders'
+    // `window_log_max` in lockstep.
     let mut encoder = zstd::Encoder::new(dst_file, ZSTD_LEVEL)?;
-    encoder
-        .window_log(ZSTD_WINDOW_LOG)
-        .context("set zstd window_log")?;
     io::copy(&mut io::Cursor::new(&bytes), &mut encoder)?;
     let mut finished = encoder.finish()?;
     finished.flush()?;

@@ -92,9 +92,26 @@ fn extract_into(target_dir: &Path, force: bool) -> Result<InstallStats> {
             let _ = fs::remove_file(&path);
             continue;
         }
+        // install.sh stages these `.db.zst` files from the network, so verify
+        // them against the embedded manifest (sha256 + a hard decompressed-size
+        // bound) before trusting them — the same gate the on-demand `fetch`
+        // path uses. A stem the binary doesn't know, or one that fails the
+        // check, is skipped (the embedded KJV still works and `fetch` can
+        // re-download a translation later) rather than aborting startup. This
+        // runs before the alternate screen, so eprintln is safe.
+        let Some((sha256, decompressed_size)) = manifest_integrity(stem) else {
+            eprintln!("install: skipping staged {name}: not in the manifest");
+            continue;
+        };
         let bytes = fs::read(&path).with_context(|| format!("read staged {}", path.display()))?;
-        let decoded = zstd::decode_all(io::Cursor::new(&bytes))
-            .with_context(|| format!("decompress {}", path.display()))?;
+        let decoded = match crate::fetch::decode_and_verify(&bytes, sha256, decompressed_size, name)
+        {
+            Ok(decoded) => decoded,
+            Err(e) => {
+                eprintln!("install: skipping staged {name}: {e}");
+                continue;
+            }
+        };
         let tmp = tempfile::NamedTempFile::new_in(target_dir)
             .with_context(|| format!("create temp file in {}", target_dir.display()))?;
         fs::write(tmp.path(), &decoded).with_context(|| format!("write decompressed {stem}.db"))?;
@@ -142,6 +159,21 @@ fn resolve_dir(override_path: Option<&Path>) -> Result<PathBuf> {
     match override_path {
         Some(p) => Ok(p.to_path_buf()),
         None => paths::translations_dir(),
+    }
+}
+
+/// `(sha256, decompressed_size)` for a staged `<stem>.db.zst`, looked up in the
+/// compile-time manifest. `None` for a stem the binary ships no manifest entry
+/// for — such a file is skipped rather than decompressed unverified.
+fn manifest_integrity(stem: &str) -> Option<(&'static str, u64)> {
+    if stem == "xrefs" {
+        Some((
+            crate::manifest::XREFS.sha256,
+            crate::manifest::XREFS.decompressed_size,
+        ))
+    } else {
+        crate::manifest::TranslationManifestEntry::by_code(stem)
+            .map(|t| (t.sha256, t.decompressed_size))
     }
 }
 
@@ -213,5 +245,37 @@ mod tests {
                 asset.code
             );
         }
+    }
+
+    #[test]
+    fn manifest_integrity_known_unknown_and_xrefs() {
+        assert!(manifest_integrity("en-kjv").is_some());
+        assert!(manifest_integrity("xrefs").is_some());
+        assert!(manifest_integrity("zz-nope").is_none());
+    }
+
+    #[test]
+    fn staged_asset_failing_verification_is_skipped_not_extracted() {
+        let dir = tempdir();
+        ensure_installed(dir.path()).expect("first install");
+        // A valid zstd frame whose contents don't match nb-1930's manifest
+        // sha256 / size — the staged-asset gate must reject and skip it.
+        let bogus =
+            zstd::encode_all(io::Cursor::new(&b"not the real nb-1930"[..]), 0).expect("encode");
+        fs::write(dir.path().join("nb-1930.db.zst"), &bogus).expect("stage bogus asset");
+        ensure_installed(dir.path()).expect("a bad staged asset must not abort install");
+        assert!(
+            !dir.path().join("nb-1930.db").exists(),
+            "an unverified staged asset must not be installed"
+        );
+    }
+
+    #[test]
+    fn staged_asset_with_unknown_stem_is_skipped() {
+        let dir = tempdir();
+        ensure_installed(dir.path()).expect("install");
+        fs::write(dir.path().join("zz-nope.db.zst"), b"whatever").expect("stage unknown");
+        ensure_installed(dir.path()).expect("an unknown staged stem must be skipped, not error");
+        assert!(!dir.path().join("zz-nope.db").exists());
     }
 }

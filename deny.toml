@@ -45,17 +45,18 @@ confidence-threshold = 0.93
 multiple-versions = "warn"
 wildcards = "deny"
 
-# Acceptable duplicates. Each entry documents *why* the duplicate
-# exists — typically because a dev-dep (rexpect) hasn't upgraded its
-# transitives, or because two ecosystems (sync vs async hashing,
-# pre/post-1.0 rust-rng) coexist by design. Re-evaluate when a dep
-# bump removes one of these.
+# Acceptable duplicates. With `multiple-versions = "warn"`, deny only flags a
+# crate that has 2+ versions left *after* this list is applied — so skipping
+# all-but-one major of a crate silences its warning while documenting why the
+# spread exists. Re-evaluate when a dep bump collapses one.
 skip = [
-    # rusqlite → hashlink → hashbrown 0.14; ratatui-core / kasuari → 0.16;
-    # toml/indexmap → 0.17. Three transitive consumers, three majors.
+    # hashbrown spans three majors: rusqlite → hashlink (0.14),
+    # ratatui-core / kasuari / lru (0.16), toml → indexmap (0.17). Skip the two
+    # older majors so 0.17 is the lone survivor and deny stays quiet.
     { name = "hashbrown",  version = "0.14" },
     { name = "hashbrown",  version = "0.16" },
-    # proptest / tempfile pull different getrandom majors.
+    # getrandom 0.3 (proptest, a dev-dep) coexists with 0.4 (tempfile); skip the
+    # older so 0.4 survives alone.
     { name = "getrandom",  version = "0.3" },
 ]
 

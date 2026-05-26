@@ -19,6 +19,9 @@ sha2 = "0.10"
 tempfile = "3"
 time = "0.3"
 toml = "0.8"
+# Shared by both crates (the TUI decompresses bundled/fetched assets; the data
+# pipeline compresses them) — pin once here so the two can't drift.
+zstd = "0.13"
 
 [workspace.lints.clippy]
 # Encode the CI gate (`cargo clippy -- -D warnings` denies clippy::all) so a

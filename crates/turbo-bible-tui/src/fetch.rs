@@ -101,7 +101,16 @@ fn fetch_and_install(
     let dl = tempfile::NamedTempFile::new_in(translations_dir)
         .with_context(|| format!("create temp file in {}", translations_dir.display()))?;
 
-    run_curl(&url, dl.path()).with_context(|| format!("download {url}"))?;
+    // Cap the download a little above the asset's decompressed size: the
+    // compressed asset is always smaller, so a legitimate file never trips it,
+    // but a hostile/MITM server can't stream gigabytes into memory before the
+    // hash check runs.
+    run_curl(
+        &url,
+        dl.path(),
+        expected_decompressed_size.saturating_add(1 << 20),
+    )
+    .with_context(|| format!("download {url}"))?;
 
     let compressed =
         fs::read(dl.path()).with_context(|| format!("read {}", dl.path().display()))?;
@@ -129,7 +138,7 @@ fn fetch_and_install(
 /// expand without bound (a zip bomb would OOM the process before the hash is
 /// ever checked) — then verify the SHA-256 of the result. The decoded bytes
 /// are returned only when both the size and the hash match.
-fn decode_and_verify(
+pub(crate) fn decode_and_verify(
     compressed: &[u8],
     expected_sha256: &str,
     expected_decompressed_size: u64,
@@ -162,20 +171,28 @@ fn decode_and_verify(
     Ok(decoded)
 }
 
-fn run_curl(url: &str, dest: &Path) -> Result<()> {
+fn run_curl(url: &str, dest: &Path, max_filesize: u64) -> Result<()> {
     let status = Command::new("curl")
         .args([
             "--fail",
             "--silent",
             "--show-error",
             "--location",
+            // HTTPS only — on the initial request *and* on any redirect curl
+            // follows (--location). Without --proto-redir a redirect could
+            // downgrade to http://; the sha256 gate still guarantees integrity,
+            // but this closes the downgrade surface up front.
             "--proto",
+            "=https",
+            "--proto-redir",
             "=https",
             "--tlsv1.2",
             "--retry",
             "3",
-            "--output",
+            "--max-filesize",
         ])
+        .arg(max_filesize.to_string())
+        .arg("--output")
         .arg(dest)
         .arg(url)
         .stdin(Stdio::null())
