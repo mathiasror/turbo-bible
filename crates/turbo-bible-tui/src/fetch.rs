@@ -3,7 +3,7 @@
 //! other ten translations and `xrefs.db` are fetched the first time
 //! the user opens them.
 //!
-//! Wire format: each asset is a zstd-compressed SQLite file. The
+//! Wire format: each asset is a zstd-compressed `SQLite` file. The
 //! compile-time manifest ([`crate::manifest`]) carries the SHA-256 of
 //! the *decompressed* bytes — verified before the file is moved into
 //! the user's translations directory. A failed integrity check leaves
@@ -138,6 +138,10 @@ fn fetch_and_install(
 /// expand without bound (a zip bomb would OOM the process before the hash is
 /// ever checked) — then verify the SHA-256 of the result. The decoded bytes
 /// are returned only when both the size and the hash match.
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "called from another module (install.rs); pub(crate) states the intended crate-internal visibility — redundant_pub_crate is a nursery lint we don't gate on"
+)]
 pub(crate) fn decode_and_verify(
     compressed: &[u8],
     expected_sha256: &str,

@@ -156,6 +156,10 @@ impl BookmarksDialog {
         origin
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one adaptive layout pass (sizing + cell grid + footer); splitting it would fragment the geometry"
+    )]
     pub fn render(&self, outer: Rect, buf: &mut Buffer, books: &[Book]) {
         let w: u16 = outer.width.saturating_sub(6).min(80);
         // Adaptive height: size to content (subtitle + blank + cells + blank +

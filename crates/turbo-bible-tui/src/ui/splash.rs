@@ -967,6 +967,8 @@ fn testament_labels(code: &str) -> (&'static str, &'static str) {
         "nb" | "nn" | "no" | "da" | "sv" => ("Det gamle testamentet", "Det nye testamentet"),
         "de" => ("Altes Testament", "Neues Testament"),
         "fr" => ("Ancien Testament", "Nouveau Testament"),
+        "pt" => ("Antigo Testamento", "Novo Testamento"),
+        "la" => ("Vetus Testamentum", "Novum Testamentum"),
         _ => ("Old Testament", "New Testament"),
     }
 }

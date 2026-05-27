@@ -92,7 +92,7 @@ fn keep_with_next(requested: usize, body_h: usize, len: usize, is_section: &[boo
 }
 
 impl HelpDialog {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             scroll: 0,
             max_scroll: Cell::new(0),
@@ -285,7 +285,7 @@ mod tests {
     /// The cheat sheet is a two-column grid: a fixed-width key field then a
     /// description. Every entry's description must begin at the same buffer
     /// column so the table reads as one grid with no per-section drift. Keys
-    /// render yellow and descriptions bright_white, so we locate each column
+    /// render yellow and descriptions `bright_white`, so we locate each column
     /// by style. Guards against a future key string outgrowing the key field
     /// (which would silently shove that one row's description to the right).
     #[test]

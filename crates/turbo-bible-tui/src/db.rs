@@ -2,7 +2,7 @@
 //!
 //! At startup [`Db::open_ro`] opens **one `Connection` per installed
 //! translation**, each pointing at its `<code>.db` as the main database
-//! with the shared `xrefs.db` ATTACHed under alias `xrefs`. SQLite's
+//! with the shared `xrefs.db` attached under alias `xrefs`. `SQLite`'s
 //! compile-time `SQLITE_MAX_ATTACHED` defaults to 10, so a single
 //! connection couldn't hold all 11 translations + xrefs at once; the
 //! per-translation-connection model sidesteps the limit entirely and
@@ -165,7 +165,7 @@ const XREFS_SCHEMA: &str = "xrefs";
 pub struct Db {
     /// One Connection per installed translation. Each has its
     /// `<code>.db` open as `main`; if `xrefs.db` is present it's
-    /// ATTACHed as `xrefs`. Keyed by translation code.
+    /// attached as `xrefs`. Keyed by translation code.
     conns: HashMap<String, Connection>,
     /// Sorted by `code`. Built from each translation's `meta` table
     /// as connections are opened (initially or via [`Db::add_translation`]).
@@ -175,7 +175,7 @@ pub struct Db {
     /// [`Db::add_translation`] can resolve a code → path without the
     /// caller threading the value through.
     translations_dir: PathBuf,
-    /// Path to `xrefs.db` ATTACHed on every connection in
+    /// Path to `xrefs.db` attached on every connection in
     /// [`Self::conns`]. Always populated — when the real DB isn't on
     /// disk, [`create_empty_xrefs_db`] seeds an empty stand-in so the
     /// `xref_note_count` subquery in [`Self::load_passage`] keeps
@@ -211,12 +211,12 @@ impl Db {
     }
 
     /// Open one read-only `Connection` per `<code>.db` under
-    /// `translations_dir`, each with the shared `xrefs.db` ATTACHed.
+    /// `translations_dir`, each with the shared `xrefs.db` attached.
     ///
     /// # Errors
     /// Fails if the directory is missing, contains no translation files,
     /// is missing `xrefs.db`, or if any per-translation `meta` query
-    /// errors (typically: stale file from an older schema_version).
+    /// errors (typically: stale file from an older `schema_version`).
     ///
     /// # Panics
     /// In debug builds, panics if `initial_translation` is empty.
@@ -263,18 +263,17 @@ impl Db {
         }
         translation_files.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Every per-translation connection needs `xrefs.xref` ATTACHed
+        // Every per-translation connection needs `xrefs.xref` attached
         // because load_passage's `xref_note_count` subquery references
         // it unconditionally. If the real xrefs.db isn't on disk, seed
         // an empty stand-in so the ATTACH succeeds; load_xrefs() then
         // returns 0 rows until fetch::xrefs replaces the file.
-        let xrefs_path = match xrefs_path {
-            Some(p) => p,
-            None => {
-                let p = translations_dir.join("xrefs.db");
-                create_empty_xrefs_db(&p)?;
-                p
-            }
+        let xrefs_path = if let Some(p) = xrefs_path {
+            p
+        } else {
+            let p = translations_dir.join("xrefs.db");
+            create_empty_xrefs_db(&p)?;
+            p
         };
 
         let mut conns: HashMap<String, Connection> = HashMap::new();
@@ -356,7 +355,7 @@ impl Db {
     )]
     pub fn attach_xrefs(&mut self, xrefs_path: &Path) -> Result<()> {
         for conn in self.conns.values() {
-            // Drop the empty stand-in (or a previously ATTACHed real
+            // Drop the empty stand-in (or a previously attached real
             // file) before pointing at the new one.
             conn.execute(&format!("DETACH DATABASE {XREFS_SCHEMA}"), [])
                 .context("DETACH xrefs (old)")?;
@@ -366,9 +365,9 @@ impl Db {
         Ok(())
     }
 
-    /// `true` when the ATTACHed `xrefs.xref` table has any rows — i.e.
+    /// `true` when the attached `xrefs.xref` table has any rows — i.e.
     /// the real openbible.info data is on disk, not the install-time
-    /// empty stand-in. One short query per call; SQLite stops at the
+    /// empty stand-in. One short query per call; `SQLite` stops at the
     /// first row so the cost is independent of table size.
     #[must_use]
     #[allow(
@@ -523,7 +522,7 @@ impl Db {
         let verses = {
             // Footnotes are scoped to this translation (its own `main`
             // schema). Xrefs live in the shared `xrefs.xref` table,
-            // ATTACHed to every per-translation connection at startup.
+            // attached to every per-translation connection at startup.
             let mut stmt = conn.prepare_cached(
                 "SELECT v.verse, v.text,
                         COALESCE((SELECT COUNT(*) FROM footnote f
@@ -690,16 +689,19 @@ fn attach_ro(conn: &Connection, path: &Path, alias: &str) -> Result<()> {
     Ok(())
 }
 
-/// Percent-encode the characters that would otherwise break a SQLite `file:`
+/// Percent-encode the characters that would otherwise break a `SQLite` `file:`
 /// URI path: a space, the `?`/`#` URI delimiters, and `%` itself (so an
 /// existing `%` isn't read as an escape introducer). `/` and non-ASCII UTF-8
-/// pass through unchanged — SQLite's URI parser accepts them as-is, matching
+/// pass through unchanged — `SQLite`'s URI parser accepts them as-is, matching
 /// the pre-encoding behaviour for ordinary paths.
 fn encode_uri_path(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     for c in path.chars() {
         match c {
-            ' ' | '?' | '#' | '%' => out.push_str(&format!("%{:02X}", c as u32)),
+            ' ' => out.push_str("%20"),
+            '?' => out.push_str("%3F"),
+            '#' => out.push_str("%23"),
+            '%' => out.push_str("%25"),
             _ => out.push(c),
         }
     }
@@ -714,7 +716,7 @@ fn encode_uri_path(path: &str) -> String {
 /// [`fetch::xrefs`] replaces it atomically.
 ///
 /// # Errors
-/// Propagates IO and SQLite open / CREATE TABLE failures.
+/// Propagates IO and `SQLite` open / CREATE TABLE failures.
 pub fn create_empty_xrefs_db(path: &Path) -> Result<()> {
     let conn = Connection::open(path)
         .with_context(|| format!("create empty xrefs.db at {}", path.display()))?;
@@ -732,7 +734,7 @@ pub fn create_empty_xrefs_db(path: &Path) -> Result<()> {
 }
 
 /// Open a per-translation `.db` file read-only as a fresh
-/// `Connection`. Caller is responsible for ATTACHing `xrefs.db` (or
+/// `Connection`. Caller is responsible for attaching `xrefs.db` (or
 /// an empty in-memory stand-in via [`attach_empty_xrefs`]).
 ///
 /// We don't set `query_only=ON` because the empty in-memory xrefs
@@ -860,7 +862,7 @@ mod tests {
         // single quote broke the literal; a space/`?`/`#` broke the URI parse.
         // Open a Db under a dir whose path has both a space and an apostrophe
         // and confirm the xrefs ATTACH still resolves (load_passage queries
-        // the ATTACHed `xrefs.xref` table, so a failed ATTACH would surface).
+        // the attached `xrefs.xref` table, so a failed ATTACH would surface).
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("we ird's bibles");
         fs::create_dir_all(&dir).expect("create funky dir");

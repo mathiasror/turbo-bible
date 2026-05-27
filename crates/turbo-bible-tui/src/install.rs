@@ -156,10 +156,7 @@ fn extract_asset(target_dir: &Path, asset: &BundledAsset, force: bool) -> Result
 }
 
 fn resolve_dir(override_path: Option<&Path>) -> Result<PathBuf> {
-    match override_path {
-        Some(p) => Ok(p.to_path_buf()),
-        None => paths::translations_dir(),
-    }
+    override_path.map_or_else(paths::translations_dir, |p| Ok(p.to_path_buf()))
 }
 
 /// `(sha256, decompressed_size)` for a staged `<stem>.db.zst`, looked up in the

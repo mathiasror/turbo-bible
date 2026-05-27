@@ -405,7 +405,7 @@ mod render_tests {
         rl.line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
-    /// The gutter glyph span sits just after the PANEL_PAD left inset.
+    /// The gutter glyph span sits just after the `PANEL_PAD` left inset.
     fn gutter_glyph(rl: &RenderedLine) -> &str {
         rl.line.spans[PANEL_PAD].content.as_ref()
     }
