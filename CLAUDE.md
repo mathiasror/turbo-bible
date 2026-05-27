@@ -116,3 +116,26 @@ runtime queries
 - The Turbo Vision look depends on 24-bit RGB + the `▒` glyph; theme
   changes should be eyeballed in a modern terminal (iTerm2, Ghostty,
   Alacritty, WezTerm) before shipping.
+
+## Working with Claude
+
+Project-local Claude Code tooling, so a session knows it's there:
+
+- **Hooks** (`.claude/settings.json`, tracked): a `PostToolUse` hook runs
+  `cargo check --all-targets --all-features` after every `.rs` Edit/Write, so
+  compile errors surface in-loop; a `Stop` hook runs `cargo fmt --all` at the
+  end of any turn that touched `.rs`, so the tree never reddens CI on fmt
+  drift. Caveat: that end-of-turn reformat can leave a stale `old_string` for a
+  follow-up `Edit` — re-read the file if an edit misses.
+- **Skills** (`.claude/skills/`, tracked): `bundle-translations` (refresh the
+  bundled DBs from a scrollmapper checkout / add a translation) and
+  `regen-assets` (re-render the VHS demo, screenshots, og-image). The
+  `rust-review` skill (user-global) is the release-readiness pass; it writes a
+  gitignored `rust-review.md` and is fed by `just baseline`.
+- **`/release-checklist [vX.Y.Z]`** (`.claude/commands/`): the skeptical
+  go/no-go gate to run before pushing a `v*` tag.
+- **Worktrees** for parallel branches live under `.claude/worktrees/`
+  (gitignored) — use one per independent workstream.
+- **Permissions:** the shared dev-command allowlist is in
+  `.claude/settings.json` (tracked); personal/machine-specific allows go in
+  `.claude/settings.local.json` (gitignored).

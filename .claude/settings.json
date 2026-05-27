@@ -18,7 +18,20 @@
       "Bash(just test)",
       "Bash(just audit)",
       "Bash(just deny)",
-      "Bash(just baseline)"
+      "Bash(just baseline)",
+      "Bash(gh run *)",
+      "Bash(gh release *)",
+      "Bash(cargo package *)",
+      "Bash(git rev-list *)",
+      "Bash(git check-ignore *)",
+      "Bash(vhs *)",
+      "Bash(just bundle-translations *)",
+      "Bash(just data-build *)",
+      "Bash(just demo)",
+      "Bash(just screenshots)",
+      "Bash(just og-image)",
+      "WebFetch(domain:ratatui.rs)",
+      "WebFetch(domain:github.com)"
     ]
   },
   "hooks": {
@@ -31,6 +44,18 @@
             "command": "jq -r '.tool_input.file_path // .tool_response.filePath // \"\"' | { read -r f; case \"$f\" in *.rs) cargo check --all-targets --all-features --message-format=short;; esac; }",
             "timeout": 60,
             "statusMessage": "cargo check"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git status --porcelain 2>/dev/null | grep -qE '[.]rs$' && cargo fmt --all || true",
+            "timeout": 30,
+            "statusMessage": "cargo fmt"
           }
         ]
       }
