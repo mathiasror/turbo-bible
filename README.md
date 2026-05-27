@@ -293,7 +293,11 @@ Inside `crates/turbo-bible-tui/src/`:
 
 ## What's not in v1
 
-- Poetry indentation (Psalms render as prose)
+- Line-level poetry layout (intra-verse poetic lines / Hebrew parallelism).
+  Known poetic passages — Psalms, Proverbs, Song of Solomon, Lamentations,
+  and Job's dialogue — are set apart with a whole-verse left indent, but
+  the source data carries no `\q` line breaks, so each verse is indented
+  as one block rather than laid out line by line.
 - Inline (mid-verse) footnote markers — markers sit at end of verse
 - Word-level translation diff (compare panes show translations side by
   side, but differences aren't highlighted)

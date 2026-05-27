@@ -31,6 +31,12 @@ const PANEL_PAD: usize = 1;
 /// is wider (≥120 cols with the sidebar on), keeping lines in the comfortable
 /// ~50–70 char range for sustained reading. The row fill still spans the pane.
 const MAX_BODY_WIDTH: usize = 70;
+/// Extra left inset applied to the verse body in poetry passages (see
+/// [`crate::poetry`]). A flat, whole-verse indent that sets poetry apart from
+/// prose — we have no intra-verse line data to lay out true poetic lines. The
+/// verse number stays in its gutter column; only the body and its hanging
+/// indent shift right, and the wrap column narrows to match.
+const POETRY_INDENT: usize = 2;
 
 /// Per-verse row treatment. `Selected` (the brightest-cyan visual-selection
 /// slab) outranks `Cursor` so entering visual mode — which makes the cursor
@@ -62,6 +68,14 @@ pub fn render_passage(
     wrap_width: u16,
 ) -> Vec<RenderedLine> {
     let mut out: Vec<RenderedLine> = Vec::new();
+
+    // Whole-verse left inset for poetry passages. 0 for prose, so the prose
+    // layout is byte-for-byte unchanged.
+    let poetry_indent = if crate::poetry::is_poetic(&p.book_code, p.chapter) {
+        POETRY_INDENT
+    } else {
+        0
+    };
 
     let heading_style = Style::new()
         .fg(theme::bright_white())
@@ -249,7 +263,7 @@ pub fn render_passage(
         // it sits at the very end of the verse, not on a row of its own.
         let text = v.text.replace('\n', " ");
         let body_w = (wrap_width as usize)
-            .saturating_sub(PANEL_PAD + VERSE_PREFIX)
+            .saturating_sub(PANEL_PAD + VERSE_PREFIX + poetry_indent)
             .clamp(20, MAX_BODY_WIDTH);
         let mut chunks = word_wrap(&text, body_w);
         if chunks.is_empty() {
@@ -303,21 +317,25 @@ pub fn render_passage(
             });
         };
         let (first, rest) = chunks.split_first().expect("chunks is non-empty above");
-        push_line(
-            vec![
-                Span::styled(" ".repeat(PANEL_PAD), pad_style),
-                Span::styled(gutter_glyph.to_string(), gutter_style),
-                Span::styled(num_str, verse_num_style(kind)),
-                // Two-space gutter gap in the row bg (see `num_str` above) so the
-                // body text breathes after the number on every row treatment.
-                Span::styled("  ".to_string(), pad_style),
-            ],
-            first,
-        );
+        let mut first_prefix = vec![
+            Span::styled(" ".repeat(PANEL_PAD), pad_style),
+            Span::styled(gutter_glyph.to_string(), gutter_style),
+            Span::styled(num_str, verse_num_style(kind)),
+            // Two-space gutter gap in the row bg (see `num_str` above) so the
+            // body text breathes after the number on every row treatment.
+            Span::styled("  ".to_string(), pad_style),
+        ];
+        // Poetry inset rides after the gutter gap, in the row bg, so the number
+        // stays put and only the body shifts right. Skipped for prose, so the
+        // prose span layout is identical to before.
+        if poetry_indent > 0 {
+            first_prefix.push(Span::styled(" ".repeat(poetry_indent), pad_style));
+        }
+        push_line(first_prefix, first);
         for chunk in rest {
             push_line(
                 vec![Span::styled(
-                    " ".repeat(PANEL_PAD + VERSE_PREFIX),
+                    " ".repeat(PANEL_PAD + VERSE_PREFIX + poetry_indent),
                     body_style,
                 )],
                 chunk,
@@ -460,6 +478,22 @@ mod render_tests {
         }
     }
 
+    /// A passage in a specific book/chapter — for exercising the poetry inset,
+    /// which keys off `book_code` + `chapter`.
+    fn passage_in(book_code: &str, chapter: i64, verses: Vec<Verse>) -> Passage {
+        Passage {
+            translation: "en-kjv".into(),
+            book_code: book_code.into(),
+            book_name: book_code.into(),
+            book_abbrev: book_code.into(),
+            chapter,
+            verses,
+            headings: Vec::<Heading>::new(),
+            footnotes: Vec::<Footnote>::new(),
+            xrefs: Vec::<Xref>::new(),
+        }
+    }
+
     fn v(number: i64, text: &str) -> Verse {
         Verse {
             number,
@@ -485,6 +519,141 @@ mod render_tests {
     /// The gutter glyph span sits just after the `PANEL_PAD` left inset.
     fn gutter_glyph(rl: &RenderedLine) -> &str {
         rl.line.spans[PANEL_PAD].content.as_ref()
+    }
+
+    /// Cells before the verse body begins on `verse`'s first line — the summed
+    /// width of every span up to (not including) the body span, which carries
+    /// `body` verbatim. Measures the left inset (prose vs poetry).
+    fn body_start_col(lines: &[RenderedLine], verse: i64, body: &str) -> usize {
+        let rl = line_for_verse(lines, verse);
+        let mut col = 0;
+        for span in &rl.line.spans {
+            if span.content == body {
+                return col;
+            }
+            col += span.content.chars().count();
+        }
+        panic!("body span {body:?} not found on verse {verse}");
+    }
+
+    #[test]
+    fn poetry_passage_indents_verse_body_past_prose() {
+        // Same verse text in a prose book (GEN) vs a poetic book (PSA): the
+        // poetic body sits exactly POETRY_INDENT cells further right.
+        let bookmarked = BTreeSet::new();
+        let prose = render_passage(
+            &passage_in("GEN", 1, vec![v(1, "alpha")]),
+            99,
+            None,
+            &bookmarked,
+            None,
+            80,
+        );
+        let poetry = render_passage(
+            &passage_in("PSA", 1, vec![v(1, "alpha")]),
+            99,
+            None,
+            &bookmarked,
+            None,
+            80,
+        );
+        let prose_col = body_start_col(&prose, 1, "alpha");
+        let poetry_col = body_start_col(&poetry, 1, "alpha");
+        assert_eq!(
+            prose_col,
+            PANEL_PAD + VERSE_PREFIX,
+            "prose body must keep the standard prefix (regression guard)",
+        );
+        assert_eq!(
+            poetry_col,
+            prose_col + POETRY_INDENT,
+            "poetry body should sit POETRY_INDENT cells right of prose",
+        );
+    }
+
+    #[test]
+    fn poetry_chapter_boundary_follows_the_classifier() {
+        // Job's prose frame (ch 2) renders flush; its poetic dialogue (ch 3)
+        // indents — exercising the chapter-granular branch of is_poetic.
+        let bookmarked = BTreeSet::new();
+        let prose = render_passage(
+            &passage_in("JOB", 2, vec![v(1, "alpha")]),
+            99,
+            None,
+            &bookmarked,
+            None,
+            80,
+        );
+        let poetry = render_passage(
+            &passage_in("JOB", 3, vec![v(1, "alpha")]),
+            99,
+            None,
+            &bookmarked,
+            None,
+            80,
+        );
+        assert_eq!(body_start_col(&prose, 1, "alpha"), PANEL_PAD + VERSE_PREFIX);
+        assert_eq!(
+            body_start_col(&poetry, 1, "alpha"),
+            PANEL_PAD + VERSE_PREFIX + POETRY_INDENT,
+        );
+    }
+
+    #[test]
+    fn poetry_wrapped_lines_hang_indent_includes_inset() {
+        // Wrapped continuation lines of a poetic verse hang-indent at the
+        // prose prefix PLUS the poetry inset, so the body stays aligned.
+        let long = "the quick brown fox jumps over the lazy dog and then \
+                    keeps jumping for several more clauses just to ensure \
+                    we cross the wrap boundary at the chosen width";
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(
+            &passage_in("PSA", 1, vec![v(1, long)]),
+            99,
+            None,
+            &bookmarked,
+            None,
+            40,
+        );
+        let v1_lines: Vec<&RenderedLine> = lines.iter().filter(|rl| rl.verse == 1).collect();
+        assert!(v1_lines.len() >= 2, "verse must wrap to multiple lines");
+        for cont in &v1_lines[1..] {
+            let prefix = cont.line.spans[0].content.as_ref();
+            assert_eq!(
+                prefix.chars().count(),
+                PANEL_PAD + VERSE_PREFIX + POETRY_INDENT,
+                "poetry continuation indent must include the inset, got {prefix:?}",
+            );
+            assert!(
+                prefix.chars().all(|c| c == ' '),
+                "continuation indent should be all spaces",
+            );
+        }
+    }
+
+    #[test]
+    fn poetry_cursor_row_still_fills_wrap_width() {
+        // The full-row highlight must still span the pane on a poetic cursor
+        // row — the inset spans count toward the fill, not against it.
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(
+            &passage_in("PSA", 23, vec![v(1, "alpha"), v(2, "beta")]),
+            2,
+            None,
+            &bookmarked,
+            None,
+            40,
+        );
+        let used: usize = line_for_verse(&lines, 2)
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum();
+        assert_eq!(
+            used, 40,
+            "poetry cursor row must pad to the full wrap width"
+        );
     }
 
     #[test]

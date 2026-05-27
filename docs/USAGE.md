@@ -90,7 +90,9 @@ regions:
 - **Title bar** (top): book name, chapter, and translation code.
 - **Passage pane** (centre-left): the chapter text. Verses are numbered.
   When the terminal is narrower than ~120 columns, this pane uses the
-  full width.
+  full width. Poetic passages — Psalms, Proverbs, Song of Solomon,
+  Lamentations, and Job's dialogue — carry a small left indent so they
+  read as set apart from narrative prose.
 - **References sidebar** (right): only visible when the terminal is at
   least ~120 columns wide. Shows the current section's parallel-passage
   reference (the typeset `r`-style heading), all footnote bodies for the
