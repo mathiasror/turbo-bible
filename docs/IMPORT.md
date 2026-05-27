@@ -25,7 +25,7 @@ turbo-bible import <FILE> --code <CODE> --name <NAME> --language <LANG>
 | Flag                  | Required | Default              | Purpose |
 | --------------------- | :------: | -------------------- | ------- |
 | `<FILE>`              | ✓        | —                    | Path to the input JSON (format below). |
-| `--code`              | ✓        | —                    | Translation code; becomes both `meta.code` and the on-disk `<code>.db` filename. Lowercase letters, digits and hyphens only (e.g. `en-web`, `grc-na28`); must not be `xrefs`. |
+| `--code`              | ✓        | —                    | Translation code; becomes both `meta.code` and the on-disk `<code>.db` filename. Lowercase letters, digits and hyphens only (e.g. `en-web`, `grc-na28`); must not be `xrefs` or a built-in code (e.g. `en-kjv`). |
 | `--name`              | ✓        | —                    | Human-readable name shown in the picker. |
 | `--language`          | ✓        | —                    | Language tag (e.g. `en`, `nb`, `la`, `grc`). |
 | `--license`           |          | `LicenseRef-Unknown` | SPDX license expression for the text. |

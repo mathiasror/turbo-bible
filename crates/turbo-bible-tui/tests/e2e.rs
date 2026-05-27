@@ -432,3 +432,31 @@ fn switching_to_partial_translation_clamps_instead_of_crashing() {
         "switch should clamp to the only available book; got:\n{st}"
     );
 }
+
+/// Regression: an out-of-range `--chapter` clamps to the book's last chapter
+/// rather than opening an empty passage.
+#[test]
+fn out_of_range_chapter_clamps_to_last() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &[
+            "--translation",
+            "en-kjv",
+            "--book",
+            "JHN",
+            "--chapter",
+            "999",
+        ],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"JHN\""), "got:\n{st}");
+    assert!(
+        st.contains("chapter = 21"),
+        "John has 21 chapters; an over-range request should clamp to 21; got:\n{st}"
+    );
+}

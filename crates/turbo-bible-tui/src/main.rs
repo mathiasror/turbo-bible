@@ -356,6 +356,7 @@ fn main() -> Result<()> {
             chapter: args.chapter,
             verse: None,
         };
+        pos.chapter = clamp_chapter(&db, &pos.book, pos.chapter)?;
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = 1;
         let r = run(
@@ -387,6 +388,7 @@ fn main() -> Result<()> {
             Some((p, _)) => p.clone(),
             None => initial_book_position(&books),
         };
+        pos.chapter = clamp_chapter(&db, &pos.book, pos.chapter)?;
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = persisted.as_ref().map_or(1, |p| p.verse).max(1);
         let r = run(
@@ -1520,6 +1522,15 @@ fn initial_book_position(books: &[Book]) -> Position {
         chapter: 1,
         verse: None,
     }
+}
+
+/// Clamp `chapter` into the book's valid range `[1, chapter_count]`. A
+/// persisted or `--chapter` value can point past the end of a book (more
+/// likely in a partial / imported translation), which would otherwise open an
+/// empty chapter.
+fn clamp_chapter(db: &Db, book: &str, chapter: i64) -> Result<i64> {
+    let max = db.chapter_count(book)?.max(1);
+    Ok(chapter.clamp(1, max))
 }
 
 /// Build the picker entry list: every translation the binary knows about

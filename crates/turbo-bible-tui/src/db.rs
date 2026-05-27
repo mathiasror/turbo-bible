@@ -453,7 +453,10 @@ impl Db {
                     None => (book.to_string(), chapter),
                 }
             };
-            let passage = self.load_passage(&target_book, target_chapter)?;
+            // Clamp the chapter into the target book's range — the source
+            // chapter can exceed it (e.g. a shorter book in the new edition).
+            let max_chapter = self.chapter_count(&target_book)?.max(1);
+            let passage = self.load_passage(&target_book, target_chapter.clamp(1, max_chapter))?;
             Ok((books, label, passage))
         })();
         if probe.is_err() {

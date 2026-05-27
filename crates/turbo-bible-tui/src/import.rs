@@ -436,10 +436,10 @@ fn build_db(path: &Path, meta: &ImportMeta<'_>, json: &ImportJson) -> Result<Sta
     Ok(stats)
 }
 
-/// Reject codes that wouldn't round-trip as a `<code>.db` filename or
-/// that collide with the reserved `xrefs` slot. Keeping the charset to
-/// `[a-z0-9-]` (with an alphanumeric lead) matches the bundled codes
-/// (`en-kjv`, `nb-1930`, …) and rules out path separators.
+/// Reject codes that wouldn't round-trip as a `<code>.db` filename, collide
+/// with the reserved `xrefs` slot, or shadow a built-in translation. Keeping
+/// the charset to `[a-z0-9-]` (with an alphanumeric lead) matches the bundled
+/// codes (`en-kjv`, `nb-1930`, …) and rules out path separators.
 fn validate_code(code: &str) -> Result<()> {
     if code.is_empty() {
         bail!("--code must not be empty");
@@ -455,6 +455,15 @@ fn validate_code(code: &str) -> Result<()> {
     }
     if !code.as_bytes()[0].is_ascii_alphanumeric() {
         bail!("--code {code:?} must start with a letter or digit");
+    }
+    // Refuse to shadow a bundled translation: a custom DB written to `en-kjv.db`
+    // would be overwritten by `install --force`, and the picker would still
+    // label it with the built-in's name. Pick a distinct code instead.
+    if crate::manifest::TranslationManifestEntry::by_code(code).is_some() {
+        bail!(
+            "--code {code:?} is a built-in translation; choose a different code \
+             (e.g. {code:?} with a suffix)"
+        );
     }
     Ok(())
 }
@@ -801,6 +810,7 @@ mod tests {
         assert!(validate_code("En-John").is_err()); // uppercase
         assert!(validate_code("a/b").is_err()); // path separator
         assert!(validate_code("-x").is_err()); // leading hyphen
+        assert!(validate_code("en-kjv").is_err()); // shadows a built-in translation
     }
 
     #[test]
