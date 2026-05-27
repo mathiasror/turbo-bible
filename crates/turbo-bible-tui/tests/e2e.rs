@@ -511,6 +511,72 @@ fn switching_to_partial_translation_clamps_instead_of_crashing() {
     );
 }
 
+/// Regression: opening a *compare pane* into a partial imported translation
+/// that lacks the focused pane's book must clamp, not crash. `open_compare_pane`
+/// used to `?`-propagate the missing-book `load_passage_for` lookup straight out
+/// of the run loop, taking the whole TUI down. The fix clamps the seed to the
+/// target translation's first book (mirroring `try_switch_translation`).
+///
+/// rexpect spawns a 0-width PTY, so `can_add_pane`'s unmeasured-width branch
+/// allows the split regardless of geometry (see `compare_split_*`).
+#[test]
+fn compare_pane_into_partial_translation_does_not_crash() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("john.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","chapters":[
+            {"chapter":1,"verses":[{"verse":1,"text":"In the beginning was the Word"}]}]}]}"#,
+    )
+    .unwrap();
+
+    // Install a John-only translation alongside the bundled full en-kjv.
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-john",
+        "--name",
+        "John only",
+        "--language",
+        "en",
+    ]);
+    assert!(cmd.status().expect("run import subcommand").success());
+
+    // Read Genesis in en-kjv, then Ctrl-W v into a new pane and pick the
+    // John-only translation: its pane can't show Genesis, so the open must
+    // clamp to John rather than crashing the run loop.
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "GEN", "--chapter", "1"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, CTRL_W);
+    key(&mut p, "v"); // open the picker into a new pane
+    key(&mut p, "G"); // imported entries sort last
+    key(&mut p, "\r"); // select zz-john for the new pane
+    key(&mut p, "j"); // the app must still be alive and responsive
+    key(&mut p, "q"); // real quit
+    p.exp_eof()
+        .expect("app must survive opening a compare pane into a partial translation");
+
+    // The focused pane after the split is the new (zz-john) pane; on quit its
+    // position is what persists. It must have clamped to John, not crashed.
+    let st = read(&state_path(&tmp));
+    assert!(
+        st.contains("translation = \"zz-john\""),
+        "the new pane's translation should persist; got:\n{st}"
+    );
+    assert!(
+        st.contains("book = \"JHN\""),
+        "compare pane should clamp to the only available book; got:\n{st}"
+    );
+}
+
 /// Regression: an out-of-range `--chapter` clamps to the book's last chapter
 /// rather than opening an empty passage.
 #[test]
