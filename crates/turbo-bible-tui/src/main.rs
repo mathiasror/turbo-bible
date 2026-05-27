@@ -1560,7 +1560,7 @@ fn switch_translation(
     books: &mut Vec<Book>,
     translation_label: &mut String,
     code: &str,
-    pos: &Position,
+    pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
 ) -> Result<()> {
@@ -1572,7 +1572,16 @@ fn switch_translation(
         db.try_switch_translation(code, &pos.book, pos.chapter)?;
     *books = new_books;
     *translation_label = new_label;
+    // A partial / imported translation may not contain the current book, in
+    // which case the swap lands on its first book instead. Sync the position
+    // to whatever actually loaded and reset the cursor when the book changed.
+    let book_changed = pos.book != new_passage.book_code;
+    pos.book.clone_from(&new_passage.book_code);
+    pos.chapter = new_passage.chapter;
     *passage = new_passage;
+    if book_changed {
+        *cursor_verse = 1;
+    }
     let max = passage.verses.last().map_or(1, |v| v.number);
     if *cursor_verse > max {
         *cursor_verse = max.max(1);

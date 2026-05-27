@@ -375,3 +375,60 @@ fn partial_import_launches_without_book_arg() {
         "landing book should clamp to the only available book; got:\n{st}"
     );
 }
+
+/// Regression: selecting a *partial* imported translation (one that lacks the
+/// book you're currently reading) from the `t` picker must switch, not crash.
+/// `try_switch_translation` probes `load_passage` with the current book, which
+/// used to error out of the run loop for a book the target didn't contain. The
+/// switch now clamps to the target translation's first book.
+#[test]
+fn switching_to_partial_translation_clamps_instead_of_crashing() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("john.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","chapters":[
+            {"chapter":1,"verses":[{"verse":1,"text":"In the beginning was the Word"}]}]}]}"#,
+    )
+    .unwrap();
+
+    // Install a John-only translation alongside the bundled full en-kjv.
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-john",
+        "--name",
+        "John only",
+        "--language",
+        "en",
+    ]);
+    assert!(cmd.status().expect("run import subcommand").success());
+
+    // Read Genesis in en-kjv, then pick the John-only translation from the
+    // picker. It can't contain Genesis, so the switch must land on John.
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "GEN", "--chapter", "1"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "t"); // open the translations picker
+    key(&mut p, "G"); // jump to the bottom — imported entries are appended last
+    key(&mut p, "\r"); // select zz-john
+    key(&mut p, "q"); // quit the reader
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(
+        st.contains("translation = \"zz-john\""),
+        "the switch should have succeeded; got:\n{st}"
+    );
+    assert!(
+        st.contains("book = \"JHN\""),
+        "switch should clamp to the only available book; got:\n{st}"
+    );
+}
