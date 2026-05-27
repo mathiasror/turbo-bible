@@ -50,15 +50,13 @@ wildcards = "deny"
 # all-but-one major of a crate silences its warning while documenting why the
 # spread exists. Re-evaluate when a dep bump collapses one.
 skip = [
-    # hashbrown spans three majors: rusqlite → hashlink (0.14),
-    # ratatui-core / kasuari / lru (0.16), toml → indexmap (0.17). Skip the two
-    # older majors so 0.17 is the lone survivor and deny stays quiet.
-    { name = "hashbrown",  version = "0.14" },
-    { name = "hashbrown",  version = "0.16" },
     # getrandom 0.3 (proptest, a dev-dep) coexists with 0.4 (tempfile); skip the
     # older so 0.4 survives alone.
     { name = "getrandom",  version = "0.3" },
 ]
+# hashbrown previously spanned three majors and needed two skips; the rusqlite
+# 0.40 / toml 1.x bumps collapsed it to a single version (hashlink, kasuari,
+# indexmap now agree), so the skips were dropped.
 
 # ─────────────────────────────── Sources ──────────────────────────
 [sources]
