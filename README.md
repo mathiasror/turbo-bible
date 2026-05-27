@@ -166,6 +166,9 @@ pane only. The References sidebar is hidden while comparing — the panes use th
 width. A pane is refused (with a brief status hint) if the terminal is too
 narrow to keep every column readable.
 
+The `Ctrl-W` chords and the `K`-popup `s` shortcut are part of the vim keymap
+(the default); they aren't remappable via `[keys]`.
+
 ### Splash screen
 
 The TURBO BIBLE splash is the home screen. It shows the title art, a daily

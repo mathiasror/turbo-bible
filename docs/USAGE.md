@@ -297,6 +297,9 @@ hint in the mode line rather than rendering an unreadable sliver. The
 layout is session-only: quitting saves the focused pane's position, not
 the whole split.
 
+The `Ctrl-W` chords and the `K`-popup `s` shortcut belong to the vim keymap
+(the default); they aren't among the remappable actions in `[keys]`.
+
 ## Help: built-in keymap cheat sheet
 
 ![Help overlay — full keymap grouped by section](screenshots/09-help.png)
