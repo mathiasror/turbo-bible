@@ -54,10 +54,10 @@ mod tests {
 
     #[test]
     fn job_prose_frame_is_not_poetic() {
-        // Prologue.
+        // Prose prologue.
         assert!(!is_poetic("JOB", 1));
         assert!(!is_poetic("JOB", 2));
-        // Narrative close.
+        // Chapter 42 holds the prose epilogue, so it's kept flush.
         assert!(!is_poetic("JOB", 42));
     }
 
