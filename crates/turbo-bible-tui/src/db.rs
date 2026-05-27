@@ -558,6 +558,60 @@ impl Db {
         Self::load_passage_conn(self.conn_for(code)?, code, book, chapter)
     }
 
+    /// Load a chapter from an arbitrary installed translation, clamping the
+    /// `(book, chapter)` into what that translation actually contains. A
+    /// *partial* / imported edition may omit `book` entirely (e.g. a John-only
+    /// import); rather than erroring on the missing-book lookup, this falls
+    /// back to the translation's first book and clamps the chapter into the
+    /// target book's range. Mirrors the fallback in
+    /// [`Self::try_switch_translation`], but for a non-active translation, so a
+    /// compare pane can be seeded into any installed edition without crashing.
+    /// The caller reads the landed book/chapter back from the returned
+    /// [`Passage`]'s `book_code` / `chapter`.
+    ///
+    /// # Errors
+    /// Fails if `code` is not installed, or any verse/heading/footnote/xref
+    /// query errors. The missing-book case degrades gracefully (it does *not*
+    /// error); only genuinely unexpected query failures propagate.
+    pub fn load_passage_clamped_for(
+        &self,
+        code: &str,
+        book: &str,
+        chapter: i64,
+    ) -> Result<Passage> {
+        let (target_book, target_chapter) = {
+            let conn = self.conn_for(code)?;
+            // Is `book` present in this translation? (A partial edition may not
+            // carry it.) `book` rows exist only for books with at least one
+            // verse, so a present row guarantees the chapter query resolves.
+            let present: bool = conn
+                .prepare_cached("SELECT 1 FROM book WHERE code=?1 LIMIT 1")?
+                .exists(params![book])?;
+            let target_book: String = if present {
+                book.to_string()
+            } else {
+                // Fall back to the translation's first book (canonical order).
+                match conn
+                    .prepare_cached("SELECT code FROM book ORDER BY ord LIMIT 1")?
+                    .query_row([], |r| r.get::<_, String>(0))
+                {
+                    Ok(first) => first,
+                    // No books at all is degenerate (an empty DB shouldn't be
+                    // installable), but don't crash the reader over it — let
+                    // the load below surface a clear error instead.
+                    Err(rusqlite::Error::QueryReturnedNoRows) => book.to_string(),
+                    Err(e) => return Err(e.into()),
+                }
+            };
+            // Clamp the requested chapter into the target book's range.
+            let max_chapter: i64 = conn
+                .prepare_cached("SELECT COALESCE(MAX(chapter), 0) FROM verse WHERE book=?1")?
+                .query_row(params![target_book], |r| r.get(0))?;
+            (target_book, chapter.clamp(1, max_chapter.max(1)))
+        };
+        self.load_passage_for(code, &target_book, target_chapter)
+    }
+
     fn load_passage_conn(
         conn: &Connection,
         code: &str,
@@ -936,6 +990,89 @@ mod tests {
         let err = db.try_switch_translation("xx-bogus", "JHN", 3).unwrap_err();
         assert!(format!("{err}").contains("xx-bogus"));
         assert_eq!(db.translation(), "en-kjv");
+    }
+
+    /// Build a partial (John-only) translation DB at `<dir>/<code>.db` using
+    /// the import pipeline, so tests can register an edition that omits most
+    /// books without depending on bundled assets.
+    fn install_john_only(dir: &Path, code: &str) {
+        let json: crate::import::ImportJson = serde_json::from_str(
+            r#"{ "books": [ { "book": "JHN", "chapters": [
+                { "chapter": 1, "verses": [
+                    { "verse": 1, "text": "In the beginning was the Word" } ] },
+                { "chapter": 3, "verses": [
+                    { "verse": 16, "text": "For God so loved the world" } ] } ] } ] }"#,
+        )
+        .expect("parse partial import json");
+        let meta = crate::import::ImportMeta {
+            code,
+            name: "John only",
+            language: "en",
+            license: "",
+            attribution: "",
+        };
+        crate::import::build_db(&dir.join(format!("{code}.db")), &meta, &json)
+            .expect("build partial db");
+    }
+
+    #[test]
+    fn load_passage_clamped_for_falls_back_to_first_book_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::install::ensure_installed(tmp.path()).expect("install");
+        let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+
+        // A John-only edition that lacks Genesis. The compare-pane open path
+        // used to `?`-propagate the missing-book lookup, crashing the TUI.
+        install_john_only(tmp.path(), "zz-john");
+        db.add_translation("zz-john").expect("register zz-john");
+
+        // Requesting Genesis (absent) must land on the first available book
+        // (JHN), not error.
+        let p = db
+            .load_passage_clamped_for("zz-john", "GEN", 1)
+            .expect("absent book must clamp, not error");
+        assert_eq!(p.book_code, "JHN", "absent book falls back to first book");
+        assert_eq!(p.translation, "zz-john");
+        assert!(
+            !p.verses.is_empty(),
+            "the fallback chapter must have verses"
+        );
+
+        // A present book with an out-of-range chapter clamps into range
+        // (John has chapters 1 and 3 here; chapter 99 clamps to the max).
+        let clamped = db
+            .load_passage_clamped_for("zz-john", "JHN", 99)
+            .expect("present book, over-range chapter must clamp");
+        assert_eq!(clamped.book_code, "JHN");
+        assert!(
+            clamped.chapter <= 3,
+            "chapter must clamp into the book's range, got {}",
+            clamped.chapter
+        );
+
+        // A present book + chapter loads verbatim, leaving the active
+        // translation untouched (the `_for` family never re-points active).
+        let exact = db
+            .load_passage_clamped_for("zz-john", "JHN", 3)
+            .expect("present book + chapter");
+        assert_eq!(exact.chapter, 3);
+        assert!(exact.verses.iter().any(|v| v.number == 16));
+        assert_eq!(
+            db.translation(),
+            "en-kjv",
+            "_clamped_for must not change active"
+        );
+    }
+
+    #[test]
+    fn load_passage_clamped_for_rejects_uninstalled() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::install::ensure_installed(tmp.path()).expect("install");
+        let db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        let err = db
+            .load_passage_clamped_for("xx-bogus", "JHN", 3)
+            .unwrap_err();
+        assert!(format!("{err}").contains("xx-bogus"));
     }
 
     #[test]

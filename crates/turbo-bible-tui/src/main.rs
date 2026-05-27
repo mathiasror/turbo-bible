@@ -750,11 +750,21 @@ impl LoopState {
     /// means "not measured yet" (no draw has happened, or a sizeless PTY);
     /// allow it rather than block on an unknown — the user can always close.
     fn can_add_pane(&self) -> bool {
-        if self.last_term_width == 0 {
-            return true;
-        }
-        ui::min_pane_interior(self.last_term_width, self.panes.len() + 1) >= ui::MIN_PANE_W
+        pane_fits_width(self.last_term_width, self.panes.len())
     }
+}
+
+/// Pure width guard behind [`LoopState::can_add_pane`]: would going from
+/// `current_panes` to `current_panes + 1` keep every column at or above
+/// [`ui::MIN_PANE_W`]? A `total_width` of 0 means "not measured yet" (no draw
+/// has happened, or a sizeless PTY) — allow it rather than block on an unknown.
+/// Factored out of the method so it's directly unit-testable without
+/// constructing a full [`LoopState`].
+fn pane_fits_width(total_width: u16, current_panes: usize) -> bool {
+    if total_width == 0 {
+        return true;
+    }
+    ui::min_pane_interior(total_width, current_panes + 1) >= ui::MIN_PANE_W
 }
 
 /// One pass of the draw cycle. Kept inline (vs split into per-bg
@@ -1108,9 +1118,23 @@ fn open_compare_pane(
             (fp.pos.clone(), fp.cursor_verse)
         }
     };
+    // The seed book may be absent from `code` — a partial / imported
+    // translation (Ctrl-W v into a John-only edition), or an xref target whose
+    // canonical KJV book the source translation doesn't carry. `*_clamped_for`
+    // falls back to the translation's first book and clamps the chapter rather
+    // than erroring out of the run loop (which would crash the whole TUI).
     let passage = ctx
         .db
-        .load_passage_for(code, &seed_pos.book, seed_pos.chapter)?;
+        .load_passage_clamped_for(code, &seed_pos.book, seed_pos.chapter)?;
+    // Sync the pane's position to what actually loaded — the clamp may have
+    // landed on a different book/chapter than requested.
+    let mut seed_pos = seed_pos;
+    let book_changed = seed_pos.book != passage.book_code;
+    seed_pos.book.clone_from(&passage.book_code);
+    seed_pos.chapter = passage.chapter;
+    // Reset the cursor when the book changed: the seed verse belongs to the
+    // requested book, not the fallback one.
+    let cursor = if book_changed { 1 } else { cursor };
     let mut pane = Pane::new(code.to_string(), seed_pos, passage, cursor);
     pane.origin_label = origin;
     pane.clamp_cursor();
@@ -1317,6 +1341,21 @@ impl LoopState {
     /// Populate the bookmark cache for every open pane's chapter. Panes can
     /// show different chapters/translations, so each needs its own entry.
     fn refresh_all_bookmark_caches(&mut self) {
+        // Prune to the currently-visible panes first so the map stays
+        // O(panes): without this, every chapter ever rendered would linger
+        // until the next bookmark mutation cleared the whole cache.
+        let live: std::collections::HashSet<BookmarksKey> = self
+            .panes
+            .iter()
+            .map(|p| {
+                (
+                    p.passage.translation.clone(),
+                    p.passage.book_code.clone(),
+                    p.passage.chapter,
+                )
+            })
+            .collect();
+        self.bookmarks_cache.retain(|key, _| live.contains(key));
         for i in 0..self.panes.len() {
             let (t, b, c) = {
                 let p = &self.panes[i].passage;
@@ -2071,5 +2110,35 @@ mod tests {
             .find(|e| e.code == absent.code)
             .expect("absent manifest entry still listed");
         assert!(!entry.installed);
+    }
+
+    #[test]
+    fn pane_fits_width_guards_the_split() {
+        // Width 0 means "not measured yet" (sizeless PTY, pre-first-draw):
+        // always allow, regardless of current pane count.
+        assert!(pane_fits_width(0, 1), "unmeasured width must allow a split");
+        assert!(
+            pane_fits_width(0, 4),
+            "unmeasured width allows at any count"
+        );
+
+        // A width too narrow to keep each of n+1 columns at MIN_PANE_W must
+        // refuse. Going 1 -> 2 panes needs min_pane_interior(total, 2) >=
+        // MIN_PANE_W (40); at total=84 that's (84-1)/2 - 2 = 39 < 40 → refuse.
+        assert!(
+            ui::min_pane_interior(84, 2) < ui::MIN_PANE_W,
+            "precondition: 84 cols yields a sub-readable 2nd column"
+        );
+        assert!(
+            !pane_fits_width(84, 1),
+            "84 cols can't fit a readable second pane"
+        );
+
+        // A comfortably wide terminal allows the split.
+        assert!(
+            ui::min_pane_interior(200, 2) >= ui::MIN_PANE_W,
+            "precondition: 200 cols is comfortably wide for two panes"
+        );
+        assert!(pane_fits_width(200, 1), "200 cols fits a second pane");
     }
 }
