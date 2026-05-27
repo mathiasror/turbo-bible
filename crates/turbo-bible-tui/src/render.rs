@@ -35,11 +35,15 @@ const MAX_BODY_WIDTH: usize = 70;
 /// Per-verse row treatment. `Selected` (the brightest-cyan visual-selection
 /// slab) outranks `Cursor` so entering visual mode — which makes the cursor
 /// verse a one-verse selection — lights it immediately instead of leaving it
-/// on the calmer cursor teal.
+/// on the calmer cursor teal. `Peer` is the passive cross-pane cue (an
+/// unfocused compare pane echoing the focused pane's cursor verse); it ranks
+/// below the local cursor/selection so a pane's own state always wins on the
+/// rare row where both coincide.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RowKind {
     Selected,
     Cursor,
+    Peer,
     Idle,
 }
 
@@ -54,6 +58,7 @@ pub fn render_passage(
     cursor_verse: i64,
     selection: Option<(i64, i64)>,
     bookmarked: &std::collections::BTreeSet<i64>,
+    peer_verse: Option<i64>,
     wrap_width: u16,
 ) -> Vec<RenderedLine> {
     let mut out: Vec<RenderedLine> = Vec::new();
@@ -80,6 +85,13 @@ pub fn render_passage(
             .fg(theme::black())
             .bg(theme::selection_bg())
             .add_modifier(Modifier::BOLD),
+        // Peer keeps the idle yellow-on-its-own-fill number so the verse-number
+        // scanning rhythm survives; only the row fill (below) shifts to the dim
+        // peer teal.
+        RowKind::Peer => Style::new()
+            .fg(theme::yellow())
+            .bg(theme::peer_row_bg())
+            .add_modifier(Modifier::BOLD),
         RowKind::Idle => Style::new()
             .fg(theme::yellow())
             .bg(theme::blue())
@@ -93,6 +105,11 @@ pub fn render_passage(
             .fg(theme::black())
             .bg(theme::selection_bg())
             .add_modifier(Modifier::BOLD),
+        // Peer body stays light_grey (same as idle) so the dim teal fill is the
+        // only signal — it's a passive locator, not a focus state.
+        RowKind::Peer => Style::new()
+            .fg(theme::light_grey())
+            .bg(theme::peer_row_bg()),
         RowKind::Idle => Style::new().fg(theme::light_grey()).bg(theme::blue()),
     };
 
@@ -142,15 +159,20 @@ pub fn render_passage(
 
         let in_selection = selection.is_some_and(|(s, e)| v.number >= s && v.number <= e);
         let is_cursor_verse = v.number == cursor_verse;
+        let is_peer_verse = peer_verse == Some(v.number);
         // Row treatment. `Selected` outranks `Cursor` so pressing `v` (which
         // makes the cursor verse a one-verse selection) lights it immediately
         // as the brightest-cyan slab; the cursor keeps its ▸ glyph so anchor
         // and cursor stay distinguishable inside a range. In normal mode
         // `selection` is None, so the cursor falls through to the teal tier.
+        // `Peer` (the cross-pane cue, only ever set for unfocused panes) ranks
+        // last so a pane's own cursor/selection always wins where they overlap.
         let kind = if in_selection {
             RowKind::Selected
         } else if is_cursor_verse {
             RowKind::Cursor
+        } else if is_peer_verse {
+            RowKind::Peer
         } else {
             RowKind::Idle
         };
@@ -161,6 +183,7 @@ pub fn render_passage(
         let row_bg = match kind {
             RowKind::Selected => theme::selection_bg(),
             RowKind::Cursor => theme::cursor_row_bg(),
+            RowKind::Peer => theme::peer_row_bg(),
             RowKind::Idle => theme::blue(),
         };
         // Footnote/xref markers (* / +) are secondary metadata: dim and never
@@ -202,12 +225,11 @@ pub fn render_passage(
         } else if kind == RowKind::Selected {
             (" ", Style::new().bg(theme::selection_bg()))
         } else if bookmarked.contains(&v.number) {
-            (
-                "\u{2605}",
-                Style::new().fg(theme::yellow()).bg(theme::blue()),
-            )
+            // `row_bg` (not a hardcoded blue) so a bookmarked verse that's also
+            // the peer-cued row keeps the dim teal fill under its ★.
+            ("\u{2605}", Style::new().fg(theme::yellow()).bg(row_bg))
         } else {
-            (" ", Style::new().bg(theme::blue()))
+            (" ", Style::new().bg(row_bg))
         };
         // Just the right-aligned number; the two-space gutter gap is a separate
         // span below so it carries the row bg, not the (cursor) number chip's
@@ -414,7 +436,7 @@ mod render_tests {
     fn cursor_verse_renders_gutter_arrow() {
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 2, None, &bookmarked, 80);
+        let lines = render_passage(&p, 2, None, &bookmarked, None, 80);
         let cursor_line = line_for_verse(&lines, 2);
         assert_eq!(
             gutter_glyph(cursor_line),
@@ -433,7 +455,7 @@ mod render_tests {
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma")], vec![]);
         let mut bookmarked = BTreeSet::new();
         bookmarked.insert(2);
-        let lines = render_passage(&p, 1, None, &bookmarked, 80);
+        let lines = render_passage(&p, 1, None, &bookmarked, None, 80);
         let starred = line_for_verse(&lines, 2);
         assert_eq!(
             gutter_glyph(starred),
@@ -441,7 +463,7 @@ mod render_tests {
             "bookmarked non-cursor row should display ★",
         );
         // When the cursor sits on the bookmarked verse, the cursor glyph wins.
-        let lines = render_passage(&p, 2, None, &bookmarked, 80);
+        let lines = render_passage(&p, 2, None, &bookmarked, None, 80);
         assert_eq!(
             gutter_glyph(line_for_verse(&lines, 2)),
             CURSOR_GLYPH,
@@ -460,7 +482,7 @@ mod render_tests {
             vec![],
         );
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, 80);
+        let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, None, 80);
         assert_eq!(
             gutter_glyph(line_for_verse(&lines, 2)),
             "\u{2503}",
@@ -486,7 +508,7 @@ mod render_tests {
         // keep the pane's blue bg.
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 2, None, &bookmarked, 40);
+        let lines = render_passage(&p, 2, None, &bookmarked, None, 40);
 
         let cursor_line = line_for_verse(&lines, 2);
         for (i, span) in cursor_line.line.spans.iter().enumerate() {
@@ -523,6 +545,95 @@ mod render_tests {
     }
 
     #[test]
+    fn peer_verse_gets_dim_teal_fill_distinct_from_cursor() {
+        // The cross-pane cue: an unfocused pane faintly tints the verse whose
+        // number matches the focused pane's cursor. The fill is the dim
+        // peer_row_bg (input_teal) — a *different* teal from this pane's own
+        // cursor row — and the verse number stays yellow (its scanning rhythm
+        // survives) rather than flipping to the cursor's inverse-video chip.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma")], vec![]);
+        let bookmarked = BTreeSet::new();
+        // Cursor on verse 1 (this pane), peer cue on verse 3 (the other pane).
+        let lines = render_passage(&p, 1, None, &bookmarked, Some(3), 40);
+
+        let peer_line = line_for_verse(&lines, 3);
+        // Every span on the peer row carries the dim peer fill (the number is
+        // yellow-on-peer-fill, not a separate chip bg).
+        for span in &peer_line.line.spans {
+            assert_eq!(
+                span.style.bg,
+                Some(theme::peer_row_bg()),
+                "peer row span {:?} must use the dim peer teal fill",
+                span.content,
+            );
+        }
+        // The peer fill must NOT be the local cursor's teal — that would read
+        // as a second cursor in the same pane.
+        assert_ne!(
+            theme::peer_row_bg(),
+            theme::cursor_row_bg(),
+            "peer cue must be a distinct teal from the cursor row",
+        );
+        // The peer row carries no ▸ cursor arrow (it's passive, read-only).
+        assert_eq!(
+            gutter_glyph(peer_line),
+            " ",
+            "peer row must not draw a cursor arrow",
+        );
+        // The peer row pads to the full wrap width like other highlighted rows.
+        let used: usize = peer_line
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum();
+        assert_eq!(used, 40, "peer row must fill the wrap width");
+    }
+
+    #[test]
+    fn peer_verse_missing_in_pane_highlights_nothing() {
+        // If the focused pane's cursor verse doesn't exist in this pane (the
+        // common case — versification differs), nothing is highlighted: every
+        // row stays idle, no error.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 1, None, &bookmarked, Some(99), 40);
+        for verse in [2] {
+            let row = line_for_verse(&lines, verse);
+            for span in &row.line.spans {
+                assert_eq!(
+                    span.style.bg,
+                    Some(theme::blue()),
+                    "no verse should carry the peer fill when the peer verse is absent",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn local_cursor_outranks_peer_cue_on_same_verse() {
+        // Where a pane's own cursor and the peer cue land on the same verse
+        // number, the local cursor wins — the pane's own state is never masked
+        // by the passive cross-pane hint.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
+        let bookmarked = BTreeSet::new();
+        let lines = render_passage(&p, 2, None, &bookmarked, Some(2), 40);
+        let row = line_for_verse(&lines, 2);
+        assert_eq!(
+            gutter_glyph(row),
+            CURSOR_GLYPH,
+            "local cursor keeps its ▸ even when the peer cue coincides",
+        );
+        assert!(
+            row.line
+                .spans
+                .iter()
+                .any(|s| s.style.bg == Some(theme::cursor_row_bg())),
+            "the row must read as the local cursor (teal), not the dim peer fill",
+        );
+    }
+
+    #[test]
     fn selection_rows_use_bright_cyan_row_fill() {
         // Every verse in a visual selection — including the cursor end — gets
         // the brightest-cyan slab; the cursor is set apart only by its ▸ glyph
@@ -533,7 +644,7 @@ mod render_tests {
             vec![],
         );
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, 40);
+        let lines = render_passage(&p, 4, Some((2, 4)), &bookmarked, None, 40);
 
         let row_bg = |verse: i64| {
             line_for_verse(&lines, verse).line.spans[0]
@@ -571,7 +682,7 @@ mod render_tests {
             }],
         );
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 1, None, &bookmarked, 80);
+        let lines = render_passage(&p, 1, None, &bookmarked, None, 80);
         let heading_idx = lines
             .iter()
             .position(|rl| line_text(rl).contains("Section heading"))
@@ -597,7 +708,7 @@ mod render_tests {
             }],
         );
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 1, None, &bookmarked, 80);
+        let lines = render_passage(&p, 1, None, &bookmarked, None, 80);
         for rl in &lines {
             assert!(
                 !line_text(rl).contains("Parallel: Mark 1:1"),
@@ -616,7 +727,7 @@ mod render_tests {
                     we cross the wrap boundary at the chosen width";
         let p = passage_with(vec![v(1, long)], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 1, None, &bookmarked, 40);
+        let lines = render_passage(&p, 1, None, &bookmarked, None, 40);
         let v1_lines: Vec<&RenderedLine> = lines.iter().filter(|rl| rl.verse == 1).collect();
         assert!(
             v1_lines.len() >= 2,
@@ -646,7 +757,7 @@ mod render_tests {
         // glyph — not as the calmer normal-mode teal cursor.
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma")], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 2, Some((2, 2)), &bookmarked, 40);
+        let lines = render_passage(&p, 2, Some((2, 2)), &bookmarked, None, 40);
         let row = line_for_verse(&lines, 2);
         assert_eq!(gutter_glyph(row), CURSOR_GLYPH, "cursor keeps its arrow");
         assert!(
@@ -672,7 +783,7 @@ mod render_tests {
         // yellow-on-blue scanning rhythm.
         let p = passage_with(vec![v(1, "alpha"), v(2, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 2, None, &bookmarked, 40);
+        let lines = render_passage(&p, 2, None, &bookmarked, None, 40);
         let row = line_for_verse(&lines, 2);
         let num = row
             .line
@@ -695,7 +806,7 @@ mod render_tests {
         // [PANEL_PAD pad][gutter][number][2-space gap][body…].
         let p = passage_with(vec![v(9, "alpha"), v(119, "beta")], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 1, None, &bookmarked, 40);
+        let lines = render_passage(&p, 1, None, &bookmarked, None, 40);
         for verse in [9, 119] {
             let spans = &line_for_verse(&lines, verse).line.spans;
             assert_eq!(
@@ -720,7 +831,7 @@ mod render_tests {
         verse.xref_note_count = 1;
         let p = passage_with(vec![verse], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 5, None, &bookmarked, 80);
+        let lines = render_passage(&p, 5, None, &bookmarked, None, 80);
         let row = line_for_verse(&lines, 1);
         let text = line_text(row);
         assert!(text.contains('*'), "footnote marker * missing: {text:?}");
@@ -755,7 +866,7 @@ mod render_tests {
                     we comfortably clear the seventy-column boundary on a wide pane";
         let p = passage_with(vec![v(1, long)], vec![]);
         let bookmarked = BTreeSet::new();
-        let lines = render_passage(&p, 1, None, &bookmarked, 200);
+        let lines = render_passage(&p, 1, None, &bookmarked, None, 200);
         let body_lines = lines.iter().filter(|rl| rl.verse == 1).count();
         assert!(
             body_lines >= 2,

@@ -187,6 +187,12 @@ struct Pane {
     cursor_verse: i64,
     visual_anchor: Option<i64>,
     history: History,
+    /// Set only on a pane opened from the `K` xref popup via `s`: the source
+    /// reference (e.g. `"John 3:16"`) the cross-reference was followed *from*,
+    /// rendered as `… ← John 3:16` in the title so the relationship is clear.
+    /// `None` for the initial pane and `Ctrl-W v` translation compares (which
+    /// have no single origin verse).
+    origin_label: Option<String>,
 }
 
 impl Pane {
@@ -199,6 +205,7 @@ impl Pane {
             cursor_verse,
             visual_anchor: None,
             history,
+            origin_label: None,
         }
     }
 
@@ -762,6 +769,16 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
     // (disjoint immutable borrows); `empty` covers the can't-happen miss so a
     // cache gap degrades to "no bookmark stars" rather than a panic.
     let empty_bookmarks = std::collections::BTreeSet::new();
+    // The focused pane's cursor verse, echoed into each unfocused pane as a
+    // passive cross-pane locator (only meaningful when comparing). This is a
+    // *read-only* cue — it never moves another pane's cursor or scroll; the
+    // panes stay independent by design.
+    // TODO(design): verse-sync scrolling (actually moving the other panes when
+    // the focused pane moves) is intentionally NOT implemented — it reverses
+    // the user-confirmed "independent panes" decision and needs product
+    // sign-off before we touch motion handling.
+    let focused_verse = state.panes.get(state.focus).map_or(1, |p| p.cursor_verse);
+    let comparing = state.panes.len() > 1;
     let pane_renders: Vec<ui::PaneRender<'_>> = state
         .panes
         .iter()
@@ -777,12 +794,17 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
                 let c = pane.cursor_verse;
                 if a <= c { (a, c) } else { (c, a) }
             });
+            let is_focused = i == state.focus;
             ui::PaneRender {
                 passage: &pane.passage,
                 cursor_verse: pane.cursor_verse,
                 selection,
                 bookmarked,
-                is_focused: i == state.focus,
+                is_focused,
+                origin_label: pane.origin_label.as_deref(),
+                // The cue is read-only and only for the *other* panes, so the
+                // focused pane never tints itself.
+                peer_verse: (comparing && !is_focused).then_some(focused_verse),
             }
         })
         .collect();
@@ -939,8 +961,16 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
             FootnoteOutcome::OpenSplit(p) => {
                 // Open the xref target beside the current verse, in the source
                 // pane's translation. `p.verse` lands the new pane's cursor.
-                let code = state.focused().translation.clone();
-                open_compare_pane(state, ctx, &code, Some(p))?;
+                // The new pane's title states the relationship — `← <source>` —
+                // so it's clear which verse the cross-reference was followed
+                // from (the focused pane is that source).
+                let src = state.focused();
+                let code = src.translation.clone();
+                let origin = format!(
+                    "{} {}:{}",
+                    src.passage.book_abbrev, src.pos.chapter, src.cursor_verse
+                );
+                open_compare_pane(state, ctx, &code, Some(p), Some(origin))?;
                 state.dialog = Dialog::None;
                 Ok(DispatchStep::Continue)
             }
@@ -1006,7 +1036,9 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
 fn apply_translation_pick(state: &mut LoopState, ctx: &mut AppCtx, code: &str) -> Result<()> {
     match state.picker_intent {
         PickerIntent::SwitchFocused => switch_focused_translation(state, ctx, code),
-        PickerIntent::OpenNewPane => open_compare_pane(state, ctx, code, None),
+        // `Ctrl-W v` translation compares have no single origin verse, so no
+        // origin label.
+        PickerIntent::OpenNewPane => open_compare_pane(state, ctx, code, None, None),
     }
 }
 
@@ -1050,6 +1082,7 @@ fn open_compare_pane(
     ctx: &mut AppCtx,
     code: &str,
     seed: Option<Position>,
+    origin: Option<String>,
 ) -> Result<()> {
     if !state.can_add_pane() {
         state.set_transient("Terminal too narrow for another pane");
@@ -1069,9 +1102,16 @@ fn open_compare_pane(
         .db
         .load_passage_for(code, &seed_pos.book, seed_pos.chapter)?;
     let mut pane = Pane::new(code.to_string(), seed_pos, passage, cursor);
+    pane.origin_label = origin;
     pane.clamp_cursor();
+    // One-time orientation hint on the 1 -> 2 transition (the first time the
+    // reader enters compare mode), not on every subsequent split.
+    let entering_compare = state.panes.len() == 1;
     state.panes.push(pane);
     state.focus = state.panes.len() - 1;
+    if entering_compare {
+        state.set_transient("References sidebar hidden while comparing — press K for notes");
+    }
     // The sidebar shares the body width the new pane needs; suppress it
     // while comparing (restored from `sidebar_pref` when the split closes).
     state.show_sidebar = false;

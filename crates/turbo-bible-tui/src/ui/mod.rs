@@ -28,8 +28,19 @@ pub struct PaneRender<'a> {
     pub cursor_verse: i64,
     pub selection: Option<(i64, i64)>,
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
-    /// The focused pane draws a bright border + mode pill; others dim.
+    /// The focused pane draws a filled bright_cyan title bar + double-line
+    /// border + mode pill; others dim to a single-line border. (The loud
+    /// focus chrome only applies when there's more than one pane — see
+    /// [`passage::PassageView::compare_mode`].)
     pub is_focused: bool,
+    /// Set only when the pane was opened from the `K` xref popup via `s`: the
+    /// source reference (`"John 3:16"`), rendered as `… ← John 3:16` in the
+    /// title. `None` for `Ctrl-W v` compares and the single-pane view.
+    pub origin_label: Option<&'a str>,
+    /// The focused pane's cursor verse, threaded into each *unfocused* pane so
+    /// it can faintly tint the matching verse (a passive cross-pane locator).
+    /// `None` on the focused pane and the single-pane view.
+    pub peer_verse: Option<i64>,
 }
 
 pub struct Frame<'a> {
@@ -56,13 +67,23 @@ impl Frame<'_> {
             self.max_reading_width,
             self.show_sidebar,
         );
-        for (rect, pane) in rects.iter().zip(self.panes) {
+        // In a multi-pane split, only the rightmost pane keeps its drop
+        // shadow (it falls on the blue desktop); interior panes suppress it so
+        // adjacent columns tile flush instead of smudging a shadow onto the
+        // next pane's border. A single pane always keeps its shadow.
+        let compare_mode = self.panes.len() > 1;
+        let last = self.panes.len().saturating_sub(1);
+        for (i, (rect, pane)) in rects.iter().zip(self.panes).enumerate() {
             passage::PassageView {
                 passage: pane.passage,
                 cursor_verse: pane.cursor_verse,
                 selection: pane.selection,
                 bookmarked: pane.bookmarked,
                 is_focused: pane.is_focused,
+                compare_mode,
+                origin_label: pane.origin_label,
+                peer_verse: pane.peer_verse,
+                suppress_shadow: compare_mode && i != last,
             }
             .render(*rect, buf);
         }
@@ -138,9 +159,14 @@ fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Opt
 }
 
 /// Minimum interior width for a compare column before the open-pane action
-/// refuses to add another. `render` clamps body text and wraps below this,
-/// but a bordered pane with a 3-col verse-number gutter is unusable narrower.
-pub const MIN_PANE_W: u16 = 28;
+/// refuses to add another. A bordered pane spends ~6 cols on chrome (the
+/// 1-col panel pad, the 1-col gutter, the 3-col verse number, the 2-col gutter
+/// gap), so a 40-col interior leaves ~34 cols of prose — about 5–7 words a
+/// line, the floor for comfortable reading. 28 (the original) frayed badly at
+/// 3 panes (~44 cols apiece), wrapping every verse to 2–3 words a line; 40 is
+/// the readable floor that still lets the width be the natural pane-count
+/// limiter (no hard cap on panes — a wide terminal can fit several).
+pub const MIN_PANE_W: u16 = 40;
 /// Columns of blue desktop left between adjacent compare panes.
 const PANE_GAP: u16 = 1;
 
@@ -165,6 +191,10 @@ pub fn min_pane_interior(total: u16, n: usize) -> u16 {
 /// optional-sidebar behavior (and its tests) verbatim. `n >= 2` splits the
 /// body into equal columns (remainder distributed left-to-right) and
 /// suppresses the sidebar — there's no room for it beside multiple panes.
+///
+/// TODO(design): a slim sidebar on very wide terminals (keeping notes visible
+/// alongside 2 panes when the body is, say, ≥200 cols) is deferred polish, not
+/// implemented here.
 fn panes_layout(
     body: Rect,
     n: usize,
