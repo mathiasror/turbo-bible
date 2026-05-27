@@ -24,13 +24,8 @@ use rusqlite::{Connection, OpenFlags, params};
 pub struct TranslationInfo {
     pub code: String,
     pub name: String,
-    #[expect(
-        dead_code,
-        reason = "loaded from the per-translation meta table for runtime inspection; \
-                  the static manifest carries the same field, which is what the \
-                  picker reads, but keeping this on the on-disk struct keeps the \
-                  two surfaces interchangeable for a future About dialog"
-    )]
+    /// Read by `merge_picker_entries` to label on-disk translations that
+    /// aren't in the static manifest (e.g. `turbo-bible import` output).
     pub language: String,
     #[expect(
         dead_code,

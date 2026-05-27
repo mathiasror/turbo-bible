@@ -259,3 +259,68 @@ fn find_jump_lands_on_matched_verse_not_one() {
         "verse should not be 1 (regression marker); state.toml:\n{st}"
     );
 }
+
+/// `turbo-bible import` builds a custom translation `.db` from JSON and
+/// installs it; the reader then discovers and reads it. This exercises the
+/// real CLI dispatch, `Db::open_ro`'s discovery of a translation that isn't
+/// in the static manifest, and the `meta.code == filename` check that a
+/// hand-copied file can't satisfy (see the comment on
+/// `picker_download_offline_keeps_default_and_quits_clean`).
+#[test]
+fn import_subcommand_installs_a_readable_custom_translation() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("custom.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","name":"John","chapters":[
+            {"chapter":3,"verses":[{"verse":16,"text":"For God so loved the world."}]}]}]}"#,
+    )
+    .unwrap();
+
+    // Run the import subcommand with HOME pointed at the tempdir so the
+    // file lands in the same translations dir the reader will open.
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-john",
+        "--name",
+        "John (custom)",
+        "--language",
+        "en",
+        "--license",
+        "CC0-1.0",
+    ]);
+    let status = cmd.status().expect("run import subcommand");
+    assert!(status.success(), "import subcommand exited non-zero");
+
+    let db = tmp
+        .path()
+        .join(".local/share/turbo-bible/translations/zz-john.db");
+    assert!(db.is_file(), "import should write {}", db.display());
+
+    // Launch the reader on the imported translation and quit; the active
+    // translation must round-trip into state.toml.
+    let mut p = launch(
+        &tmp,
+        &[
+            "--translation",
+            "zz-john",
+            "--book",
+            "JHN",
+            "--chapter",
+            "3",
+        ],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("translation = \"zz-john\""), "got:\n{st}");
+    assert!(st.contains("book = \"JHN\""), "got:\n{st}");
+}

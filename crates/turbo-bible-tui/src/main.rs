@@ -14,6 +14,7 @@ mod bundled;
 mod config;
 mod db;
 mod fetch;
+mod import;
 mod install;
 mod keys;
 mod manifest;
@@ -46,7 +47,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::db::{Book, Db, Passage};
+use crate::db::{Book, Db, Passage, TranslationInfo};
 use crate::keys::{Action, KeyState};
 use crate::nav::{Navigator, Position};
 use crate::ui::find::{FindDialog, FindOutcome};
@@ -170,6 +171,10 @@ enum Commands {
     /// Runs automatically on every startup when files are missing;
     /// invoke explicitly with `--force` to re-extract.
     Install(install::InstallArgs),
+    /// Build a translation `<code>.db` from a JSON file and install it
+    /// into the translations directory. See `docs/IMPORT.md` for the
+    /// input format and resulting schema.
+    Import(import::ImportArgs),
 }
 
 type Tty = Terminal<CrosstermBackend<Stdout>>;
@@ -292,8 +297,10 @@ impl Drop for TerminalGuard {
 fn main() -> Result<()> {
     let args = Args::parse();
     let translations_dir = resolve_translations_dir(&args)?;
-    if let Some(Commands::Install(install_args)) = &args.command {
-        return install::run(install_args);
+    match &args.command {
+        Some(Commands::Install(install_args)) => return install::run(install_args),
+        Some(Commands::Import(import_args)) => return import::run(import_args),
+        None => {}
     }
     // First launch (or any time files are missing) auto-extracts the
     // bundled translations into the translations directory; idempotent
@@ -1494,22 +1501,41 @@ fn repeat_search(
     })
 }
 
-/// Build the picker entry list: every translation the binary knows
-/// about (from the static manifest), marked installed iff its `.db`
-/// is currently loaded in `db`.
 fn picker_entries(db: &Db) -> Vec<PickerEntry> {
+    merge_picker_entries(db.translations())
+}
+
+/// Build the picker entry list: every translation the binary knows about
+/// (the static manifest), each marked installed iff its `.db` is on disk,
+/// followed by any on-disk translations *not* in the manifest — e.g. ones
+/// produced by `turbo-bible import`, which would otherwise be reachable
+/// only via `--translation`. The latter are always installed (they exist
+/// on disk by definition) and carry no download size.
+fn merge_picker_entries(installed: &[TranslationInfo]) -> Vec<PickerEntry> {
     use std::collections::HashSet;
-    let installed: HashSet<&str> = db.translations().iter().map(|t| t.code.as_str()).collect();
-    crate::manifest::TRANSLATIONS
+    let installed_codes: HashSet<&str> = installed.iter().map(|t| t.code.as_str()).collect();
+    let mut entries: Vec<PickerEntry> = crate::manifest::TRANSLATIONS
         .iter()
         .map(|t| PickerEntry {
             code: t.code.to_string(),
             name: t.name.to_string(),
             language: t.language.to_string(),
-            installed: installed.contains(t.code),
+            installed: installed_codes.contains(t.code),
             compressed_size: t.compressed_size,
         })
-        .collect()
+        .collect();
+    for t in installed {
+        if crate::manifest::TranslationManifestEntry::by_code(&t.code).is_none() {
+            entries.push(PickerEntry {
+                code: t.code.clone(),
+                name: t.name.clone(),
+                language: t.language.clone(),
+                installed: true,
+                compressed_size: 0,
+            });
+        }
+    }
+    entries
 }
 
 fn switch_translation(
@@ -1594,4 +1620,55 @@ fn shortcut_label_to_key(label: &str) -> Option<KeyEvent> {
         _ => return None,
     };
     Some(KeyEvent::new(code, KeyModifiers::empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(code: &str) -> TranslationInfo {
+        TranslationInfo {
+            code: code.to_string(),
+            name: format!("Name {code}"),
+            language: "en".to_string(),
+            license: String::new(),
+            attribution: String::new(),
+        }
+    }
+
+    #[test]
+    fn picker_lists_manifest_marking_installed_and_appends_custom() {
+        // en-kjv is bundled/installed; zz-john is an imported translation
+        // present on disk but absent from the static manifest.
+        let installed = [info("en-kjv"), info("zz-john")];
+        let entries = merge_picker_entries(&installed);
+
+        let kjv = entries
+            .iter()
+            .find(|e| e.code == "en-kjv")
+            .expect("manifest entry present");
+        assert!(kjv.installed, "en-kjv is on disk → installed");
+
+        let custom = entries
+            .iter()
+            .find(|e| e.code == "zz-john")
+            .expect("imported translation surfaced in picker");
+        assert!(custom.installed);
+        assert_eq!(custom.name, "Name zz-john");
+        assert_eq!(custom.compressed_size, 0);
+
+        // Exactly the manifest set plus the one custom entry, no dupes.
+        assert_eq!(entries.len(), manifest::TRANSLATIONS.len() + 1);
+
+        // A manifest translation that isn't on disk is listed, not installed.
+        let absent = manifest::TRANSLATIONS
+            .iter()
+            .find(|t| t.code != "en-kjv")
+            .expect("more than one manifest translation");
+        let entry = entries
+            .iter()
+            .find(|e| e.code == absent.code)
+            .expect("absent manifest entry still listed");
+        assert!(!entry.installed);
+    }
 }
