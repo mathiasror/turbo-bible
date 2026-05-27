@@ -241,8 +241,8 @@ Sleep 400ms
 # into a NEW pane (cursor on en-kjv, index 4); two `j`s land on es-rv1909
 # (index 6, Spanish). Result: en-kjv (left, dimmed) | es-rv1909 (right,
 # focused), both showing Psalm 119 — the point is that the poetry inset
-# holds independently in each column at the reduced per-pane width, rather
-# than collapsing once the body cap stops binding.
+# holds per-pane even at the reduced column width, not only in a
+# full-width single-pane reader.
 Ctrl+W
 Sleep 200ms
 Type "v"
