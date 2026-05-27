@@ -1,4 +1,4 @@
-//! `turbo-bible import <file.json>` — build a per-translation SQLite
+//! `turbo-bible import <file.json>` — build a per-translation `SQLite`
 //! `<code>.db` from a user-supplied JSON file and drop it into the
 //! translations directory, ready to read on the next launch.
 //!
@@ -289,7 +289,7 @@ struct ImportVerse {
 /// # Errors
 /// Bad `--code`, unreadable/invalid JSON, an unknown book name, a
 /// duplicate verse, an existing `<code>.db` without `--force`, or any
-/// IO / SQLite failure while building the database.
+/// IO / `SQLite` failure while building the database.
 pub fn run(args: &ImportArgs) -> Result<()> {
     validate_code(&args.code)?;
     let dir = resolve_dir(args.translations_dir.as_deref())?;
@@ -477,10 +477,7 @@ fn validate_code(code: &str) -> Result<()> {
 }
 
 fn resolve_dir(override_path: Option<&Path>) -> Result<PathBuf> {
-    match override_path {
-        Some(p) => Ok(p.to_path_buf()),
-        None => crate::paths::translations_dir(),
-    }
+    override_path.map_or_else(crate::paths::translations_dir, |p| Ok(p.to_path_buf()))
 }
 
 #[cfg(test)]

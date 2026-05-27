@@ -198,6 +198,14 @@ struct Pane {
     /// `None` for the initial pane and `Ctrl-W v` translation compares (which
     /// have no single origin verse).
     origin_label: Option<String>,
+    /// The pane's last-rendered text interior, refreshed every [`draw_frame`]
+    /// from [`ui::pane_viewports`]. `wrap_width` feeds the line→verse map and
+    /// `viewport_height` sizes half-/full-page motion (`Ctrl-D`/`Ctrl-F`/
+    /// `Space`) to the visible rows. Both are 0 before the first draw — paging
+    /// falls back to a fixed verse step until then (it can't happen in the run
+    /// loop, where a draw always precedes the first key).
+    wrap_width: u16,
+    viewport_height: u16,
 }
 
 impl Pane {
@@ -211,6 +219,8 @@ impl Pane {
             visual_anchor: None,
             history,
             origin_label: None,
+            wrap_width: 0,
+            viewport_height: 0,
         }
     }
 
@@ -771,10 +781,26 @@ fn pane_fits_width(total_width: u16, current_panes: usize) -> bool {
 /// helpers) because the closure borrows many fields and pulling it apart
 /// duplicates the dialog overlay match.
 fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
-    // Refresh the open-pane width guard and the per-pane bookmark caches
-    // up front, while we still hold `&mut state` — the draw closure below
-    // borrows `state` immutably.
-    state.last_term_width = term.size().map_or(0, |s| s.width);
+    // Refresh the open-pane width guard, per-pane render geometry, and the
+    // per-pane bookmark caches up front, while we still hold `&mut state` — the
+    // draw closure below borrows `state` immutably.
+    let size = term.size().unwrap_or_default();
+    state.last_term_width = size.width;
+    // Each pane's on-screen text interior, from the same layout the draw uses,
+    // so viewport-relative paging (Ctrl-D/F/Space) tracks the visible rows.
+    // (The splash ignores these; they're only read by the reading view, where
+    // this layout matches what's drawn.)
+    let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+    let viewports = ui::pane_viewports(
+        area,
+        state.panes.len(),
+        state.max_reading_width,
+        state.show_sidebar,
+    );
+    for (pane, (w, h)) in state.panes.iter_mut().zip(viewports) {
+        pane.wrap_width = w;
+        pane.viewport_height = h;
+    }
     state.refresh_all_bookmark_caches();
 
     let status = make_status(state);
@@ -1108,15 +1134,12 @@ fn open_compare_pane(
         state.set_transient("Terminal too narrow for another pane");
         return Ok(());
     }
-    let (seed_pos, cursor) = match seed {
-        Some(p) => {
-            let c = p.verse.unwrap_or(1);
-            (p, c)
-        }
-        None => {
-            let fp = state.focused();
-            (fp.pos.clone(), fp.cursor_verse)
-        }
+    let (seed_pos, cursor) = if let Some(p) = seed {
+        let c = p.verse.unwrap_or(1);
+        (p, c)
+    } else {
+        let fp = state.focused();
+        (fp.pos.clone(), fp.cursor_verse)
     };
     // The seed book may be absent from `code` — a partial / imported
     // translation (Ctrl-W v into a John-only edition), or an xref target whose
@@ -1511,6 +1534,7 @@ fn dispatch_reading(
         _ => {
             let f = state.focus;
             let pane = &mut state.panes[f];
+            let (wrap_width, viewport_height) = (pane.wrap_width, pane.viewport_height);
             if apply_action(
                 action,
                 ctx.db,
@@ -1519,6 +1543,8 @@ fn dispatch_reading(
                 &mut pane.passage,
                 &mut pane.cursor_verse,
                 &mut pane.history,
+                wrap_width,
+                viewport_height,
             )? {
                 return Ok(DispatchStep::Quit);
             }
@@ -1770,6 +1796,12 @@ fn max_verse(passage: &Passage) -> i64 {
     reason = "pos is mutated through jump_to in the chapter/book arms below; \
               clippy can't follow the call"
 )]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "operates on the focused pane's individual reading-context fields \
+              (see the type comment on apply_action's caller); the wrap_width / \
+              viewport_height pair sizes paging to the visible rows"
+)]
 fn apply_action(
     action: Action,
     db: &Db,
@@ -1778,11 +1810,21 @@ fn apply_action(
     passage: &mut Passage,
     cursor_verse: &mut i64,
     history: &mut History,
+    wrap_width: u16,
+    viewport_height: u16,
 ) -> Result<bool> {
     let nav_ = Navigator::new(books);
     let last = max_verse(passage);
-    let half: i64 = 10;
-    let page: i64 = 20;
+    // Half-/full-page motion scrolls by the visible row count, so a screenful
+    // tracks the terminal size instead of a fixed verse step. Before the first
+    // draw (viewport_height == 0 — unreachable in the run loop, where a draw
+    // always precedes the first key) fall back to a sane fixed line step.
+    let page_lines = if viewport_height == 0 {
+        20
+    } else {
+        i64::from(viewport_height)
+    };
+    let half_lines = (page_lines / 2).max(1);
     match action {
         Action::Quit => Ok(true),
         Action::CursorDown(n) => {
@@ -1794,19 +1836,21 @@ fn apply_action(
             Ok(false)
         }
         Action::HalfPageDown => {
-            *cursor_verse = (*cursor_verse + half).min(last);
+            *cursor_verse = render::verse_after_paging(passage, *cursor_verse, wrap_width, half_lines);
             Ok(false)
         }
         Action::HalfPageUp => {
-            *cursor_verse = (*cursor_verse - half).max(1);
+            *cursor_verse =
+                render::verse_after_paging(passage, *cursor_verse, wrap_width, -half_lines);
             Ok(false)
         }
         Action::PageDown => {
-            *cursor_verse = (*cursor_verse + page).min(last);
+            *cursor_verse = render::verse_after_paging(passage, *cursor_verse, wrap_width, page_lines);
             Ok(false)
         }
         Action::PageUp => {
-            *cursor_verse = (*cursor_verse - page).max(1);
+            *cursor_verse =
+                render::verse_after_paging(passage, *cursor_verse, wrap_width, -page_lines);
             Ok(false)
         }
         Action::GotoTop => {
