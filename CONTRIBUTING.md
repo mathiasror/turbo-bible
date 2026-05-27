@@ -91,8 +91,10 @@ via `just check && just audit && just deny`.
 Releases are tag-driven. `.github/workflows/release.yml` watches for
 tags matching `v*` and runs three things in parallel/serial:
 
-1. Build prebuilt binaries for five targets (x86_64 + aarch64 Linux,
-   x86_64 + aarch64 macOS, x86_64 Windows). Each build job clones
+1. Build prebuilt binaries for four targets (x86_64 + aarch64 Linux,
+   aarch64 macOS, x86_64 Windows). macOS is Apple Silicon only —
+   GitHub retired the Intel runner image, so Intel Macs build from
+   source (`cargo install turbo-bible`). Each build job clones
    `scrollmapper/bible_databases` at the pinned `SCROLLMAPPER_REF`
    env var in the workflow, runs `just bundle-translations` to
    populate `crates/turbo-bible-tui/assets/`, then `cargo build

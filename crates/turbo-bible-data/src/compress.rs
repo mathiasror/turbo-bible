@@ -62,7 +62,7 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
         } else {
             let meta = read_meta(&path)?;
             if scrollmapper_commit.is_empty() {
-                scrollmapper_commit = meta.source_commit.clone();
+                scrollmapper_commit.clone_from(&meta.source_commit);
             } else if scrollmapper_commit != meta.source_commit {
                 bail!(
                     "inconsistent source_commit across translations: {} vs {}",
@@ -156,9 +156,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn relative_path(p: &Path, base: &Path) -> String {
-    p.strip_prefix(base)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| p.to_string_lossy().into_owned())
+    p.strip_prefix(base).map_or_else(
+        |_| p.to_string_lossy().into_owned(),
+        |p| p.to_string_lossy().into_owned(),
+    )
 }
 
 struct DbMeta {

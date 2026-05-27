@@ -3,7 +3,7 @@ name: Release
 # Tag-driven release. Push a `v*` tag to fire the workflow:
 #   git tag v0.1.0 && git push --tags
 #
-# Builds prebuilt binaries for five targets, packages each as a tarball
+# Builds prebuilt binaries for four targets, packages each as a tarball
 # (.zip on Windows), uploads them as GitHub release assets, and publishes
 # `turbo-bible` to crates.io. The hand-authored `website/install.sh`
 # fetches whichever tarball matches the user's platform from the
@@ -99,9 +99,11 @@ jobs:
             os: ubuntu-latest
             ext: tar.gz
             cross: true
-          - target: x86_64-apple-darwin
-            os: macos-13
-            ext: tar.gz
+          # No x86_64-apple-darwin leg: GitHub retired the `macos-13`
+          # Intel runner image (Dec 2025) and is sunsetting Intel macOS
+          # entirely by Fall 2027, so we ship Apple Silicon only. Intel
+          # Mac users build from source (`cargo install turbo-bible`);
+          # install.sh guards the x86_64-darwin combo with that hint.
           - target: aarch64-apple-darwin
             os: macos-latest
             ext: tar.gz

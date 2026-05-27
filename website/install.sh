@@ -99,6 +99,16 @@ case "$uname_m" in
 esac
 
 target="$arch-$os"
+
+# Intel macOS has no prebuilt binary: GitHub retired the Intel runner
+# image, so the release ships Apple Silicon (aarch64) macOS only.
+if [ "$target" = "x86_64-apple-darwin" ]; then
+  red "No prebuilt binary for Intel (x86_64) macOS — the release ships"
+  red "Apple Silicon (arm64) macOS only. Install from source instead:"
+  red "  cargo install turbo-bible"
+  exit 1
+fi
+
 asset="turbo-bible-$target.tar.gz"
 
 if [ "$VERSION" = "latest" ]; then

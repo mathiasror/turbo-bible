@@ -6,7 +6,7 @@ allowed-tools: Bash(git status:*), Bash(git branch:*), Bash(git log:*), Bash(git
 
 You are running the **pre-release gate** for turbo-bible. The release is
 tag-driven: pushing a `v*` tag fires `.github/workflows/release.yml`, which
-builds five target tarballs, uploads per-translation `.db.zst` assets, and
+builds four target tarballs, uploads per-translation `.db.zst` assets, and
 runs `cargo publish`. **There is no undo** — `cargo publish` is permanent and
 tags are not edited in place (a bad release means fix-forward + a new tag).
 So this checklist must be skeptical: surface problems, do not paper over them.
