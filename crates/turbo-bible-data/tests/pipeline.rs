@@ -42,9 +42,14 @@ fn run_cli(args: &[&str]) {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut h = Sha256::new();
     h.update(bytes);
-    format!("{:x}", h.finalize())
+    let mut s = String::with_capacity(64);
+    for b in h.finalize() {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 /// build → compress → decompress: the sha256 over the decompressed

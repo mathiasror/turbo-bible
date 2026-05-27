@@ -59,6 +59,30 @@ Re-extract the embedded translation at any time:
 turbo-bible install --force
 ```
 
+## Bring your own translation
+
+Beyond the bundled eleven, you can import a translation from a JSON file.
+`turbo-bible import` builds a SQLite database and installs it alongside
+the others — no data pipeline needed:
+
+```sh
+turbo-bible import myversion.json \
+  --code xx-myver --name "My Version" --language xx
+```
+
+The JSON is a list of books, chapters, and verses keyed by OSIS code (or
+English book name):
+
+```json
+{ "books": [ { "book": "JHN", "chapters": [
+  { "chapter": 3, "verses": [ { "verse": 16, "text": "For God so loved…" } ] }
+] } ] }
+```
+
+It's then selectable via `--translation xx-myver` and in the `t` picker.
+See [`docs/IMPORT.md`](docs/IMPORT.md) for the full input format, every
+flag, and the resulting database schema.
+
 ## Run
 
 ```sh

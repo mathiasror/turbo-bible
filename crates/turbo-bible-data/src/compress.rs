@@ -150,9 +150,14 @@ fn compress_file(src: &Path, dst: &Path) -> Result<CompressStats> {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut h = Sha256::new();
     h.update(bytes);
-    format!("{:x}", h.finalize())
+    let mut s = String::with_capacity(64);
+    for b in h.finalize() {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 fn relative_path(p: &Path, base: &Path) -> String {
