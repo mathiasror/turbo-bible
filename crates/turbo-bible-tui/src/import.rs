@@ -477,10 +477,7 @@ fn validate_code(code: &str) -> Result<()> {
 }
 
 fn resolve_dir(override_path: Option<&Path>) -> Result<PathBuf> {
-    match override_path {
-        Some(p) => Ok(p.to_path_buf()),
-        None => crate::paths::translations_dir(),
-    }
+    override_path.map_or_else(crate::paths::translations_dir, |p| Ok(p.to_path_buf()))
 }
 
 #[cfg(test)]
