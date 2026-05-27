@@ -49,10 +49,10 @@ jobs:
     name: build translation assets (once)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Clone scrollmapper at pinned ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: scrollmapper/bible_databases
           ref: ${{ env.SCROLLMAPPER_REF }}
@@ -77,7 +77,7 @@ jobs:
           cargo run -p turbo-bible-data --release -- compress
 
       - name: Upload translations artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: translations
           path: dist/translations
@@ -112,7 +112,7 @@ jobs:
             ext: zip
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -124,7 +124,7 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Download translations artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: translations
           path: dist/translations
@@ -188,7 +188,7 @@ jobs:
           fi
 
       - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist-pkg/*.${{ matrix.ext }}
@@ -199,7 +199,7 @@ jobs:
   upload-translations:
     name: upload translations + xrefs assets
     # Run after `build` so we don't race against the matrix on
-    # `softprops/action-gh-release@v2`'s "create release if missing"
+    # `softprops/action-gh-release@v3`'s "create release if missing"
     # path. The first job into a tag wins the create; later ones must
     # observe an existing release to append to.
     needs: build
@@ -208,7 +208,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download translations artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: translations
           path: dist/translations
@@ -234,7 +234,7 @@ jobs:
           sha256sum translations.tar.gz > translations.tar.gz.sha256
 
       - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/translations/*.db.zst
@@ -249,7 +249,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -257,7 +257,7 @@ jobs:
           key: publish
 
       - name: Download translations artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: translations
           path: dist/translations
