@@ -34,7 +34,7 @@ use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -324,23 +324,23 @@ fn main() -> Result<()> {
     let books = db.list_books()?;
     let translation_label = db.translation_label()?;
 
-    // Resolve persisted state for the Continue option.
+    // Resolve persisted state for the Continue option. Only offer it when the
+    // persisted book actually exists in the active translation — a partial /
+    // imported translation may not contain it, and resuming into a missing
+    // book would fail to load.
     let last_for_splash: Option<(Position, String)> = persisted
         .as_ref()
         .filter(|ps| ps.translation == translation)
-        .map(|ps| {
-            let label = books.iter().find(|b| b.code == ps.book).map_or_else(
-                || format!("{} {}:{}", ps.book, ps.chapter, ps.verse),
-                |b| format!("{} {}:{}", b.name, ps.chapter, ps.verse),
-            );
-            (
+        .and_then(|ps| {
+            let b = books.iter().find(|b| b.code == ps.book)?;
+            Some((
                 Position {
                     book: ps.book.clone(),
                     chapter: ps.chapter,
                     verse: None,
                 },
-                label,
-            )
+                format!("{} {}:{}", b.name, ps.chapter, ps.verse),
+            ))
         });
 
     // Starting screen: if --book was passed explicitly, go straight to reading.
@@ -348,6 +348,9 @@ fn main() -> Result<()> {
     let final_pos: Option<Position>;
     let final_cursor_verse: i64;
     let result = if let Some(book_code) = args.book.clone() {
+        if !books.iter().any(|b| b.code == book_code) {
+            bail!("book {book_code:?} is not in translation {translation:?}");
+        }
         let mut pos = Position {
             book: book_code,
             chapter: args.chapter,
@@ -376,15 +379,13 @@ fn main() -> Result<()> {
         } else {
             None
         };
-        // We still need *some* initial passage state for the run loop; load
-        // the persisted-or-default position lazily-ish.
+        // We still need *some* initial passage state for the run loop.
+        // `last_for_splash` is already known to exist in this translation; the
+        // fallback default may not (partial/imported translation), so clamp to
+        // the first available book rather than a hard-coded Genesis.
         let mut pos = match &last_for_splash {
             Some((p, _)) => p.clone(),
-            None => Position {
-                book: "GEN".into(),
-                chapter: 1,
-                verse: None,
-            },
+            None => initial_book_position(&books),
         };
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = persisted.as_ref().map_or(1, |p| p.verse).max(1);
@@ -1503,6 +1504,22 @@ fn repeat_search(
 
 fn picker_entries(db: &Db) -> Vec<PickerEntry> {
     merge_picker_entries(db.translations())
+}
+
+/// First-launch landing position when there's no resumable state. Prefers
+/// Genesis 1 (the first book of a full Bible), but falls back to the first
+/// book the active translation actually contains — a partial / imported
+/// translation may not include Genesis, and loading a missing book errors.
+/// `books` is ordered by canonical `ord` (see [`Db::list_books`]).
+fn initial_book_position(books: &[Book]) -> Position {
+    let book = books
+        .first()
+        .map_or_else(|| "GEN".to_string(), |b| b.code.clone());
+    Position {
+        book,
+        chapter: 1,
+        verse: None,
+    }
 }
 
 /// Build the picker entry list: every translation the binary knows about

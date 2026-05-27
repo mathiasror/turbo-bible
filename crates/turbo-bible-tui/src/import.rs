@@ -371,12 +371,19 @@ fn build_db(path: &Path, meta: &ImportMeta<'_>, json: &ImportJson) -> Result<Sta
             }
             let name = b.name.as_deref().unwrap_or(canon.name);
             let abbr = b.abbreviation.as_deref().unwrap_or(canon.abbr);
-            book_stmt.execute(params![canon.osis, canon.testament, canon.ord])?;
-            label_stmt.execute(params![canon.osis, name, abbr, name])?;
-            stats.books += 1;
 
+            // Insert the book/label row lazily — only once the book has a
+            // verse — so a book with empty `chapters`/`verses` never produces
+            // a navigable-but-empty entry the reader can't render.
+            let mut book_inserted = false;
             for ch in &b.chapters {
                 for v in &ch.verses {
+                    if !book_inserted {
+                        book_stmt.execute(params![canon.osis, canon.testament, canon.ord])?;
+                        label_stmt.execute(params![canon.osis, name, abbr, name])?;
+                        stats.books += 1;
+                        book_inserted = true;
+                    }
                     let osis_id = format!("{}.{}.{}", canon.osis, ch.chapter, v.verse);
                     verse_stmt
                         .execute(params![
@@ -618,6 +625,91 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM book", [], |r| r.get(0))
             .unwrap();
         assert_eq!(books, 1, "only the supplied book should exist (not 66)");
+    }
+
+    #[test]
+    fn book_with_no_verses_is_not_inserted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zz-test.db");
+        // GEN carries empty chapters; only JHN has a verse. A navigable-but-
+        // empty book would break the reader, so GEN must not be inserted.
+        let json: ImportJson = serde_json::from_str(
+            r#"{ "books": [
+                { "book": "GEN", "chapters": [] },
+                { "book": "JHN", "chapters": [
+                    { "chapter": 3, "verses": [ { "verse": 16, "text": "x" } ] } ] }
+            ] }"#,
+        )
+        .unwrap();
+        let stats = build_db(&path, &meta(), &json).expect("build");
+        assert_eq!(stats.books, 1, "empty GEN must not count");
+        let conn = open_ro(&path);
+        let gen_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM book WHERE code = 'GEN'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(gen_rows, 0, "an empty book must not be inserted");
+        let labels: i64 = conn
+            .query_row("SELECT COUNT(*) FROM book_label", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(labels, 1, "book_label must not gain an orphan empty book");
+    }
+
+    /// Guards against [`TRANSLATION_SCHEMA_SQL`] drifting from the data
+    /// pipeline. Compares the import-built schema against the bundled
+    /// `en-kjv.db` (produced by `turbo-bible-data`): object set (tables,
+    /// indexes, triggers, FTS shadow tables) plus per-table columns.
+    #[test]
+    fn import_schema_matches_pipeline_built_db() {
+        fn objects(conn: &Connection) -> Vec<(String, String)> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT type, name FROM sqlite_master \
+                     WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+                )
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        }
+        fn columns(conn: &Connection, table: &str) -> Vec<(String, String, i64, i64)> {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(1)?, r.get(2)?, r.get(3)?, r.get(5)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let imported = dir.path().join("zz-test.db");
+        build_db(&imported, &meta(), &sample_json()).expect("build");
+
+        let asset = crate::bundled::BUNDLED
+            .iter()
+            .find(|a| a.code == "en-kjv")
+            .expect("en-kjv is bundled");
+        let kjv = dir.path().join("en-kjv.db");
+        let bytes = zstd::decode_all(std::io::Cursor::new(asset.bytes)).expect("decompress kjv");
+        fs::write(&kjv, &bytes).unwrap();
+
+        let a = open_ro(&imported);
+        let b = open_ro(&kjv);
+        assert_eq!(
+            objects(&a),
+            objects(&b),
+            "import schema drifted from crates/turbo-bible-data/src/schema.rs"
+        );
+        for table in ["meta", "book", "book_label", "verse", "heading", "footnote"] {
+            assert_eq!(
+                columns(&a, table),
+                columns(&b, table),
+                "column drift in `{table}`"
+            );
+        }
     }
 
     #[test]

@@ -324,3 +324,54 @@ fn import_subcommand_installs_a_readable_custom_translation() {
     assert!(st.contains("translation = \"zz-john\""), "got:\n{st}");
     assert!(st.contains("book = \"JHN\""), "got:\n{st}");
 }
+
+/// Regression: launching into a *partial* imported translation that lacks
+/// Genesis, with NO `--book`, must not crash. The splash's default landing
+/// book used to be hard-coded to `GEN`, so the eager initial `load_passage`
+/// errored out of `main()` for any Genesis-less translation. The reader must
+/// now clamp the landing book to the first one the translation contains.
+#[test]
+fn partial_import_launches_without_book_arg() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("john.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","chapters":[
+            {"chapter":1,"verses":[{"verse":1,"text":"In the beginning was the Word"}]}]}]}"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-johnonly",
+        "--name",
+        "John only",
+        "--language",
+        "en",
+    ]);
+    assert!(
+        cmd.status().expect("run import subcommand").success(),
+        "import subcommand exited non-zero"
+    );
+
+    // No `--book`: the default landing position is Genesis, which this
+    // translation lacks. Startup must clamp to the first available book (JHN)
+    // and reach the splash, not abort.
+    let mut p = launch(&tmp, &["--translation", "zz-johnonly"]);
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("translation = \"zz-johnonly\""), "got:\n{st}");
+    assert!(
+        st.contains("book = \"JHN\""),
+        "landing book should clamp to the only available book; got:\n{st}"
+    );
+}
