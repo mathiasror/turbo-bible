@@ -229,9 +229,35 @@ fn panes_layout(
     (rects, None)
 }
 
+/// The interior `(wrap_width, viewport_height)` of each reading pane for the
+/// given terminal `area`, pane count, and layout settings — one entry per
+/// pane, left-to-right. Delegates to the same [`panes_layout`] (and so the
+/// same [`body_layout`]) that [`Frame::render`] draws into, then insets each
+/// rect by its border the way [`passage::PassageView`] does, so the figures
+/// match what's actually on screen.
+///
+/// Surfaced so the run loop can size viewport-relative paging (`Ctrl-D` /
+/// `Ctrl-F` / `Space`) to the visible rows instead of a fixed verse count,
+/// without reaching into the draw closure for the rects.
+pub(crate) fn pane_viewports(
+    area: Rect,
+    panes: usize,
+    max_reading_width: u16,
+    show_sidebar: bool,
+) -> Vec<(u16, u16)> {
+    let (_menu, body, _status) = split(area);
+    let (rects, _sidebar) = panes_layout(body, panes, max_reading_width, show_sidebar);
+    rects
+        .iter()
+        // PassageView wraps each rect in a bordered Block (Borders::ALL), so the
+        // text interior is the rect inset by one border cell on every side.
+        .map(|r| (r.width.saturating_sub(2), r.height.saturating_sub(2)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{body_layout, panes_layout};
+    use super::{body_layout, pane_viewports, panes_layout};
     use ratatui::layout::Rect;
 
     #[test]
@@ -292,6 +318,27 @@ mod tests {
         let body = Rect::new(0, 1, 10, 20);
         let (rects, _) = panes_layout(body, 4, 80, false);
         assert_eq!(rects.len(), 4);
+    }
+
+    #[test]
+    fn pane_viewports_match_the_drawn_pane_interiors() {
+        // The run loop sizes paging off pane_viewports; it must equal the inner
+        // (border-inset) dims of the rects panes_layout actually draws, for both
+        // the centered single pane and the even multi-pane split.
+        let area = Rect::new(0, 0, 200, 40);
+        let (_menu, body, _status) = super::split(area);
+        for n in 1..=3usize {
+            let vps = pane_viewports(area, n, 80, true);
+            let (rects, _) = panes_layout(body, n, 80, true);
+            assert_eq!(vps.len(), rects.len(), "one viewport per pane (n={n})");
+            for (vp, rect) in vps.iter().zip(&rects) {
+                assert_eq!(
+                    *vp,
+                    (rect.width.saturating_sub(2), rect.height.saturating_sub(2)),
+                    "viewport must equal the pane rect inset by its border (n={n})",
+                );
+            }
+        }
     }
 
     #[test]

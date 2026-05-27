@@ -338,6 +338,61 @@ pub fn line_index_for_verse(lines: &[RenderedLine], verse: i64) -> usize {
     lines.iter().position(|rl| rl.verse == verse).unwrap_or(0)
 }
 
+/// The verse the cursor should land on after paging `line_delta` rendered rows
+/// (negative scrolls up) from `from_verse`, given this chapter's layout at
+/// `wrap_width`. This is vim `Ctrl-D` / `Ctrl-F` semantics: a "page" is a span
+/// of on-screen *lines*, so a verse that wraps to several rows counts for its
+/// full height rather than as a single step — the whole point of sizing the
+/// jump to the viewport instead of a fixed verse count. Heading and blank rows
+/// (`verse == 0`) resolve to the nearest real verse in the direction of travel.
+///
+/// Returns `from_verse` unchanged when the passage renders no rows.
+#[must_use]
+pub fn verse_after_paging(
+    passage: &Passage,
+    from_verse: i64,
+    wrap_width: u16,
+    line_delta: i64,
+) -> i64 {
+    // The styling inputs (cursor / selection / peer / bookmarks) don't change
+    // the line *count* per verse — only `wrap_width` and the text do — so a
+    // bare render recovers the same line->verse map the draw will lay out.
+    let empty = std::collections::BTreeSet::new();
+    let rendered = render_passage(passage, from_verse, None, &empty, None, wrap_width);
+    if rendered.is_empty() {
+        return from_verse;
+    }
+    let from_idx = i64::try_from(line_index_for_verse(&rendered, from_verse)).unwrap_or(i64::MAX);
+    let last_idx = i64::try_from(rendered.len() - 1).unwrap_or(i64::MAX);
+    let target = usize::try_from((from_idx + line_delta).clamp(0, last_idx)).unwrap_or(0);
+    nearest_verse(&rendered, target, line_delta >= 0).unwrap_or(from_verse)
+}
+
+/// The nearest verse-bearing line to `idx`, scanning the travel direction
+/// (`down`) first and the opposite direction as a fallback — so a target that
+/// lands on a heading/blank row resolves to a real verse without overshooting
+/// the screenful the wrong way.
+fn nearest_verse(rendered: &[RenderedLine], idx: usize, down: bool) -> Option<i64> {
+    let travel = if down {
+        rendered[idx..].iter().find_map(real_verse)
+    } else {
+        rendered[..=idx].iter().rev().find_map(real_verse)
+    };
+    let fallback = || {
+        if down {
+            rendered[..idx].iter().rev().find_map(real_verse)
+        } else {
+            rendered[idx + 1..].iter().find_map(real_verse)
+        }
+    };
+    travel.or_else(fallback)
+}
+
+/// The verse a rendered line belongs to, or `None` for heading/blank rows.
+fn real_verse(rl: &RenderedLine) -> Option<i64> {
+    (rl.verse > 0).then_some(rl.verse)
+}
+
 fn is_blank(rl: &RenderedLine) -> bool {
     rl.line
         .spans
@@ -872,5 +927,84 @@ mod render_tests {
             body_lines >= 2,
             "wide pane must still wrap the body at the cap, got {body_lines} line(s)",
         );
+    }
+
+    #[test]
+    fn paging_moves_by_lines_when_verses_are_single_line() {
+        // Wide wrap → every verse is one row, so the layout is
+        // [blank, v1, v2, … v10] and a `line_delta` maps 1:1 onto verses.
+        let verses: Vec<Verse> = (1..=10).map(|n| v(n, "short")).collect();
+        let p = passage_with(verses, vec![]);
+        assert_eq!(
+            verse_after_paging(&p, 1, 80, 4),
+            5,
+            "down 4 lines from v1 lands on v5",
+        );
+        assert_eq!(
+            verse_after_paging(&p, 5, 80, -3),
+            2,
+            "up 3 lines from v5 lands on v2",
+        );
+    }
+
+    #[test]
+    fn paging_accounts_for_wrapped_verse_height() {
+        // A verse that wraps to several rows counts for its full height: paging
+        // a couple of lines down from v1 stays *inside* v2, it doesn't skip it.
+        let long = "the quick brown fox jumps over the lazy dog and keeps on \
+                    going well past the wrap boundary so this verse occupies \
+                    several rows on a narrow pane";
+        let p = passage_with(vec![v(1, "a"), v(2, long), v(3, "c")], vec![]);
+        let wrap = 40;
+        let rendered = render_passage(&p, 1, None, &BTreeSet::new(), None, wrap);
+        assert!(
+            rendered.iter().filter(|rl| rl.verse == 2).count() >= 2,
+            "precondition: v2 must wrap to multiple rows",
+        );
+        assert_eq!(
+            verse_after_paging(&p, 1, wrap, 2),
+            2,
+            "2 lines down from v1 lands inside the wrapped v2, not on v3",
+        );
+    }
+
+    #[test]
+    fn paging_clamps_at_chapter_ends() {
+        let verses: Vec<Verse> = (1..=5).map(|n| v(n, "short")).collect();
+        let p = passage_with(verses, vec![]);
+        assert_eq!(
+            verse_after_paging(&p, 5, 80, 999),
+            5,
+            "paging past the end clamps to the last verse",
+        );
+        assert_eq!(
+            verse_after_paging(&p, 1, 80, -999),
+            1,
+            "paging past the top clamps to the first verse",
+        );
+    }
+
+    #[test]
+    fn paging_onto_a_heading_resolves_to_a_real_verse() {
+        // The heading inserts blank/heading/blank rows before v3. A page that
+        // lands in that block must resolve to a real verse, never 0.
+        let p = passage_with(
+            vec![v(1, "a"), v(2, "b"), v(3, "c")],
+            vec![Heading {
+                before_verse: 3,
+                style: "s1".into(),
+                text: "Section".into(),
+            }],
+        );
+        for delta in 1..=5 {
+            let got = verse_after_paging(&p, 1, 80, delta);
+            assert!(got > 0, "delta {delta} resolved to a non-verse row ({got})");
+        }
+    }
+
+    #[test]
+    fn paging_zero_lines_stays_put() {
+        let p = passage_with(vec![v(1, "a"), v(2, "b"), v(3, "c")], vec![]);
+        assert_eq!(verse_after_paging(&p, 2, 80, 0), 2);
     }
 }
