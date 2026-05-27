@@ -216,6 +216,25 @@ Sleep 1300ms
 Screenshot "docs/screenshots/12-xref-split.png"
 Sleep 400ms
 
+# === 13 — Poetry indent =================================================
+# Close the xref split back to a single pane, then jump to Psalm 119:10 — a
+# poetic passage with 2-digit verse numbers, so the verse bodies carry the
+# left inset that sets poetry apart from the flush-left narrative prose of the
+# earlier shots. Landing on a multi-digit verse keeps the inset reading as a
+# deliberate step-in rather than a single-digit numbering artifact.
+Ctrl+W
+Sleep 150ms
+Type "q"
+Sleep 500ms
+Type ":"
+Sleep 150ms
+Type "Psalms 119:10"
+Sleep 400ms
+Enter
+Sleep 1200ms
+Screenshot "docs/screenshots/13-poetry.png"
+Sleep 400ms
+
 # --- Quit ---------------------------------------------------------------
 Type "q"
 Sleep 400ms

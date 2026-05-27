@@ -20,6 +20,7 @@ mod keys;
 mod manifest;
 mod nav;
 mod paths;
+mod poetry;
 mod quote;
 mod reference;
 mod render;
