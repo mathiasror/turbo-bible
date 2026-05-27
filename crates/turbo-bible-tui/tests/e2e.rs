@@ -260,6 +260,84 @@ fn find_jump_lands_on_matched_verse_not_one() {
     );
 }
 
+/// Ctrl-W as a raw control byte (ETB, 0x17) — crossterm decodes it to
+/// `Char('w') + CONTROL`, the window-command chord prefix.
+const CTRL_W: &str = "\x17";
+
+/// Open a second compare pane, move its cursor, switch focus back to the
+/// first pane, move it a little, and quit. The focused pane (pane 0) is the
+/// one persisted, so the saved verse reflects only the moves made *after*
+/// focus returned — proving panes are independent and focus-switching works.
+///
+/// Only `en-kjv` is bundled offline, so the new pane reads `en-kjv` too
+/// (the picker cursor starts on the current translation; Enter accepts it).
+/// If pane creation or focus-switching were broken, every `j` would land on
+/// pane 0 and the persisted verse would be 1 + 5 + 2 = 8 instead of 3.
+///
+/// NOTE: rexpect spawns with no PTY winsize, so the child sees a 0-width
+/// terminal and the split is only allowed because `LoopState::can_add_pane`
+/// treats an unmeasured (0) width as "allow" (see `main.rs`). This exercises
+/// pane *behavior*, not layout geometry — that's covered by the pure
+/// `panes_layout_*` unit tests in `ui`.
+#[test]
+fn compare_split_keeps_panes_independent_and_persists_focused() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "GEN", "--chapter", "1"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+
+    // Ctrl-W v → open the picker into a new pane; Enter accepts en-kjv.
+    key(&mut p, CTRL_W);
+    key(&mut p, "v");
+    key(&mut p, "\r");
+    // Focus is now the new pane (pane 1); move it down five verses.
+    for _ in 0..5 {
+        key(&mut p, "j");
+    }
+    // Ctrl-W h → focus back to pane 0 (still on verse 1).
+    key(&mut p, CTRL_W);
+    key(&mut p, "h");
+    // Move pane 0 down two verses → verse 3.
+    key(&mut p, "j");
+    key(&mut p, "j");
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"GEN\""), "expected GEN, got:\n{st}");
+    assert!(st.contains("chapter = 1"), "expected chapter 1, got:\n{st}");
+    assert_eq!(
+        parsed_verse(&st),
+        3,
+        "focused pane (pane 0) moved 2 verses after the split; \
+         8 would mean the split never opened / focus didn't switch. state.toml:\n{st}"
+    );
+}
+
+/// `Ctrl-W q` with only one pane open is a no-op (not a crash or quit):
+/// the app keeps running, and a subsequent `q` quits cleanly with state
+/// persisted as usual.
+#[test]
+fn close_pane_with_single_pane_is_noop() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "JHN", "--chapter", "3"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, CTRL_W);
+    key(&mut p, "q"); // close-pane: no-op with a single pane
+    key(&mut p, "j"); // still alive and responsive
+    key(&mut p, "q"); // real quit
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"JHN\""), "expected JHN, got:\n{st}");
+    assert!(st.contains("chapter = 3"), "expected chapter 3, got:\n{st}");
+}
+
 /// `turbo-bible import` builds a custom translation `.db` from JSON and
 /// installs it; the reader then discovers and reads it. This exercises the
 /// real CLI dispatch, `Db::open_ro`'s discovery of a translation that isn't
@@ -430,6 +508,72 @@ fn switching_to_partial_translation_clamps_instead_of_crashing() {
     assert!(
         st.contains("book = \"JHN\""),
         "switch should clamp to the only available book; got:\n{st}"
+    );
+}
+
+/// Regression: opening a *compare pane* into a partial imported translation
+/// that lacks the focused pane's book must clamp, not crash. `open_compare_pane`
+/// used to `?`-propagate the missing-book `load_passage_for` lookup straight out
+/// of the run loop, taking the whole TUI down. The fix clamps the seed to the
+/// target translation's first book (mirroring `try_switch_translation`).
+///
+/// rexpect spawns a 0-width PTY, so `can_add_pane`'s unmeasured-width branch
+/// allows the split regardless of geometry (see `compare_split_*`).
+#[test]
+fn compare_pane_into_partial_translation_does_not_crash() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("john.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","chapters":[
+            {"chapter":1,"verses":[{"verse":1,"text":"In the beginning was the Word"}]}]}]}"#,
+    )
+    .unwrap();
+
+    // Install a John-only translation alongside the bundled full en-kjv.
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-john",
+        "--name",
+        "John only",
+        "--language",
+        "en",
+    ]);
+    assert!(cmd.status().expect("run import subcommand").success());
+
+    // Read Genesis in en-kjv, then Ctrl-W v into a new pane and pick the
+    // John-only translation: its pane can't show Genesis, so the open must
+    // clamp to John rather than crashing the run loop.
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "GEN", "--chapter", "1"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, CTRL_W);
+    key(&mut p, "v"); // open the picker into a new pane
+    key(&mut p, "G"); // imported entries sort last
+    key(&mut p, "\r"); // select zz-john for the new pane
+    key(&mut p, "j"); // the app must still be alive and responsive
+    key(&mut p, "q"); // real quit
+    p.exp_eof()
+        .expect("app must survive opening a compare pane into a partial translation");
+
+    // The focused pane after the split is the new (zz-john) pane; on quit its
+    // position is what persists. It must have clamped to John, not crashed.
+    let st = read(&state_path(&tmp));
+    assert!(
+        st.contains("translation = \"zz-john\""),
+        "the new pane's translation should persist; got:\n{st}"
+    );
+    assert!(
+        st.contains("book = \"JHN\""),
+        "compare pane should clamp to the only available book; got:\n{st}"
     );
 }
 

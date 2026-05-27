@@ -237,22 +237,22 @@ pub struct ImportArgs {
 }
 
 /// Translation metadata destined for the `meta` row.
-struct ImportMeta<'a> {
-    code: &'a str,
-    name: &'a str,
-    language: &'a str,
-    license: &'a str,
-    attribution: &'a str,
+pub(crate) struct ImportMeta<'a> {
+    pub(crate) code: &'a str,
+    pub(crate) name: &'a str,
+    pub(crate) language: &'a str,
+    pub(crate) license: &'a str,
+    pub(crate) attribution: &'a str,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-struct Stats {
+pub(crate) struct Stats {
     books: usize,
     verses: i64,
 }
 
 #[derive(Debug, Deserialize)]
-struct ImportJson {
+pub(crate) struct ImportJson {
     #[serde(default)]
     books: Vec<ImportBook>,
 }
@@ -337,7 +337,7 @@ pub fn run(args: &ImportArgs) -> Result<()> {
 
 /// Apply the schema and ingest `json` into a fresh DB at `path`.
 /// Factored out of [`run`] so tests exercise the build without the CLI.
-fn build_db(path: &Path, meta: &ImportMeta<'_>, json: &ImportJson) -> Result<Stats> {
+pub(crate) fn build_db(path: &Path, meta: &ImportMeta<'_>, json: &ImportJson) -> Result<Stats> {
     let mut conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
     conn.execute_batch(TRANSLATION_SCHEMA_SQL)
         .context("apply translation schema")?;

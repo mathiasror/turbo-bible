@@ -32,7 +32,10 @@ pub struct FootnoteDialog {
 pub enum FootnoteOutcome {
     Continue,
     Cancel,
+    /// Follow the selected cross-reference in place (Enter).
     Jump(Position),
+    /// Open the selected cross-reference in a new compare pane (`s`).
+    OpenSplit(Position),
 }
 
 impl FootnoteDialog {
@@ -89,6 +92,14 @@ impl FootnoteDialog {
                 .get(self.selected)
                 .map_or(FootnoteOutcome::Continue, |item| {
                     FootnoteOutcome::Jump(item.target.clone())
+                }),
+            // `s` opens the selected xref alongside the current verse in a
+            // new compare pane, rather than replacing the current passage.
+            KeyCode::Char('s') => self
+                .xrefs
+                .get(self.selected)
+                .map_or(FootnoteOutcome::Continue, |item| {
+                    FootnoteOutcome::OpenSplit(item.target.clone())
                 }),
             _ => FootnoteOutcome::Continue,
         }
@@ -208,7 +219,9 @@ impl FootnoteDialog {
             vec![
                 Span::styled("  ", bg),
                 Span::styled("Enter ", key_style),
-                Span::styled("follow xref   ", dim),
+                Span::styled("follow   ", dim),
+                Span::styled("s ", key_style),
+                Span::styled("split   ", dim),
                 Span::styled("\u{2191}\u{2193}/j k ", key_style),
                 Span::styled("navigate   ", dim),
                 Span::styled("Esc ", key_style),

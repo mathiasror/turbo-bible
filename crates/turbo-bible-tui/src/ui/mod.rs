@@ -21,16 +21,38 @@ use ratatui::widgets::Widget;
 
 use crate::db::Passage;
 
-pub struct Frame<'a> {
-    pub menu_title: &'a str,
-    pub status: &'a [statusbar::Shortcut<'a>],
-    pub status_mode: &'a str,
+/// One reading column's render inputs. The reading view holds a slice of
+/// these — one per compare pane.
+pub struct PaneRender<'a> {
     pub passage: &'a Passage,
     pub cursor_verse: i64,
     pub selection: Option<(i64, i64)>,
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
+    /// The focused pane draws a filled bright_cyan title bar + double-line
+    /// border + mode pill; others dim to a single-line border. (The loud
+    /// focus chrome only applies when there's more than one pane — see
+    /// [`passage::PassageView::compare_mode`].)
+    pub is_focused: bool,
+    /// Set only when the pane was opened from the `K` xref popup via `s`: the
+    /// source reference (`"John 3:16"`), rendered as `… ← John 3:16` in the
+    /// title. `None` for `Ctrl-W v` compares and the single-pane view.
+    pub origin_label: Option<&'a str>,
+    /// The focused pane's cursor verse, threaded into each *unfocused* pane so
+    /// it can faintly tint the matching verse (a passive cross-pane locator).
+    /// `None` on the focused pane and the single-pane view.
+    pub peer_verse: Option<i64>,
+}
+
+pub struct Frame<'a> {
+    pub menu_title: &'a str,
+    pub status: &'a [statusbar::Shortcut<'a>],
+    pub status_mode: &'a str,
+    /// One per compare pane, left-to-right. Always at least one.
+    pub panes: &'a [PaneRender<'a>],
     pub show_sidebar: bool,
-    /// Maximum width (cols) of the reading pane. Centered if terminal wider.
+    /// Maximum width (cols) of the reading pane in single-pane mode.
+    /// Centered if the terminal is wider; compare panes split the body
+    /// evenly instead.
     pub max_reading_width: u16,
 }
 
@@ -39,20 +61,41 @@ impl Frame<'_> {
         let (menu_area, body_area, status_area) = split(area);
         menubar::render(self.menu_title, menu_area, buf);
         desktop::render(body_area, buf);
-        let (reading, sidebar_rect) =
-            body_layout(body_area, self.show_sidebar, self.max_reading_width);
-        passage::PassageView {
-            passage: self.passage,
-            cursor_verse: self.cursor_verse,
-            selection: self.selection,
-            bookmarked: self.bookmarked,
+        let (rects, sidebar_rect) = panes_layout(
+            body_area,
+            self.panes.len(),
+            self.max_reading_width,
+            self.show_sidebar,
+        );
+        // In a multi-pane split, only the rightmost pane keeps its drop
+        // shadow (it falls on the blue desktop); interior panes suppress it so
+        // adjacent columns tile flush instead of smudging a shadow onto the
+        // next pane's border. A single pane always keeps its shadow.
+        let compare_mode = self.panes.len() > 1;
+        let last = self.panes.len().saturating_sub(1);
+        for (i, (rect, pane)) in rects.iter().zip(self.panes).enumerate() {
+            passage::PassageView {
+                passage: pane.passage,
+                cursor_verse: pane.cursor_verse,
+                selection: pane.selection,
+                bookmarked: pane.bookmarked,
+                is_focused: pane.is_focused,
+                compare_mode,
+                origin_label: pane.origin_label,
+                peer_verse: pane.peer_verse,
+                suppress_shadow: compare_mode && i != last,
+            }
+            .render(*rect, buf);
         }
-        .render(reading, buf);
-        if let Some(sb) = sidebar_rect {
+        // The sidebar appears only in single-pane mode (panes_layout yields
+        // `Some` only when n == 1), so it follows the sole pane.
+        if let Some(sb) = sidebar_rect
+            && let Some(pane) = self.panes.first()
+        {
             sidebar::SidebarView {
-                passage: self.passage,
-                cursor_verse: self.cursor_verse,
-                selection: self.selection,
+                passage: pane.passage,
+                cursor_verse: pane.cursor_verse,
+                selection: pane.selection,
             }
             .render(sb, buf);
         }
@@ -115,9 +158,80 @@ fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Opt
     (reading, Some(sidebar))
 }
 
+/// Minimum interior width for a compare column before the open-pane action
+/// refuses to add another. A bordered pane spends ~6 cols on chrome (the
+/// 1-col panel pad, the 1-col gutter, the 3-col verse number, the 2-col gutter
+/// gap), so a 40-col interior leaves ~34 cols of prose — about 5–7 words a
+/// line, the floor for comfortable reading. 28 (the original) frayed badly at
+/// 3 panes (~44 cols apiece), wrapping every verse to 2–3 words a line; 40 is
+/// the readable floor that still lets the width be the natural pane-count
+/// limiter (no hard cap on panes — a wide terminal can fit several).
+pub const MIN_PANE_W: u16 = 40;
+/// Columns of blue desktop left between adjacent compare panes.
+const PANE_GAP: u16 = 1;
+
+/// The interior (text) width the *narrowest* of `n` evenly-split panes would
+/// get across a body `total` cols wide — the figure the open-pane guard
+/// checks against [`MIN_PANE_W`]. Mirrors [`panes_layout`]'s column math
+/// exactly (the inter-column [`PANE_GAP`]s and the 2-col drop-shadow inset
+/// each pane loses), so the guard can't approve a split that the layout then
+/// renders below the readable threshold.
+#[must_use]
+pub fn min_pane_interior(total: u16, n: usize) -> u16 {
+    let n_u16 = u16::try_from(n).unwrap_or(u16::MAX).max(1);
+    let gaps = PANE_GAP.saturating_mul(n_u16.saturating_sub(1));
+    let each = total.saturating_sub(gaps) / n_u16;
+    each.saturating_sub(2)
+}
+
+/// Lay out `n` reading panes across `body`, returning one rect per pane
+/// (left-to-right) plus an optional sidebar rect.
+///
+/// `n == 1` delegates to [`body_layout`], preserving the centered-pane +
+/// optional-sidebar behavior (and its tests) verbatim. `n >= 2` splits the
+/// body into equal columns (remainder distributed left-to-right) and
+/// suppresses the sidebar — there's no room for it beside multiple panes.
+///
+/// TODO(design): a slim sidebar on very wide terminals (keeping notes visible
+/// alongside 2 panes when the body is, say, ≥200 cols) is deferred polish, not
+/// implemented here.
+fn panes_layout(
+    body: Rect,
+    n: usize,
+    max_reading_w: u16,
+    show_sidebar: bool,
+) -> (Vec<Rect>, Option<Rect>) {
+    if n <= 1 {
+        let (reading, sb) = body_layout(body, show_sidebar, max_reading_w);
+        return (vec![reading], sb);
+    }
+    // Mirror body_layout's inner inset: 1-row top pad, height minus 2.
+    let h = body.height.saturating_sub(2);
+    let y = body.y + 1;
+    let n_u16 = u16::try_from(n).unwrap_or(u16::MAX);
+    let gaps = PANE_GAP.saturating_mul(n_u16.saturating_sub(1));
+    let avail = body.width.saturating_sub(gaps);
+    let each = avail / n_u16;
+    let mut remainder = avail % n_u16;
+    let mut rects = Vec::with_capacity(n);
+    let mut x = body.x;
+    for _ in 0..n {
+        let mut col = each;
+        if remainder > 0 {
+            col += 1;
+            remainder -= 1;
+        }
+        // Each PassageView insets by its own border; subtract the 2-col drop
+        // shadow like body_layout does for the single pane.
+        rects.push(Rect::new(x, y, col.saturating_sub(2), h));
+        x = x.saturating_add(col).saturating_add(PANE_GAP);
+    }
+    (rects, None)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::body_layout;
+    use super::{body_layout, panes_layout};
     use ratatui::layout::Rect;
 
     #[test]
@@ -139,5 +253,62 @@ mod tests {
             sidebar.is_some(),
             "wide terminal + sidebar on should yield two panes"
         );
+    }
+
+    #[test]
+    fn panes_layout_single_delegates_to_body_layout() {
+        let body = Rect::new(0, 0, 200, 40);
+        let (rects, sidebar) = panes_layout(body, 1, 80, true);
+        assert_eq!(rects.len(), 1, "n==1 yields exactly one pane rect");
+        assert!(sidebar.is_some(), "single pane keeps the sidebar when wide");
+    }
+
+    #[test]
+    fn panes_layout_multi_splits_evenly_no_sidebar() {
+        let body = Rect::new(0, 1, 240, 40);
+        for n in 2..=4usize {
+            let (rects, sidebar) = panes_layout(body, n, 80, true);
+            assert_eq!(rects.len(), n, "one rect per pane");
+            assert!(sidebar.is_none(), "compare mode suppresses the sidebar");
+            // Columns are left-to-right and non-overlapping.
+            for w in rects.windows(2) {
+                assert!(w[0].x < w[1].x, "pane x-coords strictly increasing");
+                assert!(
+                    w[0].x + w[0].width <= w[1].x + 2,
+                    "panes don't overlap (allowing the 2-col shadow inset)"
+                );
+            }
+            // Widths differ by at most 1 (remainder distribution).
+            let max = rects.iter().map(|r| r.width).max().unwrap();
+            let min = rects.iter().map(|r| r.width).min().unwrap();
+            assert!(max - min <= 1, "equal columns up to the remainder");
+        }
+    }
+
+    #[test]
+    fn panes_layout_narrow_does_not_panic() {
+        // A terminal far too narrow for the requested panes must still return
+        // rects without overflowing the layout arithmetic.
+        let body = Rect::new(0, 1, 10, 20);
+        let (rects, _) = panes_layout(body, 4, 80, false);
+        assert_eq!(rects.len(), 4);
+    }
+
+    #[test]
+    fn min_pane_interior_matches_narrowest_layout_column() {
+        // The open-pane guard must check the *actual* narrowest column width
+        // panes_layout would produce, not an over-estimate — otherwise it can
+        // approve a split that then renders a sub-readable sliver.
+        for &total in &[60u16, 84, 112, 137, 200] {
+            for n in 2..=4usize {
+                let (rects, _) = panes_layout(Rect::new(0, 1, total, 20), n, 80, false);
+                let narrowest = rects.iter().map(|r| r.width).min().unwrap();
+                assert_eq!(
+                    super::min_pane_interior(total, n),
+                    narrowest,
+                    "guard width must equal the narrowest rendered column (total={total}, n={n})"
+                );
+            }
+        }
     }
 }

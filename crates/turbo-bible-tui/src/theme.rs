@@ -75,6 +75,13 @@ pub fn list_focus_bg() -> Color {
 pub fn cursor_row_bg() -> Color {
     teal()
 }
+/// Passive cross-pane verse cue: in a compare split, each *unfocused* pane
+/// faintly tints the verse whose number matches the focused pane's cursor.
+/// A darker teal than [`cursor_row_bg`] so it reads as a secondary, "the
+/// other pane is here" hint — never mistaken for this pane's own cursor.
+pub fn peer_row_bg() -> Color {
+    input_teal()
+}
 /// Editable input-field background (Goto, Find, splash filter).
 pub fn input_field_bg() -> Color {
     input_teal()

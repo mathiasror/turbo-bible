@@ -154,6 +154,68 @@ Sleep 400ms
 Escape
 Sleep 400ms
 
+# Re-center on John 3:16 so the compare shots share a recognisable verse.
+Type ":"
+Sleep 150ms
+Type "John 3:16"
+Sleep 400ms
+Enter
+Sleep 1200ms
+
+# === 10 — Compare panes: two translations side by side ==================
+# `Ctrl-W v` opens the Translations picker into a NEW pane; the picker
+# cursor starts on the current translation (en-kjv, index 4). Two `j`s land
+# on es-rv1909 (index 6, Spanish) for a visually distinct comparison.
+# Result: en-kjv (left, dimmed) | es-rv1909 (right, focused — bright border
+# + NORMAL pill); mode line reads "2/2".
+Ctrl+W
+Sleep 200ms
+Type "v"
+Sleep 600ms
+Type "jj"
+Sleep 400ms
+Enter
+Sleep 1300ms
+Screenshot "docs/screenshots/10-compare.png"
+Sleep 400ms
+
+# === 11 — Three panes ===================================================
+# Add a third column to show how N panes scale. Focused pane is now
+# es-rv1909 (index 6); two `j`s reach la-clementine (index 8, Latin).
+Ctrl+W
+Sleep 200ms
+Type "v"
+Sleep 600ms
+Type "jj"
+Sleep 400ms
+Enter
+Sleep 1300ms
+Screenshot "docs/screenshots/11-compare-three.png"
+Sleep 400ms
+
+# Collapse back to a single pane (close focused pane twice).
+Ctrl+W
+Sleep 150ms
+Type "q"
+Sleep 500ms
+Ctrl+W
+Sleep 150ms
+Type "q"
+Sleep 800ms
+
+# === 12 — Cross-reference opened in a split =============================
+# `K` opens the footnote / cross-reference popup; `s` opens the highlighted
+# cross-reference beside the current verse (instead of `Enter`, which would
+# replace it). Result: the source verse (left) and the referenced passage
+# (right), same translation — the "pull a referenced verse up next to it"
+# flow.
+Type "K"
+Sleep 800ms
+Type "s"
+Sleep 1300ms
+Screenshot "docs/screenshots/12-xref-split.png"
+Sleep 400ms
+
 # --- Quit ---------------------------------------------------------------
 Type "q"
 Sleep 400ms
