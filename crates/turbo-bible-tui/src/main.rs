@@ -1108,15 +1108,12 @@ fn open_compare_pane(
         state.set_transient("Terminal too narrow for another pane");
         return Ok(());
     }
-    let (seed_pos, cursor) = match seed {
-        Some(p) => {
-            let c = p.verse.unwrap_or(1);
-            (p, c)
-        }
-        None => {
-            let fp = state.focused();
-            (fp.pos.clone(), fp.cursor_verse)
-        }
+    let (seed_pos, cursor) = if let Some(p) = seed {
+        let c = p.verse.unwrap_or(1);
+        (p, c)
+    } else {
+        let fp = state.focused();
+        (fp.pos.clone(), fp.cursor_verse)
     };
     // The seed book may be absent from `code` — a partial / imported
     // translation (Ctrl-W v into a John-only edition), or an xref target whose
