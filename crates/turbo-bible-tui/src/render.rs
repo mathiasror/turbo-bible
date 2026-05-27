@@ -36,7 +36,13 @@ const MAX_BODY_WIDTH: usize = 70;
 /// prose — we have no intra-verse line data to lay out true poetic lines. The
 /// verse number stays in its gutter column; only the body and its hanging
 /// indent shift right, and the wrap column narrows to match.
-const POETRY_INDENT: usize = 2;
+///
+/// Tuned to 3 cells: a 2-cell inset was technically applied but read as a
+/// numbering artifact in review — against a single-digit Psalm verse number it
+/// was hard to tell apart from the right-aligned gutter. 3 cells reads as a
+/// deliberate step-in while staying clear of the ~4-cell threshold where a flat
+/// inset starts to look like a block quote.
+const POETRY_INDENT: usize = 3;
 
 /// Per-verse row treatment. `Selected` (the brightest-cyan visual-selection
 /// slab) outranks `Cursor` so entering visual mode — which makes the cursor

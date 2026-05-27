@@ -110,10 +110,10 @@ move the cursor (and may scroll the view to keep it on screen).
 - `Tab` toggles the sidebar — respects the `[reading] show_sidebar`
   default from `config.toml`.
 
-The poetry inset in practice — Psalm 23, each verse stepped in from the
+The poetry inset in practice — Psalm 119, each verse stepped in from the
 prose margin:
 
-![Reading view — Psalm 23 rendered with the poetry indent](screenshots/13-poetry.png)
+![Reading view — Psalm 119 rendered with the poetry indent](screenshots/13-poetry.png)
 
 ## Moving around
 
