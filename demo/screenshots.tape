@@ -235,6 +235,48 @@ Sleep 1200ms
 Screenshot "docs/screenshots/13-poetry.png"
 Sleep 400ms
 
+# === 14 — Poetry in a compare pane ======================================
+# Still at Psalm 119:10 (single en-kjv pane). Open a second pane at the
+# same poetic passage in another translation: `Ctrl-W v` opens the picker
+# into a NEW pane (cursor on en-kjv, index 4); two `j`s land on es-rv1909
+# (index 6, Spanish). Result: en-kjv (left, dimmed) | es-rv1909 (right,
+# focused), both showing Psalm 119 — the point is that the poetry inset
+# holds independently in each column at the reduced per-pane width, rather
+# than collapsing once the body cap stops binding.
+Ctrl+W
+Sleep 200ms
+Type "v"
+Sleep 600ms
+Type "jj"
+Sleep 400ms
+Enter
+Sleep 1300ms
+Screenshot "docs/screenshots/14-poetry-compare.png"
+Sleep 400ms
+
+# === 15 — Visual selection over poetry ==================================
+# Close the compare pane back to a single en-kjv reader (still at Psalm
+# 119:10), then select a four-verse range (119:10–13) with `v` + three
+# `j`s. The selection band has to span the *indented* verse bodies as one
+# clean rectangle — this is the multi-row counterpart to the single
+# cursor-row inset already shown in shot 13.
+Ctrl+W
+Sleep 150ms
+Type "q"
+Sleep 500ms
+Type "v"
+Sleep 200ms
+Down
+Sleep 150ms
+Down
+Sleep 150ms
+Down
+Sleep 600ms
+Screenshot "docs/screenshots/15-poetry-visual.png"
+Sleep 400ms
+Escape
+Sleep 400ms
+
 # --- Quit ---------------------------------------------------------------
 Type "q"
 Sleep 400ms
