@@ -24,13 +24,8 @@ use rusqlite::{Connection, OpenFlags, params};
 pub struct TranslationInfo {
     pub code: String,
     pub name: String,
-    #[expect(
-        dead_code,
-        reason = "loaded from the per-translation meta table for runtime inspection; \
-                  the static manifest carries the same field, which is what the \
-                  picker reads, but keeping this on the on-disk struct keeps the \
-                  two surfaces interchangeable for a future About dialog"
-    )]
+    /// Read by `merge_picker_entries` to label on-disk translations that
+    /// aren't in the static manifest (e.g. `turbo-bible import` output).
     pub language: String,
     #[expect(
         dead_code,
@@ -442,11 +437,27 @@ impl Db {
         }
         let prev_code = std::mem::replace(&mut self.active_code, code.to_string());
         let probe = (|| -> Result<_> {
-            Ok((
-                self.list_books()?,
-                self.translation_label()?,
-                self.load_passage(book, chapter)?,
-            ))
+            let books = self.list_books()?;
+            let label = self.translation_label()?;
+            // The reading position may not exist in the new translation (a
+            // partial / imported edition that omits some books). Fall back to
+            // its first book so switching never fails just because the current
+            // book isn't shared; the caller reads the landed book back from
+            // `Passage::book_code`.
+            let present = books.iter().any(|b| b.code.as_str() == book);
+            let (target_book, target_chapter): (String, i64) = if present {
+                (book.to_string(), chapter)
+            } else {
+                match books.first() {
+                    Some(b) => (b.code.clone(), 1),
+                    None => (book.to_string(), chapter),
+                }
+            };
+            // Clamp the chapter into the target book's range — the source
+            // chapter can exceed it (e.g. a shorter book in the new edition).
+            let max_chapter = self.chapter_count(&target_book)?.max(1);
+            let passage = self.load_passage(&target_book, target_chapter.clamp(1, max_chapter))?;
+            Ok((books, label, passage))
         })();
         if probe.is_err() {
             self.active_code = prev_code;

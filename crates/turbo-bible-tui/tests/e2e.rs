@@ -259,3 +259,204 @@ fn find_jump_lands_on_matched_verse_not_one() {
         "verse should not be 1 (regression marker); state.toml:\n{st}"
     );
 }
+
+/// `turbo-bible import` builds a custom translation `.db` from JSON and
+/// installs it; the reader then discovers and reads it. This exercises the
+/// real CLI dispatch, `Db::open_ro`'s discovery of a translation that isn't
+/// in the static manifest, and the `meta.code == filename` check that a
+/// hand-copied file can't satisfy (see the comment on
+/// `picker_download_offline_keeps_default_and_quits_clean`).
+#[test]
+fn import_subcommand_installs_a_readable_custom_translation() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("custom.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","name":"John","chapters":[
+            {"chapter":3,"verses":[{"verse":16,"text":"For God so loved the world."}]}]}]}"#,
+    )
+    .unwrap();
+
+    // Run the import subcommand with HOME pointed at the tempdir so the
+    // file lands in the same translations dir the reader will open.
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-john",
+        "--name",
+        "John (custom)",
+        "--language",
+        "en",
+        "--license",
+        "CC0-1.0",
+    ]);
+    let status = cmd.status().expect("run import subcommand");
+    assert!(status.success(), "import subcommand exited non-zero");
+
+    let db = tmp
+        .path()
+        .join(".local/share/turbo-bible/translations/zz-john.db");
+    assert!(db.is_file(), "import should write {}", db.display());
+
+    // Launch the reader on the imported translation and quit; the active
+    // translation must round-trip into state.toml.
+    let mut p = launch(
+        &tmp,
+        &[
+            "--translation",
+            "zz-john",
+            "--book",
+            "JHN",
+            "--chapter",
+            "3",
+        ],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("translation = \"zz-john\""), "got:\n{st}");
+    assert!(st.contains("book = \"JHN\""), "got:\n{st}");
+}
+
+/// Regression: launching into a *partial* imported translation that lacks
+/// Genesis, with NO `--book`, must not crash. The splash's default landing
+/// book used to be hard-coded to `GEN`, so the eager initial `load_passage`
+/// errored out of `main()` for any Genesis-less translation. The reader must
+/// now clamp the landing book to the first one the translation contains.
+#[test]
+fn partial_import_launches_without_book_arg() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("john.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","chapters":[
+            {"chapter":1,"verses":[{"verse":1,"text":"In the beginning was the Word"}]}]}]}"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-johnonly",
+        "--name",
+        "John only",
+        "--language",
+        "en",
+    ]);
+    assert!(
+        cmd.status().expect("run import subcommand").success(),
+        "import subcommand exited non-zero"
+    );
+
+    // No `--book`: the default landing position is Genesis, which this
+    // translation lacks. Startup must clamp to the first available book (JHN)
+    // and reach the splash, not abort.
+    let mut p = launch(&tmp, &["--translation", "zz-johnonly"]);
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("translation = \"zz-johnonly\""), "got:\n{st}");
+    assert!(
+        st.contains("book = \"JHN\""),
+        "landing book should clamp to the only available book; got:\n{st}"
+    );
+}
+
+/// Regression: selecting a *partial* imported translation (one that lacks the
+/// book you're currently reading) from the `t` picker must switch, not crash.
+/// `try_switch_translation` probes `load_passage` with the current book, which
+/// used to error out of the run loop for a book the target didn't contain. The
+/// switch now clamps to the target translation's first book.
+#[test]
+fn switching_to_partial_translation_clamps_instead_of_crashing() {
+    let tmp = TempDir::new().unwrap();
+    let json = tmp.path().join("john.json");
+    fs::write(
+        &json,
+        r#"{"books":[{"book":"JHN","chapters":[
+            {"chapter":1,"verses":[{"verse":1,"text":"In the beginning was the Word"}]}]}]}"#,
+    )
+    .unwrap();
+
+    // Install a John-only translation alongside the bundled full en-kjv.
+    let mut cmd = Command::new(binary_path());
+    cmd.env_clear();
+    cmd.env("HOME", tmp.path());
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+    cmd.args([
+        "import",
+        json.to_str().unwrap(),
+        "--code",
+        "zz-john",
+        "--name",
+        "John only",
+        "--language",
+        "en",
+    ]);
+    assert!(cmd.status().expect("run import subcommand").success());
+
+    // Read Genesis in en-kjv, then pick the John-only translation from the
+    // picker. It can't contain Genesis, so the switch must land on John.
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "GEN", "--chapter", "1"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "t"); // open the translations picker
+    key(&mut p, "G"); // jump to the bottom — imported entries are appended last
+    key(&mut p, "\r"); // select zz-john
+    key(&mut p, "q"); // quit the reader
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(
+        st.contains("translation = \"zz-john\""),
+        "the switch should have succeeded; got:\n{st}"
+    );
+    assert!(
+        st.contains("book = \"JHN\""),
+        "switch should clamp to the only available book; got:\n{st}"
+    );
+}
+
+/// Regression: an out-of-range `--chapter` clamps to the book's last chapter
+/// rather than opening an empty passage.
+#[test]
+fn out_of_range_chapter_clamps_to_last() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &[
+            "--translation",
+            "en-kjv",
+            "--book",
+            "JHN",
+            "--chapter",
+            "999",
+        ],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"JHN\""), "got:\n{st}");
+    assert!(
+        st.contains("chapter = 21"),
+        "John has 21 chapters; an over-range request should clamp to 21; got:\n{st}"
+    );
+}

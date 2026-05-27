@@ -14,6 +14,7 @@ mod bundled;
 mod config;
 mod db;
 mod fetch;
+mod import;
 mod install;
 mod keys;
 mod manifest;
@@ -33,7 +34,7 @@ use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -46,7 +47,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::db::{Book, Db, Passage};
+use crate::db::{Book, Db, Passage, TranslationInfo};
 use crate::keys::{Action, KeyState};
 use crate::nav::{Navigator, Position};
 use crate::ui::find::{FindDialog, FindOutcome};
@@ -170,6 +171,10 @@ enum Commands {
     /// Runs automatically on every startup when files are missing;
     /// invoke explicitly with `--force` to re-extract.
     Install(install::InstallArgs),
+    /// Build a translation `<code>.db` from a JSON file and install it
+    /// into the translations directory. See `docs/IMPORT.md` for the
+    /// input format and resulting schema.
+    Import(import::ImportArgs),
 }
 
 type Tty = Terminal<CrosstermBackend<Stdout>>;
@@ -292,8 +297,10 @@ impl Drop for TerminalGuard {
 fn main() -> Result<()> {
     let args = Args::parse();
     let translations_dir = resolve_translations_dir(&args)?;
-    if let Some(Commands::Install(install_args)) = &args.command {
-        return install::run(install_args);
+    match &args.command {
+        Some(Commands::Install(install_args)) => return install::run(install_args),
+        Some(Commands::Import(import_args)) => return import::run(import_args),
+        None => {}
     }
     // First launch (or any time files are missing) auto-extracts the
     // bundled translations into the translations directory; idempotent
@@ -317,23 +324,23 @@ fn main() -> Result<()> {
     let books = db.list_books()?;
     let translation_label = db.translation_label()?;
 
-    // Resolve persisted state for the Continue option.
+    // Resolve persisted state for the Continue option. Only offer it when the
+    // persisted book actually exists in the active translation — a partial /
+    // imported translation may not contain it, and resuming into a missing
+    // book would fail to load.
     let last_for_splash: Option<(Position, String)> = persisted
         .as_ref()
         .filter(|ps| ps.translation == translation)
-        .map(|ps| {
-            let label = books.iter().find(|b| b.code == ps.book).map_or_else(
-                || format!("{} {}:{}", ps.book, ps.chapter, ps.verse),
-                |b| format!("{} {}:{}", b.name, ps.chapter, ps.verse),
-            );
-            (
+        .and_then(|ps| {
+            let b = books.iter().find(|b| b.code == ps.book)?;
+            Some((
                 Position {
                     book: ps.book.clone(),
                     chapter: ps.chapter,
                     verse: None,
                 },
-                label,
-            )
+                format!("{} {}:{}", b.name, ps.chapter, ps.verse),
+            ))
         });
 
     // Starting screen: if --book was passed explicitly, go straight to reading.
@@ -341,11 +348,15 @@ fn main() -> Result<()> {
     let final_pos: Option<Position>;
     let final_cursor_verse: i64;
     let result = if let Some(book_code) = args.book.clone() {
+        if !books.iter().any(|b| b.code == book_code) {
+            bail!("book {book_code:?} is not in translation {translation:?}");
+        }
         let mut pos = Position {
             book: book_code,
             chapter: args.chapter,
             verse: None,
         };
+        pos.chapter = clamp_chapter(&db, &pos.book, pos.chapter)?;
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = 1;
         let r = run(
@@ -369,16 +380,15 @@ fn main() -> Result<()> {
         } else {
             None
         };
-        // We still need *some* initial passage state for the run loop; load
-        // the persisted-or-default position lazily-ish.
+        // We still need *some* initial passage state for the run loop.
+        // `last_for_splash` is already known to exist in this translation; the
+        // fallback default may not (partial/imported translation), so clamp to
+        // the first available book rather than a hard-coded Genesis.
         let mut pos = match &last_for_splash {
             Some((p, _)) => p.clone(),
-            None => Position {
-                book: "GEN".into(),
-                chapter: 1,
-                verse: None,
-            },
+            None => initial_book_position(&books),
         };
+        pos.chapter = clamp_chapter(&db, &pos.book, pos.chapter)?;
         let mut passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = persisted.as_ref().map_or(1, |p| p.verse).max(1);
         let r = run(
@@ -1494,22 +1504,66 @@ fn repeat_search(
     })
 }
 
-/// Build the picker entry list: every translation the binary knows
-/// about (from the static manifest), marked installed iff its `.db`
-/// is currently loaded in `db`.
 fn picker_entries(db: &Db) -> Vec<PickerEntry> {
+    merge_picker_entries(db.translations())
+}
+
+/// First-launch landing position when there's no resumable state. Prefers
+/// Genesis 1 (the first book of a full Bible), but falls back to the first
+/// book the active translation actually contains — a partial / imported
+/// translation may not include Genesis, and loading a missing book errors.
+/// `books` is ordered by canonical `ord` (see [`Db::list_books`]).
+fn initial_book_position(books: &[Book]) -> Position {
+    let book = books
+        .first()
+        .map_or_else(|| "GEN".to_string(), |b| b.code.clone());
+    Position {
+        book,
+        chapter: 1,
+        verse: None,
+    }
+}
+
+/// Clamp `chapter` into the book's valid range `[1, chapter_count]`. A
+/// persisted or `--chapter` value can point past the end of a book (more
+/// likely in a partial / imported translation), which would otherwise open an
+/// empty chapter.
+fn clamp_chapter(db: &Db, book: &str, chapter: i64) -> Result<i64> {
+    let max = db.chapter_count(book)?.max(1);
+    Ok(chapter.clamp(1, max))
+}
+
+/// Build the picker entry list: every translation the binary knows about
+/// (the static manifest), each marked installed iff its `.db` is on disk,
+/// followed by any on-disk translations *not* in the manifest — e.g. ones
+/// produced by `turbo-bible import`, which would otherwise be reachable
+/// only via `--translation`. The latter are always installed (they exist
+/// on disk by definition) and carry no download size.
+fn merge_picker_entries(installed: &[TranslationInfo]) -> Vec<PickerEntry> {
     use std::collections::HashSet;
-    let installed: HashSet<&str> = db.translations().iter().map(|t| t.code.as_str()).collect();
-    crate::manifest::TRANSLATIONS
+    let installed_codes: HashSet<&str> = installed.iter().map(|t| t.code.as_str()).collect();
+    let mut entries: Vec<PickerEntry> = crate::manifest::TRANSLATIONS
         .iter()
         .map(|t| PickerEntry {
             code: t.code.to_string(),
             name: t.name.to_string(),
             language: t.language.to_string(),
-            installed: installed.contains(t.code),
+            installed: installed_codes.contains(t.code),
             compressed_size: t.compressed_size,
         })
-        .collect()
+        .collect();
+    for t in installed {
+        if crate::manifest::TranslationManifestEntry::by_code(&t.code).is_none() {
+            entries.push(PickerEntry {
+                code: t.code.clone(),
+                name: t.name.clone(),
+                language: t.language.clone(),
+                installed: true,
+                compressed_size: 0,
+            });
+        }
+    }
+    entries
 }
 
 fn switch_translation(
@@ -1517,7 +1571,7 @@ fn switch_translation(
     books: &mut Vec<Book>,
     translation_label: &mut String,
     code: &str,
-    pos: &Position,
+    pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
 ) -> Result<()> {
@@ -1529,7 +1583,16 @@ fn switch_translation(
         db.try_switch_translation(code, &pos.book, pos.chapter)?;
     *books = new_books;
     *translation_label = new_label;
+    // A partial / imported translation may not contain the current book, in
+    // which case the swap lands on its first book instead. Sync the position
+    // to whatever actually loaded and reset the cursor when the book changed.
+    let book_changed = pos.book != new_passage.book_code;
+    pos.book.clone_from(&new_passage.book_code);
+    pos.chapter = new_passage.chapter;
     *passage = new_passage;
+    if book_changed {
+        *cursor_verse = 1;
+    }
     let max = passage.verses.last().map_or(1, |v| v.number);
     if *cursor_verse > max {
         *cursor_verse = max.max(1);
@@ -1594,4 +1657,55 @@ fn shortcut_label_to_key(label: &str) -> Option<KeyEvent> {
         _ => return None,
     };
     Some(KeyEvent::new(code, KeyModifiers::empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(code: &str) -> TranslationInfo {
+        TranslationInfo {
+            code: code.to_string(),
+            name: format!("Name {code}"),
+            language: "en".to_string(),
+            license: String::new(),
+            attribution: String::new(),
+        }
+    }
+
+    #[test]
+    fn picker_lists_manifest_marking_installed_and_appends_custom() {
+        // en-kjv is bundled/installed; zz-john is an imported translation
+        // present on disk but absent from the static manifest.
+        let installed = [info("en-kjv"), info("zz-john")];
+        let entries = merge_picker_entries(&installed);
+
+        let kjv = entries
+            .iter()
+            .find(|e| e.code == "en-kjv")
+            .expect("manifest entry present");
+        assert!(kjv.installed, "en-kjv is on disk → installed");
+
+        let custom = entries
+            .iter()
+            .find(|e| e.code == "zz-john")
+            .expect("imported translation surfaced in picker");
+        assert!(custom.installed);
+        assert_eq!(custom.name, "Name zz-john");
+        assert_eq!(custom.compressed_size, 0);
+
+        // Exactly the manifest set plus the one custom entry, no dupes.
+        assert_eq!(entries.len(), manifest::TRANSLATIONS.len() + 1);
+
+        // A manifest translation that isn't on disk is listed, not installed.
+        let absent = manifest::TRANSLATIONS
+            .iter()
+            .find(|t| t.code != "en-kjv")
+            .expect("more than one manifest translation");
+        let entry = entries
+            .iter()
+            .find(|e| e.code == absent.code)
+            .expect("absent manifest entry still listed");
+        assert!(!entry.installed);
+    }
 }
