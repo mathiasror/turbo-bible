@@ -736,8 +736,7 @@ impl LoopState {
         if self.last_term_width == 0 {
             return true;
         }
-        let next = u16::try_from(self.panes.len() + 1).unwrap_or(u16::MAX);
-        self.last_term_width / next >= ui::MIN_PANE_W
+        ui::min_pane_interior(self.last_term_width, self.panes.len() + 1) >= ui::MIN_PANE_W
     }
 }
 
@@ -1220,7 +1219,7 @@ impl LoopState {
     }
 
     fn add_bookmark(&mut self, ctx: &mut AppCtx) {
-        let (book, chapter, s, e) = {
+        let (translation, book, chapter, s, e) = {
             let pane = &self.panes[self.focus];
             let cur = pane.cursor_verse;
             let (s, e) = match pane.visual_anchor {
@@ -1228,10 +1227,19 @@ impl LoopState {
                 Some(a) => (cur, a),
                 None => (cur, cur),
             };
-            (pane.pos.book.clone(), pane.pos.chapter, s, e)
+            // Use the focused pane's own translation so the bookmark stays
+            // self-consistent with the book/chapter it records, independent
+            // of the focus==active invariant.
+            (
+                pane.translation.clone(),
+                pane.pos.book.clone(),
+                pane.pos.chapter,
+                s,
+                e,
+            )
         };
         self.bookmarks.add(bookmark::Bookmark {
-            translation: ctx.db.translation().to_string(),
+            translation,
             book,
             chapter,
             start_verse: s,

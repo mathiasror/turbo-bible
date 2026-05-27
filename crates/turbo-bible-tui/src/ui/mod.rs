@@ -144,6 +144,20 @@ pub const MIN_PANE_W: u16 = 28;
 /// Columns of blue desktop left between adjacent compare panes.
 const PANE_GAP: u16 = 1;
 
+/// The interior (text) width the *narrowest* of `n` evenly-split panes would
+/// get across a body `total` cols wide — the figure the open-pane guard
+/// checks against [`MIN_PANE_W`]. Mirrors [`panes_layout`]'s column math
+/// exactly (the inter-column [`PANE_GAP`]s and the 2-col drop-shadow inset
+/// each pane loses), so the guard can't approve a split that the layout then
+/// renders below the readable threshold.
+#[must_use]
+pub fn min_pane_interior(total: u16, n: usize) -> u16 {
+    let n_u16 = u16::try_from(n).unwrap_or(u16::MAX).max(1);
+    let gaps = PANE_GAP.saturating_mul(n_u16.saturating_sub(1));
+    let each = total.saturating_sub(gaps) / n_u16;
+    each.saturating_sub(2)
+}
+
 /// Lay out `n` reading panes across `body`, returning one rect per pane
 /// (left-to-right) plus an optional sidebar rect.
 ///
@@ -248,5 +262,23 @@ mod tests {
         let body = Rect::new(0, 1, 10, 20);
         let (rects, _) = panes_layout(body, 4, 80, false);
         assert_eq!(rects.len(), 4);
+    }
+
+    #[test]
+    fn min_pane_interior_matches_narrowest_layout_column() {
+        // The open-pane guard must check the *actual* narrowest column width
+        // panes_layout would produce, not an over-estimate — otherwise it can
+        // approve a split that then renders a sub-readable sliver.
+        for &total in &[60u16, 84, 112, 137, 200] {
+            for n in 2..=4usize {
+                let (rects, _) = panes_layout(Rect::new(0, 1, total, 20), n, 80, false);
+                let narrowest = rects.iter().map(|r| r.width).min().unwrap();
+                assert_eq!(
+                    super::min_pane_interior(total, n),
+                    narrowest,
+                    "guard width must equal the narrowest rendered column (total={total}, n={n})"
+                );
+            }
+        }
     }
 }

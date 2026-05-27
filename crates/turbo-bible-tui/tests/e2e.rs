@@ -273,6 +273,12 @@ const CTRL_W: &str = "\x17";
 /// (the picker cursor starts on the current translation; Enter accepts it).
 /// If pane creation or focus-switching were broken, every `j` would land on
 /// pane 0 and the persisted verse would be 1 + 5 + 2 = 8 instead of 3.
+///
+/// NOTE: rexpect spawns with no PTY winsize, so the child sees a 0-width
+/// terminal and the split is only allowed because `LoopState::can_add_pane`
+/// treats an unmeasured (0) width as "allow" (see `main.rs`). This exercises
+/// pane *behavior*, not layout geometry — that's covered by the pure
+/// `panes_layout_*` unit tests in `ui`.
 #[test]
 fn compare_split_keeps_panes_independent_and_persists_focused() {
     let tmp = TempDir::new().unwrap();
