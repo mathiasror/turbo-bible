@@ -250,6 +250,11 @@ Range-aware actions:
 
 After taking the action, visual mode clears automatically.
 
+Selection over poetry — Psalm 119:10–13, where the highlight band spans
+the indented verse bodies as one clean rectangle:
+
+![Visual mode over poetry — Psalm 119:10–13 selected, the range highlight covering the indented verses](screenshots/15-poetry-visual.png)
+
 ## Translations
 
 ![Translations picker — all installed translations; the current one is highlighted](screenshots/07-translations.png)
@@ -306,6 +311,12 @@ the whole split.
 
 The `Ctrl-W` chords and the `K`-popup `s` shortcut belong to the vim keymap
 (the default); they aren't among the remappable actions in `[keys]`.
+
+The poetry indent is per-pane, so it survives the narrower compare
+columns — here Psalm 119 in `en-kjv` (left) beside `es-rv1909` (right),
+each verse still stepped in from its own gutter:
+
+![Compare panes over Psalm 119 — en-kjv and es-rv1909 side by side, the poetry indent holding in each narrowed column](screenshots/14-poetry-compare.png)
 
 ## Help: built-in keymap cheat sheet
 
