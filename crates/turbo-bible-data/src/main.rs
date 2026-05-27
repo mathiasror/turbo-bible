@@ -29,7 +29,7 @@ struct Cli {
 enum Command {
     /// Walk a scrollmapper checkout and emit a CSV of license info per translation.
     AuditLicenses(AuditLicensesArgs),
-    /// Build per-translation SQLite files into dist/build/.
+    /// Build per-translation `SQLite` files into dist/build/.
     Build(BuildArgs),
     /// Compress dist/build/*.db into dist/translations/*.db.zst and emit manifest.json.
     Compress(CompressArgs),
@@ -37,7 +37,7 @@ enum Command {
 
 #[derive(Args, Debug)]
 struct AuditLicensesArgs {
-    /// Path to a local scrollmapper/bible_databases checkout.
+    /// Path to a local `scrollmapper/bible_databases` checkout.
     #[arg(long)]
     scrollmapper: PathBuf,
     /// CSV output path. Defaults to stdout if omitted.
@@ -47,10 +47,10 @@ struct AuditLicensesArgs {
 
 #[derive(Args, Debug)]
 struct BuildArgs {
-    /// Path to a local scrollmapper/bible_databases checkout.
+    /// Path to a local `scrollmapper/bible_databases` checkout.
     #[arg(long)]
     scrollmapper: PathBuf,
-    /// Curated translation manifest (data/manifest_source.toml).
+    /// Curated translation manifest (`data/manifest_source.toml`).
     #[arg(long)]
     manifest: PathBuf,
     /// Output directory for the built per-translation .db files.

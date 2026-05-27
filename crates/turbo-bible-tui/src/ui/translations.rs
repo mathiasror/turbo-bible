@@ -102,6 +102,10 @@ impl TranslationsDialog {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one render pass building the modal's rows plus its layout math; extracting helpers would obscure the column geometry"
+    )]
     pub fn render(&self, outer: Rect, buf: &mut Buffer) {
         let w: u16 = outer.width.saturating_sub(6).min(76);
         let h: u16 = outer.height.saturating_sub(4).min(16);
@@ -183,7 +187,7 @@ impl TranslationsDialog {
                 let pad_style = if on { sel } else { bg };
 
                 lines.push(Line::from(vec![
-                    Span::styled(mark.to_string(), mark_style),
+                    Span::styled(mark.clone(), mark_style),
                     Span::styled(code_field, row_style),
                     Span::styled(lang_field, lang_style),
                     Span::styled(name_field, row_style),
@@ -222,6 +226,10 @@ impl TranslationsDialog {
     }
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "display-only size; an f64 MB figure shown to one decimal needs no exact integer precision"
+)]
 fn human_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))

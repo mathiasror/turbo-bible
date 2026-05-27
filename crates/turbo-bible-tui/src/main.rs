@@ -741,6 +741,10 @@ fn close_with_jump(state: &mut LoopState, ctx: &mut AppCtx, p: Position) -> Resu
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match arm per dialog variant; the close/jump glue is tightly coupled and reads clearer inline than scattered across per-variant helpers"
+)]
 fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Result<DispatchStep> {
     match &mut state.dialog {
         // Guarded by `dispatch_key`: this function is only entered when
@@ -1044,12 +1048,11 @@ impl LoopState {
         self.dialog = Dialog::Bookmarks(d);
     }
 
-    fn open_translations_dialog(&mut self, ctx: &AppCtx) -> Result<()> {
+    fn open_translations_dialog(&mut self, ctx: &AppCtx) {
         self.dialog = Dialog::Translations(TranslationsDialog::new(
             picker_entries(ctx.db),
             ctx.db.translation(),
         ));
-        Ok(())
     }
 
     /// Esc-from-reading: cancel visual selection if active, otherwise
@@ -1120,7 +1123,7 @@ fn dispatch_reading(
                 .books
                 .iter()
                 .find(|b| b.code == ctx.pos.book)
-                .map_or(ctx.pos.book.clone(), |b| b.name.clone());
+                .map_or_else(|| ctx.pos.book.clone(), |b| b.name.clone());
             state.dialog = Dialog::Goto(GotoDialog::with_position(
                 &book_name,
                 ctx.pos.chapter,
@@ -1138,7 +1141,7 @@ fn dispatch_reading(
         Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
         Action::AddBookmark => state.add_bookmark(ctx),
         Action::OpenBookmarks => state.open_bookmarks_dialog(ctx),
-        Action::OpenTranslations => state.open_translations_dialog(ctx)?,
+        Action::OpenTranslations => state.open_translations_dialog(ctx),
         Action::Back => state.enter_splash(ctx),
         Action::Quit => return Ok(DispatchStep::Quit),
         Action::SearchNext => state.repeat_search_action(ctx, true)?,

@@ -47,7 +47,7 @@ include!(concat!(env!("OUT_DIR"), "/translations_manifest.rs"));
 
 impl TranslationManifestEntry {
     /// Look up an entry by translation code, e.g. `"en-kjv"`.
-    pub fn by_code(code: &str) -> Option<&'static TranslationManifestEntry> {
+    pub fn by_code(code: &str) -> Option<&'static Self> {
         TRANSLATIONS.iter().find(|t| t.code == code)
     }
 }
