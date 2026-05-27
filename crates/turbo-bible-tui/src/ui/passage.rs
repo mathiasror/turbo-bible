@@ -24,7 +24,7 @@ pub struct PassageView<'a> {
     /// Whether this pane is one of several in a compare split. The loud
     /// focus chrome (filled title bar + double border) only fires when
     /// `compare_mode && is_focused` — a lone reading pane has no focus to
-    /// disambiguate, so it keeps the calm plain border + bright_white title.
+    /// disambiguate, so it keeps the calm plain border + `bright_white` title.
     pub compare_mode: bool,
     /// When the pane was opened from the `K` cross-reference popup via `s`,
     /// the source reference (e.g. `"John 3:16"`); rendered in the title as

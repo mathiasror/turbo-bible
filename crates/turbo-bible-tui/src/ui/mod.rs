@@ -28,7 +28,7 @@ pub struct PaneRender<'a> {
     pub cursor_verse: i64,
     pub selection: Option<(i64, i64)>,
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
-    /// The focused pane draws a filled bright_cyan title bar + double-line
+    /// The focused pane draws a filled `bright_cyan` title bar + double-line
     /// border + mode pill; others dim to a single-line border. (The loud
     /// focus chrome only applies when there's more than one pane — see
     /// [`passage::PassageView::compare_mode`].)
