@@ -582,8 +582,11 @@ impl Db {
         let (target_book, target_chapter) = {
             let conn = self.conn_for(code)?;
             // Is `book` present in this translation? (A partial edition may not
-            // carry it.) `book` rows exist only for books with at least one
-            // verse, so a present row guarantees the chapter query resolves.
+            // carry it.) For imports a `book` row implies ≥1 verse, but the
+            // data pipeline inserts all 66 `book`/`book_label` rows
+            // unconditionally, so a bundled DB may carry a verse-less `book`
+            // row. Either way it's safe: a verse-less book just clamps to an
+            // empty `Passage` below (max_chapter≥1, no crash).
             let present: bool = conn
                 .prepare_cached("SELECT 1 FROM book WHERE code=?1 LIMIT 1")?
                 .exists(params![book])?;
