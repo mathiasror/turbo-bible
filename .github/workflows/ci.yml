@@ -34,7 +34,7 @@ jobs:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The generated assets only change when the scrollmapper ref, the
       # data-pipeline crate, the manifest source, or the lockfile change.
@@ -52,7 +52,7 @@ jobs:
 
       - name: Clone scrollmapper at pinned ref
         if: steps.assets-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: scrollmapper/bible_databases
           ref: ${{ env.SCROLLMAPPER_REF }}
@@ -108,7 +108,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -117,7 +117,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           # `bans` and `sources` catch supply-chain drift the audit job
