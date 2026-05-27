@@ -378,6 +378,14 @@ fn build_db(path: &Path, meta: &ImportMeta<'_>, json: &ImportJson) -> Result<Sta
             let mut book_inserted = false;
             for ch in &b.chapters {
                 for v in &ch.verses {
+                    if ch.chapter < 1 || v.verse < 1 {
+                        bail!(
+                            "{}: chapter and verse numbers must be >= 1 (got {}:{})",
+                            canon.osis,
+                            ch.chapter,
+                            v.verse
+                        );
+                    }
                     if !book_inserted {
                         book_stmt.execute(params![canon.osis, canon.testament, canon.ord])?;
                         label_stmt.execute(params![canon.osis, name, abbr, name])?;
@@ -732,6 +740,25 @@ mod tests {
         .unwrap();
         let err = build_db(&path, &meta(), &json).unwrap_err();
         assert!(format!("{err:#}").contains("Tobit"), "got: {err:#}");
+    }
+
+    #[test]
+    fn non_positive_chapter_or_verse_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        for (i, body) in [
+            r#"{ "books": [ { "book": "JHN", "chapters": [
+                { "chapter": 0, "verses": [ { "verse": 1, "text": "x" } ] } ] } ] }"#,
+            r#"{ "books": [ { "book": "JHN", "chapters": [
+                { "chapter": 3, "verses": [ { "verse": -1, "text": "x" } ] } ] } ] }"#,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let json: ImportJson = serde_json::from_str(body).unwrap();
+            let path = dir.path().join(format!("zz-test-{i}.db"));
+            let err = build_db(&path, &meta(), &json).unwrap_err();
+            assert!(format!("{err:#}").contains(">= 1"), "got: {err:#}");
+        }
     }
 
     #[test]
