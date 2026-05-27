@@ -278,8 +278,36 @@ struct LoopState {
     /// Transient one-line status hint (e.g. "Terminal too narrow") with
     /// its set-time, cleared after a short delay.
     transient_msg: Option<(String, Instant)>,
+    /// In-flight translation download, if any. Polled each loop turn by
+    /// [`poll_download`]; rendered as an animated `-- Downloading … --`
+    /// mode tag. Only one runs at a time.
+    download: Option<DownloadJob>,
     max_reading_width: u16,
     keys: KeyState,
+}
+
+/// A translation download running on a worker thread. The worker does
+/// only the filesystem-bound fetch (`curl` + sha256 + zstd-decompress +
+/// atomic rename); it never touches the [`Db`], so the connection set
+/// stays single-threaded. The main loop registers the new connection and
+/// applies the pick when the result lands — see [`poll_download`].
+struct DownloadJob {
+    /// Translation code being fetched (e.g. `nb-1930`).
+    code: String,
+    /// Whether the originating picker meant to switch the focused pane (`t`)
+    /// or open a new compare pane (`Ctrl-W v`), captured so reopening the
+    /// picker with a different intent mid-fetch doesn't redirect this apply.
+    /// Only the *intent* is captured, not the originating pane: a
+    /// `SwitchFocused` apply still resolves against the live `state.focus`, so
+    /// moving focus while the fetch runs lands the switch on whatever pane is
+    /// focused when the result arrives (no crash — just a different target).
+    intent: PickerIntent,
+    /// When the worker was spawned — drives the indicator's animation.
+    started: Instant,
+    /// Yields exactly one value: `Ok(())` when the `.db` is installed, or
+    /// the fetch error. A disconnect without a value means the worker
+    /// panicked.
+    rx: std::sync::mpsc::Receiver<Result<()>>,
 }
 
 /// Cache key for [`LoopState::bookmarks_cache`]: `(translation, book, chapter)`.
@@ -599,6 +627,11 @@ fn run(
     loop {
         draw_frame(term, &mut state)?;
 
+        // Apply a finished background download (non-blocking) before
+        // gating on input, so a completed fetch lands within one poll
+        // interval whether or not the user is touching the keyboard.
+        poll_download(&mut state, db, warnings)?;
+
         if event::poll(Duration::from_millis(150))? {
             let term_height = term.size().map_or(24, |s| s.height);
             let raw_event = event::read()?;
@@ -623,6 +656,115 @@ fn run(
             state.tick();
         }
     }
+}
+
+/// What a finished background download resolved to. The fetch and the
+/// `add_translation` registration fail for different reasons, so they get
+/// distinct user-facing messages (see [`download_outcome`]).
+enum DownloadResult {
+    /// The `.db` was fetched and registered with the [`Db`]; apply the pick.
+    Ready,
+    /// The worker's `curl` + sha256 + zstd-decompress step failed.
+    FetchFailed(anyhow::Error),
+    /// The fetch succeeded but registering the new connection did not.
+    RegisterFailed(anyhow::Error),
+    /// The worker dropped the sender without sending a value — it panicked.
+    WorkerExited,
+}
+
+/// The user-facing copy for a finished download: a stderr-trail warning
+/// (always) and an in-TUI transient hint (always). Pure (no I/O), so the
+/// message wiring is unit-testable without a `Db` or a live channel.
+struct DownloadMessages {
+    /// Detailed line appended to `warnings`, flushed to stderr on quit.
+    warning: String,
+    /// Short one-liner shown immediately via [`LoopState::set_transient`].
+    transient: String,
+}
+
+/// Map a finished download to its warning + transient copy. Success gets a
+/// brief "ready" transient (and no warning); each failure mode gets a message
+/// that names what actually broke — fetch vs. registration vs. a dead worker.
+fn download_outcome(code: &str, result: &DownloadResult) -> DownloadMessages {
+    match result {
+        DownloadResult::Ready => DownloadMessages {
+            warning: format!("{code} ready"),
+            transient: format!("{code} ready"),
+        },
+        DownloadResult::FetchFailed(e) => DownloadMessages {
+            warning: format!("download {code} failed: {e}"),
+            transient: format!("Download of {code} failed"),
+        },
+        DownloadResult::RegisterFailed(e) => DownloadMessages {
+            warning: format!("registering {code} failed: {e}"),
+            transient: format!("Could not open {code}"),
+        },
+        DownloadResult::WorkerExited => DownloadMessages {
+            warning: format!("download {code} failed: worker exited"),
+            transient: format!("Download of {code} failed"),
+        },
+    }
+}
+
+/// Drain a finished background download, if one is in flight. Non-blocking:
+/// `try_recv` returns immediately whether the worker is still running, has
+/// landed a result, or has gone away. On success the new `.db` is registered
+/// with the [`Db`] (main-thread only) and the pick is applied using the intent
+/// captured when the download began. Every terminal outcome — success or any
+/// failure — is surfaced in-TUI via a transient hint and also queued to the
+/// stderr-on-quit `warnings` trail, then the in-flight slot is cleared so the
+/// next download can start.
+fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>) -> Result<()> {
+    use std::sync::mpsc::TryRecvError;
+
+    // Borrow only long enough to peek the channel; release before we mutate
+    // `state.download` so the take below doesn't alias the receiver.
+    let recv = match &state.download {
+        Some(job) => job.rx.try_recv(),
+        None => return Ok(()),
+    };
+    let result = match recv {
+        Err(TryRecvError::Empty) => return Ok(()), // still downloading
+        Ok(Ok(())) => {
+            // Fetch landed the `.db`; register the connection (main-thread only).
+            match db.add_translation(&state.download.as_ref().expect("download present").code) {
+                Ok(()) => DownloadResult::Ready,
+                Err(e) => DownloadResult::RegisterFailed(e),
+            }
+        }
+        Ok(Err(e)) => DownloadResult::FetchFailed(e),
+        // Worker dropped the sender without a value — it panicked.
+        Err(TryRecvError::Disconnected) => DownloadResult::WorkerExited,
+    };
+
+    let job = state.download.take().expect("download present");
+    let DownloadMessages { warning, transient } = download_outcome(&job.code, &result);
+    // Keep the stderr trail (warnings) and give immediate in-TUI feedback
+    // (transient) — the async fetch removed the old synchronous freeze that
+    // used to signal "something happened".
+    warnings.push(warning);
+    state.set_transient(transient);
+
+    if matches!(result, DownloadResult::Ready) {
+        state.picker_intent = job.intent;
+        let mut ctx = AppCtx { db, warnings };
+        apply_translation_pick(state, &mut ctx, &job.code)?;
+    }
+    Ok(())
+}
+
+/// The animated mode-tag text for an in-flight download — a trailing
+/// ellipsis that grows 0→3 dots roughly every 300 ms so the user sees the
+/// UI is alive, not frozen. Pure (time in, text out) so it's unit-testable.
+fn download_label(code: &str, elapsed: Duration) -> String {
+    let dots = (elapsed.as_millis() / 300) % 4;
+    // `dots` is `% 4`, so always 0..=3; the `try_from` (over a plain `as`)
+    // dodges `clippy::cast_possible_truncation` and the `unwrap_or` is
+    // unreachable — the value always fits a `usize`.
+    format!(
+        "-- Downloading {code}{} --",
+        ".".repeat(usize::try_from(dots).unwrap_or(0))
+    )
 }
 
 impl LoopState {
@@ -687,6 +829,7 @@ impl LoopState {
             sidebar_pref: config.reading.show_sidebar,
             last_term_width: 0,
             transient_msg: None,
+            download: None,
             max_reading_width: config.reading.max_width,
             keys,
         }
@@ -804,10 +947,15 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
     state.refresh_all_bookmark_caches();
 
     let status = make_status(state);
-    // A transient hint (e.g. "Terminal too narrow") takes over the mode tag.
-    let mode_tag = match &state.transient_msg {
-        Some((msg, _)) => Cow::Owned(format!("-- {msg} --")),
-        None => mode_tag_for(state),
+    // An in-flight download, then a transient hint (e.g. "Terminal too
+    // narrow"), then the mode pill — first match wins the tag slot.
+    let mode_tag = if let Some(job) = &state.download {
+        Cow::Owned(download_label(&job.code, job.started.elapsed()))
+    } else {
+        match &state.transient_msg {
+            Some((msg, _)) => Cow::Owned(format!("-- {msg} --")),
+            None => mode_tag_for(state),
+        }
     };
     let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
 
@@ -1054,19 +1202,30 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                     state.dialog = Dialog::None;
                 }
                 TranslationsOutcome::Download(code) => {
-                    // Blocks the event loop while curl fetches the
-                    // ~4 MB tarball, verifies sha256, and decompresses.
-                    // The dialog stays on screen until we close it
-                    // below; "Downloading…" affordances live as a
-                    // future enhancement (background thread + channel).
-                    let dir = ctx.db.translations_dir().to_path_buf();
-                    match fetch::translation(&dir, &code)
-                        .and_then(|()| ctx.db.add_translation(&code))
-                    {
-                        Ok(()) => apply_translation_pick(state, ctx, &code)?,
-                        Err(e) => {
-                            ctx.warnings.push(format!("download {code} failed: {e}"));
-                        }
+                    // Fetch off the event loop: a worker thread runs curl +
+                    // sha256 + zstd-decompress (~4 MB, multi-second on a slow
+                    // link) and sends the result back over a channel that
+                    // `poll_download` drains each turn. The UI keeps painting
+                    // an animated "Downloading…" tag and stays responsive
+                    // instead of freezing. The worker only writes the `.db`
+                    // file; the connection is registered on the main thread
+                    // when the result lands, so `Db` stays single-threaded.
+                    if state.download.is_some() {
+                        state.set_transient("A download is already in progress");
+                    } else {
+                        let dir = ctx.db.translations_dir().to_path_buf();
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let code_for_worker = code.clone();
+                        std::thread::spawn(move || {
+                            // Receiver gone (app quit) just drops the result.
+                            let _ = tx.send(fetch::translation(&dir, &code_for_worker));
+                        });
+                        state.download = Some(DownloadJob {
+                            code,
+                            intent: state.picker_intent,
+                            started: Instant::now(),
+                            rx,
+                        });
                     }
                     state.dialog = Dialog::None;
                 }
@@ -2184,5 +2343,69 @@ mod tests {
             "precondition: 200 cols is comfortably wide for two panes"
         );
         assert!(pane_fits_width(200, 1), "200 cols fits a second pane");
+    }
+
+    #[test]
+    fn download_label_animates_ellipsis() {
+        // 0..300ms → no dots, then one dot per 300ms window, wrapping at 4.
+        assert_eq!(
+            download_label("nb-1930", Duration::from_millis(0)),
+            "-- Downloading nb-1930 --"
+        );
+        assert_eq!(
+            download_label("nb-1930", Duration::from_millis(350)),
+            "-- Downloading nb-1930. --"
+        );
+        assert_eq!(
+            download_label("nb-1930", Duration::from_millis(650)),
+            "-- Downloading nb-1930.. --"
+        );
+        assert_eq!(
+            download_label("nb-1930", Duration::from_millis(950)),
+            "-- Downloading nb-1930... --"
+        );
+        // Wraps back to zero dots in the next window.
+        assert_eq!(
+            download_label("nb-1930", Duration::from_millis(1250)),
+            "-- Downloading nb-1930 --"
+        );
+    }
+
+    #[test]
+    fn download_outcome_ready_is_quiet_and_confirms() {
+        let m = download_outcome("nb-1930", &DownloadResult::Ready);
+        assert_eq!(m.warning, "nb-1930 ready");
+        assert_eq!(m.transient, "nb-1930 ready");
+    }
+
+    #[test]
+    fn download_outcome_fetch_failure_names_the_download() {
+        let m = download_outcome(
+            "nb-1930",
+            &DownloadResult::FetchFailed(anyhow::anyhow!("sha256 mismatch")),
+        );
+        // Detailed warning carries the cause for the stderr trail; the
+        // in-TUI hint stays short.
+        assert_eq!(m.warning, "download nb-1930 failed: sha256 mismatch");
+        assert_eq!(m.transient, "Download of nb-1930 failed");
+    }
+
+    #[test]
+    fn download_outcome_register_failure_is_distinct_from_fetch() {
+        let m = download_outcome(
+            "nb-1930",
+            &DownloadResult::RegisterFailed(anyhow::anyhow!("disk full")),
+        );
+        // A successful fetch that then fails to register must NOT read
+        // "download failed" — the bytes are on disk; opening them broke.
+        assert_eq!(m.warning, "registering nb-1930 failed: disk full");
+        assert_eq!(m.transient, "Could not open nb-1930");
+    }
+
+    #[test]
+    fn download_outcome_worker_exit_is_surfaced() {
+        let m = download_outcome("nb-1930", &DownloadResult::WorkerExited);
+        assert_eq!(m.warning, "download nb-1930 failed: worker exited");
+        assert_eq!(m.transient, "Download of nb-1930 failed");
     }
 }
