@@ -31,7 +31,7 @@ mod ui;
 use std::borrow::Cow;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -174,6 +174,52 @@ enum Commands {
 
 type Tty = Terminal<CrosstermBackend<Stdout>>;
 
+/// One independent reading column. The fields that used to be the run
+/// loop's single reading context (`pos`/`passage`/`cursor_verse`), plus
+/// the visual-selection anchor and jump history, now live per-pane so
+/// each compare pane scrolls, navigates, and selects on its own. The
+/// focused pane's `translation` always equals `db.translation()` — see
+/// [`LoopState::sync_focus_to_db`].
+struct Pane {
+    translation: String,
+    pos: Position,
+    passage: Passage,
+    cursor_verse: i64,
+    visual_anchor: Option<i64>,
+    history: History,
+}
+
+impl Pane {
+    fn new(translation: String, pos: Position, passage: Passage, cursor_verse: i64) -> Self {
+        let history = History::new(pos.clone());
+        Self {
+            translation,
+            pos,
+            passage,
+            cursor_verse,
+            visual_anchor: None,
+            history,
+        }
+    }
+
+    /// Clamp the cursor into the loaded passage's verse range. Used after
+    /// seeding a pane from another translation, whose versification may
+    /// have fewer verses in the same chapter.
+    fn clamp_cursor(&mut self) {
+        let max = self.passage.verses.last().map_or(1, |v| v.number);
+        self.cursor_verse = self.cursor_verse.clamp(1, max.max(1));
+    }
+}
+
+/// Which reading translation a freshly-confirmed Translations picker
+/// should affect: replace the focused pane's translation (the `t` flow)
+/// or spawn a new compare pane (the `Ctrl-W v` flow).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerIntent {
+    SwitchFocused,
+    OpenNewPane,
+}
+
 /// Mutable state owned by the run loop but threaded through the
 /// extracted dispatch helpers. Separating this from the externally-owned
 /// reader state (`AppCtx`) keeps method signatures short and lets the
@@ -183,17 +229,33 @@ struct LoopState {
     translation_label: String,
     bg: Bg,
     dialog: Dialog,
-    history: History,
+    /// Reading panes, left-to-right. Always at least one. `focus` indexes
+    /// the active one — the only pane that receives motion keys and the
+    /// one whose translation is active in `db`.
+    panes: Vec<Pane>,
+    focus: usize,
     bookmarks: bookmark::BookmarkStore,
-    /// Memoized set of bookmarked verses for the chapter currently in
-    /// `passage`. Lazily filled by [`LoopState::bookmarks_for`]; invalidated
-    /// (set to `None`) whenever `self.bookmarks` mutates. Saves rebuilding
-    /// the `BTreeSet` on every draw frame.
-    bookmarks_cache: Option<(BookmarksKey, std::collections::BTreeSet<i64>)>,
+    /// Memoized bookmarked-verse sets, keyed by `(translation, book,
+    /// chapter)`. Per-pane panes can show different chapters, so a single
+    /// memo slot won't do; the whole map is cleared whenever
+    /// `self.bookmarks` mutates.
+    bookmarks_cache: std::collections::HashMap<BookmarksKey, std::collections::BTreeSet<i64>>,
     last_query: Option<String>,
     last_label_for_splash: Option<(Position, String)>,
-    visual_anchor: Option<i64>,
+    /// Which way the next confirmed Translations picker resolves.
+    picker_intent: PickerIntent,
     show_sidebar: bool,
+    /// The user's configured sidebar preference, restored when a compare
+    /// split collapses back to a single pane (the sidebar is force-hidden
+    /// while ≥2 panes are open).
+    sidebar_pref: bool,
+    /// Most recent terminal width, refreshed each draw. Lets the
+    /// open-pane action refuse a split that would leave columns unreadable
+    /// without reaching for the terminal handle.
+    last_term_width: u16,
+    /// Transient one-line status hint (e.g. "Terminal too narrow") with
+    /// its set-time, cleared after a short delay.
+    transient_msg: Option<(String, Instant)>,
     max_reading_width: u16,
     keys: KeyState,
 }
@@ -201,14 +263,12 @@ struct LoopState {
 /// Cache key for [`LoopState::bookmarks_cache`]: `(translation, book, chapter)`.
 type BookmarksKey = (String, String, i64);
 
-/// Borrowed bundle of the externally-owned reader state. Built fresh
-/// per dispatch call so the extracted handlers don't need to take six
-/// separate `&mut` parameters.
+/// Borrowed bundle of the externally-owned reader state. The reading
+/// context (position/passage/cursor) now lives in `LoopState::panes`, so
+/// this only carries the externally-owned `Db` and the deferred-warning
+/// sink.
 struct AppCtx<'a> {
     db: &'a mut Db,
-    pos: &'a mut Position,
-    passage: &'a mut Passage,
-    cursor_verse: &'a mut i64,
     warnings: &'a mut Vec<String>,
 }
 
@@ -346,7 +406,7 @@ fn main() -> Result<()> {
             chapter: args.chapter,
             verse: None,
         };
-        let mut passage = db.load_passage(&pos.book, pos.chapter)?;
+        let passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = 1;
         let r = run(
             guard.terminal(),
@@ -354,7 +414,7 @@ fn main() -> Result<()> {
             books,
             translation_label,
             &mut pos,
-            &mut passage,
+            passage,
             &mut cursor_verse,
             None,
             &config,
@@ -379,7 +439,7 @@ fn main() -> Result<()> {
                 verse: None,
             },
         };
-        let mut passage = db.load_passage(&pos.book, pos.chapter)?;
+        let passage = db.load_passage(&pos.book, pos.chapter)?;
         let mut cursor_verse: i64 = persisted.as_ref().map_or(1, |p| p.verse).max(1);
         let r = run(
             guard.terminal(),
@@ -387,7 +447,7 @@ fn main() -> Result<()> {
             books,
             translation_label,
             &mut pos,
-            &mut passage,
+            passage,
             &mut cursor_verse,
             Some(SplashSeed {
                 last: last_for_splash,
@@ -491,7 +551,7 @@ fn run(
     books: Vec<Book>,
     translation_label: String,
     pos: &mut Position,
-    passage: &mut Passage,
+    passage: Passage,
     cursor_verse: &mut i64,
     initial_splash: Option<SplashSeed>,
     config: &config::Config,
@@ -501,6 +561,7 @@ fn run(
         books,
         translation_label,
         pos,
+        passage,
         *cursor_verse,
         initial_splash,
         db.translation(),
@@ -509,35 +570,30 @@ fn run(
     );
 
     loop {
-        draw_frame(term, &mut state, passage, *cursor_verse)?;
+        draw_frame(term, &mut state)?;
 
         if event::poll(Duration::from_millis(150))? {
             let term_height = term.size().map_or(24, |s| s.height);
             let raw_event = event::read()?;
             let synth: Option<KeyEvent> = match raw_event {
                 Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
-                Event::Mouse(me) => mouse_to_key(
-                    me,
-                    term_height,
-                    make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some()),
-                ),
+                Event::Mouse(me) => mouse_to_key(me, term_height, make_status(&state)),
                 _ => None,
             };
             if let Some(key) = synth {
-                let mut ctx = AppCtx {
-                    db,
-                    pos,
-                    passage,
-                    cursor_verse,
-                    warnings,
-                };
+                let mut ctx = AppCtx { db, warnings };
                 let step = dispatch_key(&mut state, &mut ctx, key)?;
                 if matches!(step, DispatchStep::Quit) {
+                    // Persist the focused pane's final position (the pane the
+                    // user was last reading) back to the caller for state.toml.
+                    let pane = &state.panes[state.focus];
+                    *pos = pane.pos.clone();
+                    *cursor_verse = pane.cursor_verse;
                     return Ok(());
                 }
             }
         } else {
-            state.keys.tick();
+            state.tick();
         }
     }
 }
@@ -553,6 +609,7 @@ impl LoopState {
         books: Vec<Book>,
         translation_label: String,
         pos: &Position,
+        passage: Passage,
         cursor_verse: i64,
         initial_splash: Option<SplashSeed>,
         translation: &str,
@@ -560,7 +617,7 @@ impl LoopState {
         warnings: &mut Vec<String>,
     ) -> Self {
         let keys = KeyState::with_user_bindings(&config.keys, config.input.keymap);
-        let history = History::new(pos.clone());
+        let pane = Pane::new(translation.to_string(), pos.clone(), passage, cursor_verse);
         let bg = match initial_splash {
             Some(seed) => Bg::Splash(Box::new(SplashView::new(
                 books.clone(),
@@ -592,39 +649,145 @@ impl LoopState {
             translation_label,
             bg,
             dialog: Dialog::None,
-            history,
+            panes: vec![pane],
+            focus: 0,
             bookmarks,
-            bookmarks_cache: None,
+            bookmarks_cache: std::collections::HashMap::new(),
             last_query: None,
             last_label_for_splash,
-            visual_anchor: None,
+            picker_intent: PickerIntent::SwitchFocused,
             show_sidebar: config.reading.show_sidebar,
+            sidebar_pref: config.reading.show_sidebar,
+            last_term_width: 0,
+            transient_msg: None,
             max_reading_width: config.reading.max_width,
             keys,
         }
+    }
+
+    fn focused(&self) -> &Pane {
+        &self.panes[self.focus]
+    }
+
+    fn focused_mut(&mut self) -> &mut Pane {
+        &mut self.panes[self.focus]
+    }
+
+    /// Re-point `Db` at the focused pane's translation and refresh the
+    /// global `books`/`translation_label` mirrors. Must be called after
+    /// every focus change and every focused-pane translation change so the
+    /// search / quote / Find paths (which query the active connection)
+    /// follow the focused pane. See the focus==active invariant.
+    fn sync_focus_to_db(&mut self, db: &mut Db) -> Result<()> {
+        let code = self.panes[self.focus].translation.clone();
+        db.set_active(&code)?;
+        self.books = db.list_books()?;
+        self.translation_label = db.translation_label()?;
+        Ok(())
+    }
+
+    /// Cycle focus by `delta` panes (wrapping). No-op with a single pane.
+    fn focus_cycle(&mut self, delta: isize, db: &mut Db) -> Result<()> {
+        let n = self.panes.len();
+        if n <= 1 {
+            return Ok(());
+        }
+        let cur = isize::try_from(self.focus).unwrap_or(0);
+        let len = isize::try_from(n).unwrap_or(1);
+        self.focus = usize::try_from((cur + delta).rem_euclid(len)).unwrap_or(0);
+        self.sync_focus_to_db(db)
+    }
+
+    /// Move focus one pane left/right, clamping at the ends.
+    fn focus_dir(&mut self, right: bool, db: &mut Db) -> Result<()> {
+        let n = self.panes.len();
+        if n <= 1 {
+            return Ok(());
+        }
+        self.focus = if right {
+            (self.focus + 1).min(n - 1)
+        } else {
+            self.focus.saturating_sub(1)
+        };
+        self.sync_focus_to_db(db)
+    }
+
+    /// Set a transient status hint, shown briefly then cleared by [`Self::tick`].
+    fn set_transient(&mut self, msg: impl Into<String>) {
+        self.transient_msg = Some((msg.into(), Instant::now()));
+    }
+
+    /// Per-poll housekeeping: advance the key-chord timeout and expire any
+    /// transient status hint.
+    fn tick(&mut self) {
+        self.keys.tick();
+        if let Some((_, set_at)) = &self.transient_msg
+            && set_at.elapsed() > Duration::from_secs(2)
+        {
+            self.transient_msg = None;
+        }
+    }
+
+    /// Whether the terminal is wide enough to add one more reading pane
+    /// without dropping any column below [`ui::MIN_PANE_W`]. A width of 0
+    /// means "not measured yet" (no draw has happened, or a sizeless PTY);
+    /// allow it rather than block on an unknown — the user can always close.
+    fn can_add_pane(&self) -> bool {
+        if self.last_term_width == 0 {
+            return true;
+        }
+        let next = u16::try_from(self.panes.len() + 1).unwrap_or(u16::MAX);
+        self.last_term_width / next >= ui::MIN_PANE_W
     }
 }
 
 /// One pass of the draw cycle. Kept inline (vs split into per-bg
 /// helpers) because the closure borrows many fields and pulling it apart
 /// duplicates the dialog overlay match.
-fn draw_frame(
-    term: &mut Tty,
-    state: &mut LoopState,
-    passage: &Passage,
-    cursor_verse: i64,
-) -> Result<()> {
-    let status = make_status(&state.bg, state.show_sidebar, state.visual_anchor.is_some());
-    state.refresh_bookmarks_cache(passage);
-    // refresh_bookmarks_cache populates the cache for this passage; read it back
-    // with an empty-set fallback rather than an `expect`, so a future change to
-    // that invariant degrades to "no bookmark stars" instead of a panic.
-    let empty_bookmarks = std::collections::BTreeSet::new();
-    let bookmarked_in_chapter = state
-        .bookmarks_cache
-        .as_ref()
-        .map_or(&empty_bookmarks, |(_, set)| set);
+fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
+    // Refresh the open-pane width guard and the per-pane bookmark caches
+    // up front, while we still hold `&mut state` — the draw closure below
+    // borrows `state` immutably.
+    state.last_term_width = term.size().map_or(0, |s| s.width);
+    state.refresh_all_bookmark_caches();
+
+    let status = make_status(state);
+    // A transient hint (e.g. "Terminal too narrow") takes over the mode tag.
+    let mode_tag = match &state.transient_msg {
+        Some((msg, _)) => Cow::Owned(format!("-- {msg} --")),
+        None => mode_tag_for(state),
+    };
     let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
+
+    // Per-pane render inputs. Borrows `state.panes` + `state.bookmarks_cache`
+    // (disjoint immutable borrows); `empty` covers the can't-happen miss so a
+    // cache gap degrades to "no bookmark stars" rather than a panic.
+    let empty_bookmarks = std::collections::BTreeSet::new();
+    let pane_renders: Vec<ui::PaneRender<'_>> = state
+        .panes
+        .iter()
+        .enumerate()
+        .map(|(i, pane)| {
+            let key = (
+                pane.passage.translation.clone(),
+                pane.passage.book_code.clone(),
+                pane.passage.chapter,
+            );
+            let bookmarked = state.bookmarks_cache.get(&key).unwrap_or(&empty_bookmarks);
+            let selection = pane.visual_anchor.map(|a| {
+                let c = pane.cursor_verse;
+                if a <= c { (a, c) } else { (c, a) }
+            });
+            ui::PaneRender {
+                passage: &pane.passage,
+                cursor_verse: pane.cursor_verse,
+                selection,
+                bookmarked,
+                is_focused: i == state.focus,
+            }
+        })
+        .collect();
+
     term.draw(|f| {
         let area = f.area();
         let buf = f.buffer_mut();
@@ -643,12 +806,6 @@ fn draw_frame(
                     &menu_title,
                     ratatui::layout::Rect::new(area.x, area.y, area.width, 1),
                     buf,
-                );
-                let mode_tag = mode_tag_for(
-                    &state.bg,
-                    &state.dialog,
-                    state.visual_anchor.is_some(),
-                    state.show_sidebar,
                 );
                 crate::ui::statusbar::render(
                     status,
@@ -670,24 +827,11 @@ fn draw_frame(
                 s.render(body, buf);
             }
             Bg::Reading => {
-                let mode_tag = mode_tag_for(
-                    &state.bg,
-                    &state.dialog,
-                    state.visual_anchor.is_some(),
-                    state.show_sidebar,
-                );
-                let selection = state.visual_anchor.map(|a| {
-                    let c = cursor_verse;
-                    if a <= c { (a, c) } else { (c, a) }
-                });
                 ui::Frame {
                     menu_title: &menu_title,
                     status,
                     status_mode: &mode_tag,
-                    passage,
-                    cursor_verse,
-                    selection,
-                    bookmarked: bookmarked_in_chapter,
+                    panes: &pane_renders,
                     show_sidebar: state.show_sidebar,
                     max_reading_width: state.max_reading_width,
                 }
@@ -722,19 +866,23 @@ fn dispatch_key(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Resul
 /// Common dialog-close-after-jump path: load the new passage, push to
 /// history, refresh the splash "Continue" label, and reset bg+dialog.
 fn close_with_jump(state: &mut LoopState, ctx: &mut AppCtx, p: Position) -> Result<()> {
-    jump_to(
-        p,
-        ctx.db,
-        ctx.pos,
-        ctx.passage,
-        ctx.cursor_verse,
-        &mut state.history,
-    )?;
+    let f = state.focus;
+    {
+        let pane = &mut state.panes[f];
+        jump_to(
+            p,
+            ctx.db,
+            &mut pane.pos,
+            &mut pane.passage,
+            &mut pane.cursor_verse,
+            &mut pane.history,
+        )?;
+    }
     update_splash_label(
         &mut state.last_label_for_splash,
         &state.books,
-        ctx.pos,
-        *ctx.cursor_verse,
+        &state.panes[f].pos,
+        state.panes[f].cursor_verse,
     );
     state.bg = Bg::Reading;
     state.dialog = Dialog::None;
@@ -789,6 +937,14 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 close_with_jump(state, ctx, p)?;
                 Ok(DispatchStep::Continue)
             }
+            FootnoteOutcome::OpenSplit(p) => {
+                // Open the xref target beside the current verse, in the source
+                // pane's translation. `p.verse` lands the new pane's cursor.
+                let code = state.focused().translation.clone();
+                open_compare_pane(state, ctx, &code, Some(p))?;
+                state.dialog = Dialog::None;
+                Ok(DispatchStep::Continue)
+            }
         },
         Dialog::Help(d) => {
             if matches!(d.handle(key), HelpOutcome::Cancel) {
@@ -804,7 +960,7 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 BookmarksOutcome::Jump(p) => close_with_jump(state, ctx, p)?,
                 BookmarksOutcome::Delete(bm) => {
                     state.bookmarks.bookmarks.retain(|b| !b.same_range(&bm));
-                    state.bookmarks_cache = None;
+                    state.bookmarks_cache.clear();
                     save_or_warn(
                         ctx.warnings,
                         "bookmarks save (delete)",
@@ -819,26 +975,7 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 TranslationsOutcome::Continue => {}
                 TranslationsOutcome::Cancel => state.dialog = Dialog::None,
                 TranslationsOutcome::Select(code) => {
-                    switch_translation(
-                        ctx.db,
-                        &mut state.books,
-                        &mut state.translation_label,
-                        &code,
-                        ctx.pos,
-                        ctx.passage,
-                        ctx.cursor_verse,
-                    )?;
-                    save_or_warn(
-                        ctx.warnings,
-                        "default-translation persist",
-                        persist_default_translation(&code),
-                    );
-                    update_splash_label(
-                        &mut state.last_label_for_splash,
-                        &state.books,
-                        ctx.pos,
-                        *ctx.cursor_verse,
-                    );
+                    apply_translation_pick(state, ctx, &code)?;
                     state.dialog = Dialog::None;
                 }
                 TranslationsOutcome::Download(code) => {
@@ -851,28 +988,7 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                     match fetch::translation(&dir, &code)
                         .and_then(|()| ctx.db.add_translation(&code))
                     {
-                        Ok(()) => {
-                            switch_translation(
-                                ctx.db,
-                                &mut state.books,
-                                &mut state.translation_label,
-                                &code,
-                                ctx.pos,
-                                ctx.passage,
-                                ctx.cursor_verse,
-                            )?;
-                            save_or_warn(
-                                ctx.warnings,
-                                "default-translation persist",
-                                persist_default_translation(&code),
-                            );
-                            update_splash_label(
-                                &mut state.last_label_for_splash,
-                                &state.books,
-                                ctx.pos,
-                                *ctx.cursor_verse,
-                            );
-                        }
+                        Ok(()) => apply_translation_pick(state, ctx, &code)?,
                         Err(e) => {
                             ctx.warnings.push(format!("download {code} failed: {e}"));
                         }
@@ -883,6 +999,101 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
             Ok(DispatchStep::Continue)
         }
     }
+}
+
+/// Resolve a confirmed Translations pick per the pending [`PickerIntent`]:
+/// either swap the focused pane's translation in place, or spawn a new
+/// compare pane reading `code` at the focused pane's current position.
+fn apply_translation_pick(state: &mut LoopState, ctx: &mut AppCtx, code: &str) -> Result<()> {
+    match state.picker_intent {
+        PickerIntent::SwitchFocused => switch_focused_translation(state, ctx, code),
+        PickerIntent::OpenNewPane => open_compare_pane(state, ctx, code, None),
+    }
+}
+
+/// Swap the focused pane's translation (the `t` / F5 flow). Persists the
+/// new code as the launch default and refreshes the splash "Continue" label.
+fn switch_focused_translation(state: &mut LoopState, ctx: &mut AppCtx, code: &str) -> Result<()> {
+    let f = state.focus;
+    {
+        let pane = &mut state.panes[f];
+        switch_translation(
+            ctx.db,
+            &mut state.books,
+            &mut state.translation_label,
+            code,
+            &pane.pos,
+            &mut pane.passage,
+            &mut pane.cursor_verse,
+        )?;
+        pane.translation = code.to_string();
+    }
+    save_or_warn(
+        ctx.warnings,
+        "default-translation persist",
+        persist_default_translation(code),
+    );
+    update_splash_label(
+        &mut state.last_label_for_splash,
+        &state.books,
+        &state.panes[f].pos,
+        state.panes[f].cursor_verse,
+    );
+    Ok(())
+}
+
+/// Spawn a new compare pane reading `code`. `seed` gives the starting
+/// position (with `verse` landing the cursor); `None` clones the focused
+/// pane's position + cursor — i.e. "the same passage in another
+/// translation". The new pane becomes focused and active.
+fn open_compare_pane(
+    state: &mut LoopState,
+    ctx: &mut AppCtx,
+    code: &str,
+    seed: Option<Position>,
+) -> Result<()> {
+    if !state.can_add_pane() {
+        state.set_transient("Terminal too narrow for another pane");
+        return Ok(());
+    }
+    let (seed_pos, cursor) = match seed {
+        Some(p) => {
+            let c = p.verse.unwrap_or(1);
+            (p, c)
+        }
+        None => {
+            let fp = state.focused();
+            (fp.pos.clone(), fp.cursor_verse)
+        }
+    };
+    let passage = ctx
+        .db
+        .load_passage_for(code, &seed_pos.book, seed_pos.chapter)?;
+    let mut pane = Pane::new(code.to_string(), seed_pos, passage, cursor);
+    pane.clamp_cursor();
+    state.panes.push(pane);
+    state.focus = state.panes.len() - 1;
+    // The sidebar shares the body width the new pane needs; suppress it
+    // while comparing (restored from `sidebar_pref` when the split closes).
+    state.show_sidebar = false;
+    state.sync_focus_to_db(ctx.db)?;
+    Ok(())
+}
+
+/// Close the focused pane. A no-op (with a hint) when only one remains.
+/// Re-points `Db` at the newly-focused pane and, on collapse to a single
+/// pane, restores the user's sidebar preference.
+fn close_focused_pane(state: &mut LoopState, ctx: &mut AppCtx) -> Result<()> {
+    if state.panes.len() <= 1 {
+        state.set_transient("Only one pane");
+        return Ok(());
+    }
+    state.panes.remove(state.focus);
+    state.focus = state.focus.min(state.panes.len() - 1);
+    if state.panes.len() == 1 {
+        state.show_sidebar = state.sidebar_pref;
+    }
+    state.sync_focus_to_db(ctx.db)
 }
 
 fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Result<DispatchStep> {
@@ -903,24 +1114,29 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenBook(p) => {
-            jump_to(
-                p,
-                ctx.db,
-                ctx.pos,
-                ctx.passage,
-                ctx.cursor_verse,
-                &mut state.history,
-            )?;
+            let f = state.focus;
+            {
+                let pane = &mut state.panes[f];
+                jump_to(
+                    p,
+                    ctx.db,
+                    &mut pane.pos,
+                    &mut pane.passage,
+                    &mut pane.cursor_verse,
+                    &mut pane.history,
+                )?;
+            }
             update_splash_label(
                 &mut state.last_label_for_splash,
                 &state.books,
-                ctx.pos,
-                *ctx.cursor_verse,
+                &state.panes[f].pos,
+                state.panes[f].cursor_verse,
             );
             state.bg = Bg::Reading;
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenTranslations => {
+            state.picker_intent = PickerIntent::SwitchFocused;
             state.dialog = Dialog::Translations(TranslationsDialog::new(
                 picker_entries(ctx.db),
                 ctx.db.translation(),
@@ -944,102 +1160,112 @@ enum HistoryDir {
 }
 
 impl LoopState {
-    fn open_footnote_dialog(&mut self, ctx: &AppCtx) {
-        let target = format!("{}.{}.{}", ctx.pos.book, ctx.pos.chapter, *ctx.cursor_verse);
-        let notes: Vec<_> = ctx
+    fn open_footnote_dialog(&mut self) {
+        let pane = &self.panes[self.focus];
+        let target = format!(
+            "{}.{}.{}",
+            pane.pos.book, pane.pos.chapter, pane.cursor_verse
+        );
+        let notes: Vec<_> = pane
             .passage
             .footnotes
             .iter()
             .filter(|fn_| fn_.verse_osis == target)
             .cloned()
             .collect();
-        let xrefs: Vec<_> = ctx
+        let xrefs: Vec<_> = pane
             .passage
             .xrefs
             .iter()
-            .filter(|x| x.from_verse == *ctx.cursor_verse)
+            .filter(|x| x.from_verse == pane.cursor_verse)
             .cloned()
             .collect();
         let label = format!(
             "{} {}:{}",
-            ctx.passage.book_abbrev, ctx.pos.chapter, *ctx.cursor_verse
+            pane.passage.book_abbrev, pane.pos.chapter, pane.cursor_verse
         );
         self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes, xrefs));
     }
 
     fn history_step(&mut self, ctx: &mut AppCtx, dir: HistoryDir) -> Result<()> {
+        let pane = &mut self.panes[self.focus];
         let target = match dir {
-            HistoryDir::Back => self.history.back(),
-            HistoryDir::Forward => self.history.forward(),
+            HistoryDir::Back => pane.history.back(),
+            HistoryDir::Forward => pane.history.forward(),
         };
         if let Some(p) = target {
-            *ctx.pos = p;
-            *ctx.passage = ctx.db.load_passage(&ctx.pos.book, ctx.pos.chapter)?;
-            *ctx.cursor_verse = 1;
+            pane.pos = p;
+            pane.passage = ctx.db.load_passage(&pane.pos.book, pane.pos.chapter)?;
+            pane.cursor_verse = 1;
         }
         Ok(())
     }
 
-    fn copy_verse(ctx: &mut AppCtx) {
+    fn copy_verse(&self, ctx: &mut AppCtx) {
+        let pane = self.focused();
         save_or_warn(
             ctx.warnings,
             "clipboard set",
-            copy_verse_to_clipboard(ctx.passage, ctx.pos, *ctx.cursor_verse),
+            copy_verse_to_clipboard(&pane.passage, &pane.pos, pane.cursor_verse),
         );
     }
 
-    const fn toggle_visual(&mut self, cursor: i64) {
-        self.visual_anchor = if self.visual_anchor.is_some() {
+    fn toggle_visual(&mut self) {
+        let pane = &mut self.panes[self.focus];
+        pane.visual_anchor = if pane.visual_anchor.is_some() {
             None
         } else {
-            Some(cursor)
+            Some(pane.cursor_verse)
         };
     }
 
     fn add_bookmark(&mut self, ctx: &mut AppCtx) {
-        let (s, e) = match self.visual_anchor {
-            Some(a) if a <= *ctx.cursor_verse => (a, *ctx.cursor_verse),
-            Some(a) => (*ctx.cursor_verse, a),
-            None => (*ctx.cursor_verse, *ctx.cursor_verse),
+        let (book, chapter, s, e) = {
+            let pane = &self.panes[self.focus];
+            let cur = pane.cursor_verse;
+            let (s, e) = match pane.visual_anchor {
+                Some(a) if a <= cur => (a, cur),
+                Some(a) => (cur, a),
+                None => (cur, cur),
+            };
+            (pane.pos.book.clone(), pane.pos.chapter, s, e)
         };
         self.bookmarks.add(bookmark::Bookmark {
             translation: ctx.db.translation().to_string(),
-            book: ctx.pos.book.clone(),
-            chapter: ctx.pos.chapter,
+            book,
+            chapter,
             start_verse: s,
             end_verse: e,
             label: None,
             created_at: bookmark::now_unix(),
         });
-        self.bookmarks_cache = None;
+        self.bookmarks_cache.clear();
         save_or_warn(ctx.warnings, "bookmarks save (add)", self.bookmarks.save());
-        self.visual_anchor = None;
+        self.panes[self.focus].visual_anchor = None;
     }
 
-    /// Rebuild `bookmarks_cache` if it doesn't already match the current
-    /// passage. The set itself is small (verses bookmarked in this chapter)
-    /// and rebuilds in microseconds, but at 6 Hz the per-frame allocation
-    /// was wasted churn.
-    fn refresh_bookmarks_cache(&mut self, passage: &Passage) {
-        let key = (
-            passage.translation.clone(),
-            passage.book_code.clone(),
-            passage.chapter,
-        );
-        if self
-            .bookmarks_cache
-            .as_ref()
-            .is_some_and(|(k, _)| k == &key)
-        {
+    /// Ensure a bookmarked-verse set is cached for `(translation, book,
+    /// chapter)`. Cheap (one `BTreeSet` build) and idempotent; the whole
+    /// map is cleared on bookmark mutation.
+    fn ensure_bookmark_cache(&mut self, translation: &str, book: &str, chapter: i64) {
+        let key = (translation.to_string(), book.to_string(), chapter);
+        if self.bookmarks_cache.contains_key(&key) {
             return;
         }
-        let set = build_bookmarks_set(
-            &self.bookmarks,
-            &passage.translation,
-            &passage.book_code,
-            passage.chapter,
-        );
-        self.bookmarks_cache = Some((key, set));
+        let set = build_bookmarks_set(&self.bookmarks, translation, book, chapter);
+        self.bookmarks_cache.insert(key, set);
+    }
+
+    /// Populate the bookmark cache for every open pane's chapter. Panes can
+    /// show different chapters/translations, so each needs its own entry.
+    fn refresh_all_bookmark_caches(&mut self) {
+        for i in 0..self.panes.len() {
+            let (t, b, c) = {
+                let p = &self.panes[i].passage;
+                (p.translation.clone(), p.book_code.clone(), p.chapter)
+            };
+            self.ensure_bookmark_cache(&t, &b, c);
+        }
     }
 
     fn open_bookmarks_dialog(&mut self, ctx: &AppCtx) {
@@ -1049,6 +1275,8 @@ impl LoopState {
     }
 
     fn open_translations_dialog(&mut self, ctx: &AppCtx) {
+        // The `t` / F5 path replaces the focused pane's translation.
+        self.picker_intent = PickerIntent::SwitchFocused;
         self.dialog = Dialog::Translations(TranslationsDialog::new(
             picker_entries(ctx.db),
             ctx.db.translation(),
@@ -1058,15 +1286,16 @@ impl LoopState {
     /// Esc-from-reading: cancel visual selection if active, otherwise
     /// rebuild the splash view and switch the background to it.
     fn enter_splash(&mut self, ctx: &AppCtx) {
-        if self.visual_anchor.is_some() {
-            self.visual_anchor = None;
+        if self.focused().visual_anchor.is_some() {
+            self.focused_mut().visual_anchor = None;
             return;
         }
+        let f = self.focus;
         update_splash_label(
             &mut self.last_label_for_splash,
             &self.books,
-            ctx.pos,
-            *ctx.cursor_verse,
+            &self.panes[f].pos,
+            self.panes[f].cursor_verse,
         );
         let qotd = quote::pick(ctx.db, ctx.db.translation()).unwrap_or(None);
         self.bg = Bg::Splash(Box::new(SplashView::new(
@@ -1079,28 +1308,42 @@ impl LoopState {
     }
 
     /// Re-run the most recent `/`-search in `forward` or backward order
-    /// relative to the cursor, jumping to the next hit (with wrap).
+    /// relative to the focused pane's cursor, jumping to the next hit (wrap).
     fn repeat_search_action(&mut self, ctx: &mut AppCtx, forward: bool) -> Result<()> {
         let Some(q) = self.last_query.as_deref() else {
             return Ok(());
         };
-        let Some(p) = repeat_search(ctx.db, &self.books, q, ctx.pos, *ctx.cursor_verse, forward)
-        else {
+        let f = self.focus;
+        let target = {
+            let pane = &self.panes[f];
+            repeat_search(
+                ctx.db,
+                &self.books,
+                q,
+                &pane.pos,
+                pane.cursor_verse,
+                forward,
+            )
+        };
+        let Some(p) = target else {
             return Ok(());
         };
-        jump_to(
-            p,
-            ctx.db,
-            ctx.pos,
-            ctx.passage,
-            ctx.cursor_verse,
-            &mut self.history,
-        )?;
+        {
+            let pane = &mut self.panes[f];
+            jump_to(
+                p,
+                ctx.db,
+                &mut pane.pos,
+                &mut pane.passage,
+                &mut pane.cursor_verse,
+                &mut pane.history,
+            )?;
+        }
         update_splash_label(
             &mut self.last_label_for_splash,
             &self.books,
-            ctx.pos,
-            *ctx.cursor_verse,
+            &self.panes[f].pos,
+            self.panes[f].cursor_verse,
         );
         Ok(())
     }
@@ -1119,26 +1362,36 @@ fn dispatch_reading(
             // Pre-fill with the current reference so `Enter` is a no-op
             // "stay here" and a quick edit (e.g. bumping chapter or verse)
             // costs only a few keystrokes.
+            let pane = state.focused();
             let book_name = state
                 .books
                 .iter()
-                .find(|b| b.code == ctx.pos.book)
-                .map_or_else(|| ctx.pos.book.clone(), |b| b.name.clone());
+                .find(|b| b.code == pane.pos.book)
+                .map_or_else(|| pane.pos.book.clone(), |b| b.name.clone());
             state.dialog = Dialog::Goto(GotoDialog::with_position(
                 &book_name,
-                ctx.pos.chapter,
-                *ctx.cursor_verse,
+                pane.pos.chapter,
+                pane.cursor_verse,
                 ctx.db.translation(),
             ));
         }
         Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation())),
         Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
-        Action::OpenFootnote => state.open_footnote_dialog(ctx),
+        Action::OpenFootnote => state.open_footnote_dialog(),
         Action::JumpBack => state.history_step(ctx, HistoryDir::Back)?,
         Action::JumpForward => state.history_step(ctx, HistoryDir::Forward)?,
-        Action::CopyVerse => LoopState::copy_verse(ctx),
-        Action::ToggleSidebar => state.show_sidebar = !state.show_sidebar,
-        Action::ToggleVisual => state.toggle_visual(*ctx.cursor_verse),
+        Action::CopyVerse => state.copy_verse(ctx),
+        Action::ToggleSidebar => {
+            // Tab cycles focus when a compare split is open (the sidebar is
+            // suppressed then anyway); otherwise it toggles the sidebar.
+            if state.panes.len() >= 2 {
+                state.focus_cycle(1, ctx.db)?;
+            } else {
+                state.show_sidebar = !state.show_sidebar;
+                state.sidebar_pref = state.show_sidebar;
+            }
+        }
+        Action::ToggleVisual => state.toggle_visual(),
         Action::AddBookmark => state.add_bookmark(ctx),
         Action::OpenBookmarks => state.open_bookmarks_dialog(ctx),
         Action::OpenTranslations => state.open_translations_dialog(ctx),
@@ -1146,15 +1399,29 @@ fn dispatch_reading(
         Action::Quit => return Ok(DispatchStep::Quit),
         Action::SearchNext => state.repeat_search_action(ctx, true)?,
         Action::SearchPrev => state.repeat_search_action(ctx, false)?,
+        Action::CompareOpen => {
+            // Open the picker; its confirmation spawns a new pane.
+            state.picker_intent = PickerIntent::OpenNewPane;
+            state.dialog = Dialog::Translations(TranslationsDialog::new(
+                picker_entries(ctx.db),
+                ctx.db.translation(),
+            ));
+        }
+        Action::FocusNext => state.focus_cycle(1, ctx.db)?,
+        Action::FocusLeft => state.focus_dir(false, ctx.db)?,
+        Action::FocusRight => state.focus_dir(true, ctx.db)?,
+        Action::CompareClose => close_focused_pane(state, ctx)?,
         _ => {
+            let f = state.focus;
+            let pane = &mut state.panes[f];
             if apply_action(
                 action,
                 ctx.db,
                 &state.books,
-                ctx.pos,
-                ctx.passage,
-                ctx.cursor_verse,
-                &mut state.history,
+                &mut pane.pos,
+                &mut pane.passage,
+                &mut pane.cursor_verse,
+                &mut pane.history,
             )? {
                 return Ok(DispatchStep::Quit);
             }
@@ -1185,15 +1452,15 @@ fn build_bookmarks_set(
     out
 }
 
-fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, show_sidebar: bool) -> Cow<'static, str> {
-    match dialog {
+fn mode_tag_for(state: &LoopState) -> Cow<'static, str> {
+    match &state.dialog {
         Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
         Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
         Dialog::Footnote(_) => Cow::Borrowed("-- NOTES --"),
         Dialog::Help(_) => Cow::Borrowed("-- HELP --"),
         Dialog::Bookmarks(_) => Cow::Borrowed("-- BOOKMARKS --"),
         Dialog::Translations(_) => Cow::Borrowed("-- TRANSLATIONS --"),
-        Dialog::None => match bg {
+        Dialog::None => match &state.bg {
             Bg::Splash(s) => match s.mode {
                 crate::ui::splash::SplashMode::Normal => Cow::Borrowed("-- NORMAL --"),
                 crate::ui::splash::SplashMode::Filter => Cow::Borrowed("-- FILTER --"),
@@ -1201,8 +1468,20 @@ fn mode_tag_for(bg: &Bg, dialog: &Dialog, visual: bool, show_sidebar: bool) -> C
             // NOREFS is a persistent cue that the sidebar is toggled off, so
             // the reading area looking different on return is self-explained.
             Bg::Reading => {
-                let base = if visual { "VISUAL" } else { "NORMAL" };
-                if show_sidebar {
+                let base = if state.focused().visual_anchor.is_some() {
+                    "VISUAL"
+                } else {
+                    "NORMAL"
+                };
+                // In a compare split, show which pane is focused (e.g. "2/3")
+                // instead of the sidebar's NOREFS cue.
+                if state.panes.len() >= 2 {
+                    Cow::Owned(format!(
+                        "-- {base} | {}/{} --",
+                        state.focus + 1,
+                        state.panes.len()
+                    ))
+                } else if state.show_sidebar {
                     Cow::Owned(format!("-- {base} --"))
                 } else {
                     Cow::Owned(format!("-- {base} | NOREFS --"))
@@ -1294,14 +1573,44 @@ const STATUS_VISUAL: &[Shortcut<'static>] = &[
     },
 ];
 
-const fn make_status(bg: &Bg, show_sidebar: bool, visual: bool) -> &'static [Shortcut<'static>] {
-    match bg {
+/// Reading-view footer while a compare split is open: the sidebar toggle is
+/// irrelevant (suppressed), so advertise the window-command chords instead.
+const STATUS_READING_COMPARE: &[Shortcut<'static>] = &[
+    Shortcut {
+        key: "Tab",
+        action: "Focus",
+    },
+    Shortcut {
+        key: "^Wv",
+        action: "Split",
+    },
+    Shortcut {
+        key: "^Wq",
+        action: "Close",
+    },
+    Shortcut {
+        key: "K",
+        action: "Notes",
+    },
+    Shortcut {
+        key: "Esc",
+        action: "Home",
+    },
+    Shortcut {
+        key: "Q",
+        action: "Quit",
+    },
+];
+
+fn make_status(state: &LoopState) -> &'static [Shortcut<'static>] {
+    match &state.bg {
         Bg::Splash(_) => STATUS_SPLASH,
         // In a visual selection the relevant actions are copy / bookmark /
         // exit, so swap the reading hints for those (mirrors how the dialogs
         // carry their own mode-specific footers).
-        Bg::Reading if visual => STATUS_VISUAL,
-        Bg::Reading if show_sidebar => STATUS_READING_HIDE,
+        Bg::Reading if state.focused().visual_anchor.is_some() => STATUS_VISUAL,
+        Bg::Reading if state.panes.len() >= 2 => STATUS_READING_COMPARE,
+        Bg::Reading if state.show_sidebar => STATUS_READING_HIDE,
         Bg::Reading => STATUS_READING_REFS,
     }
 }
@@ -1446,7 +1755,14 @@ fn apply_action(
         | Action::OpenBookmarks
         | Action::OpenTranslations
         | Action::SearchNext
-        | Action::SearchPrev => Ok(false),
+        | Action::SearchPrev
+        // Compare-pane actions are handled in `dispatch_reading` directly
+        // (they touch LoopState's pane vector, not a single reading context).
+        | Action::CompareOpen
+        | Action::FocusNext
+        | Action::FocusLeft
+        | Action::FocusRight
+        | Action::CompareClose => Ok(false),
     }
 }
 

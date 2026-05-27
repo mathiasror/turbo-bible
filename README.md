@@ -109,17 +109,38 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 | `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `Génesis 1`) |
 | `F3` / `/` | Find dialog (FTS5; BM25-ranked) |
 | `n` / `N` | repeat last search forward / backward |
-| `K` | Footnote / cross-reference popup for current verse |
+| `K` | Footnote / cross-reference popup (`s` opens the xref in a split) |
 | `t` / `F5` | Translations picker |
 | `M` / `F4` | Bookmarks |
 | `b` | toggle bookmark on cursor verse (or visual selection) |
 | `v` / `V` | enter / exit visual selection mode |
-| `Tab` | toggle References sidebar |
+| `Tab` | toggle References sidebar (focus next pane when comparing) |
 | `y` | copy current verse + reference to clipboard |
 | `F1` | help |
 | `Esc` | back to splash (or close dialog) |
 | `q` / `ZZ` / `ZQ` / `:q` | quit |
 | `:h` / `:help` | open help |
+
+### Compare panes (side-by-side)
+
+Read several translations — or a cross-referenced passage — side by side, vim
+window-style. Each pane is an independent reader: its own translation,
+position, cursor, scroll, and visual selection.
+
+| Keys | Action |
+| --- | --- |
+| `Ctrl-W v` | open a compare pane (pick a translation; opens at the current passage) |
+| `Ctrl-W w` | cycle focus between panes |
+| `Ctrl-W h` / `Ctrl-W l` | focus the pane to the left / right |
+| `Ctrl-W q` | close the focused pane |
+| `Tab` | focus the next pane (while ≥2 panes are open) |
+| `s` (in the `K` popup) | open the selected cross-reference in a new pane |
+
+The focused pane keeps the bright border and the `NORMAL`/`VISUAL` pill; the
+others dim. Motion keys (`j`/`k`, `h`/`l`, search, Goto) act on the focused
+pane only. The References sidebar is hidden while comparing — the panes use the
+width. A pane is refused (with a brief status hint) if the terminal is too
+narrow to keep every column readable.
 
 ### Splash screen
 
@@ -247,7 +268,8 @@ Inside `crates/turbo-bible-tui/src/`:
 
 - Poetry indentation (Psalms render as prose)
 - Inline (mid-verse) footnote markers — markers sit at end of verse
-- Side-by-side translation diff
+- Word-level translation diff (compare panes show translations side by
+  side, but differences aren't highlighted)
 - Mouse-driven verse selection (clicks on menu / status bar work)
 
 ## Contributing

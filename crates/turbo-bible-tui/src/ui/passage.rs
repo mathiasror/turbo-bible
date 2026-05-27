@@ -16,6 +16,10 @@ pub struct PassageView<'a> {
     pub cursor_verse: i64,
     pub selection: Option<(i64, i64)>,
     pub bookmarked: &'a std::collections::BTreeSet<i64>,
+    /// In a compare split, the focused pane keeps the bright border + mode
+    /// pill; unfocused panes dim their border to recede. Always `true` for
+    /// the single-pane reading view.
+    pub is_focused: bool,
 }
 
 impl Widget for PassageView<'_> {
@@ -47,21 +51,32 @@ impl Widget for PassageView<'_> {
                 .add_modifier(Modifier::BOLD),
         ))
         .right_aligned();
-        let block = Block::default()
+        // Focused pane: bright chrome. Unfocused compare panes dim their
+        // border + title to recede so the eye lands on the active column.
+        let chrome_fg = if self.is_focused {
+            theme::bright_white()
+        } else {
+            theme::dark_grey()
+        };
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::new().fg(theme::bright_white()).bg(theme::blue()))
+            .border_style(Style::new().fg(chrome_fg).bg(theme::blue()))
             .title(Line::from(Span::styled(
                 title,
                 // Bold the location reference so the eye lands on "where am I"
                 // first when navigating in from Goto — heavier than verse body.
                 Style::new()
-                    .fg(theme::bright_white())
+                    .fg(chrome_fg)
                     .bg(theme::blue())
                     .add_modifier(Modifier::BOLD),
             )))
-            .title(pill)
             .style(Style::new().bg(theme::blue()));
+        // Only the focused pane wears the NORMAL/VISUAL pill — on unfocused
+        // panes it would be noise (and misleading, since motions don't apply).
+        if self.is_focused {
+            block = block.title(pill);
+        }
 
         let inner = block.inner(area);
         block.render(area, buf);

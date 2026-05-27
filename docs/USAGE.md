@@ -16,9 +16,10 @@ reference, see the [README](../README.md). For an animated overview, see
 8. [Footnotes and cross-references](#footnotes-and-cross-references)
 9. [Visual selection and yank](#visual-selection-and-yank)
 10. [Translations](#translations)
-11. [Help: built-in keymap cheat sheet](#help-built-in-keymap-cheat-sheet)
-12. [Customizing keys, theme, and layout](#customizing-keys-theme-and-layout)
-13. [Where things live](#where-things-live)
+11. [Comparing translations side by side](#comparing-translations-side-by-side)
+12. [Help: built-in keymap cheat sheet](#help-built-in-keymap-cheat-sheet)
+13. [Customizing keys, theme, and layout](#customizing-keys-theme-and-layout)
+14. [Where things live](#where-things-live)
 
 ## First launch
 
@@ -218,7 +219,9 @@ known v1 limitation — see "What's not in v1" in the README).
 For an interactive view, press `K` to open the **footnote popup**. It
 shows every footnote on the verse, with `↑`/`↓` to walk through linked
 cross-references. `Enter` follows the highlighted cross-reference (jumps
-your cursor to that verse). `Esc` or `q` closes the popup.
+your cursor to that verse); `s` instead opens it in a side-by-side
+[compare pane](#comparing-translations-side-by-side). `Esc` or `q` closes
+the popup.
 
 If the cursor verse has no footnotes the popup says so and closes
 politely.
@@ -257,6 +260,42 @@ The selected translation becomes the default for the next launch — it's
 written to `config.toml` as `default_translation`. Override with the
 `--translation` CLI flag if you want a one-off run in a different
 translation.
+
+## Comparing translations side by side
+
+When you want two (or more) translations in view at once — or a
+cross-referenced passage next to the verse that points to it — open a
+**compare pane**. The model mirrors vim's window splits, and each pane is
+a fully independent reader: its own translation, position, cursor, scroll,
+and visual selection. Moving the cursor in one pane never disturbs another.
+
+- **`Ctrl-W v`** opens a new pane. It starts on the picker; the
+  translation you choose opens in a fresh column at the passage you were
+  reading. Navigate it independently from there.
+- **`Ctrl-W w`** cycles focus to the next pane; **`Ctrl-W h`** / **`Ctrl-W l`**
+  move focus left / right. While ≥2 panes are open, plain **`Tab`** also
+  hops to the next pane (the References sidebar is hidden in compare mode,
+  so `Tab` has nothing to toggle).
+- **`Ctrl-W q`** closes the focused pane. Closing the last extra pane
+  drops you back to the single-pane reader and restores the sidebar.
+
+The focused pane wears the bright border and the `NORMAL`/`VISUAL` pill;
+the others dim so your eye lands on the active column. The mode line shows
+which pane is focused (e.g. `-- NORMAL | 2/3 --`). Motion, search, Goto,
+bookmarks, and yank all act on the focused pane only.
+
+To pull up a **cross-referenced** passage beside the current one, open the
+`K` popup, highlight a cross-reference with `↑`/`↓`, and press **`s`**
+(instead of `Enter`, which would replace the current passage). The target
+opens in a new pane in the same translation, cursor on the referenced
+verse.
+
+Panes split the body width evenly, so comparing wants a wide terminal —
+two 80-column readers need ~150+ columns. If a new pane would squeeze the
+columns below a readable width, turbo-bible refuses it and shows a brief
+hint in the mode line rather than rendering an unreadable sliver. The
+layout is session-only: quitting saves the focused pane's position, not
+the whole split.
 
 ## Help: built-in keymap cheat sheet
 

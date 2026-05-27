@@ -55,6 +55,17 @@ pub enum Action {
     SearchNext,
     /// Repeat the last `/`-search backward. Vim-layer only.
     SearchPrev,
+    /// `Ctrl-W v` — open a new compare pane (via the Translations picker).
+    /// Vim-layer only (the `Ctrl-W` window-command chord).
+    CompareOpen,
+    /// `Ctrl-W w` — cycle focus to the next compare pane (wraps).
+    FocusNext,
+    /// `Ctrl-W h` — focus the pane to the left (clamps).
+    FocusLeft,
+    /// `Ctrl-W l` — focus the pane to the right (clamps).
+    FocusRight,
+    /// `Ctrl-W q` — close the focused compare pane (no-op with one pane).
+    CompareClose,
 }
 
 pub struct KeyState {
@@ -207,6 +218,22 @@ impl KeyState {
         if n == 2 && self.keymap == Keymap::Vim {
             let a = self.pending[0].code;
             let b = self.pending[1].code;
+            // `Ctrl-W <key>` window commands. The CONTROL modifier rides the
+            // first key only; the second arrives plain (some terminals deliver
+            // Ctrl-W as the dedicated 0x17 byte, which crossterm maps to
+            // `Char('w')` + CONTROL either way).
+            if matches!(a, KeyCode::Char('w' | 'W'))
+                && self.pending[0].modifiers.contains(KeyModifiers::CONTROL)
+            {
+                return match b {
+                    KeyCode::Char('v') => Resolve::Action(Action::CompareOpen),
+                    KeyCode::Char('w') => Resolve::Action(Action::FocusNext),
+                    KeyCode::Char('h') => Resolve::Action(Action::FocusLeft),
+                    KeyCode::Char('l') => Resolve::Action(Action::FocusRight),
+                    KeyCode::Char('q') => Resolve::Action(Action::CompareClose),
+                    _ => Resolve::Unknown,
+                };
+            }
             return match (a, b) {
                 (KeyCode::Char('g'), KeyCode::Char('g')) => Resolve::Action(Action::GotoTop),
                 (KeyCode::Char('['), KeyCode::Char('b')) => Resolve::Action(Action::PrevBook),
@@ -287,6 +314,9 @@ impl KeyState {
             (KeyCode::Char('i'), true, _) => Resolve::Action(Action::JumpForward),
             (KeyCode::Char(':'), false, _) => Resolve::Action(Action::OpenGoto),
 
+            // `Ctrl-W` opens the window-command chord (Ctrl-W v / w / h / l / q).
+            (KeyCode::Char('w' | 'W'), true, _) => Resolve::Partial,
+
             // Multi-key starters.
             (KeyCode::Char('Z' | 'g' | '[' | ']'), false, true) => Resolve::Partial,
 
@@ -358,6 +388,56 @@ mod tests {
         let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
         assert_eq!(ks.handle(ev(KeyCode::Char('n'))), Some(Action::SearchNext));
         assert_eq!(ks.handle(ev(KeyCode::Char('N'))), Some(Action::SearchPrev));
+    }
+
+    /// Feed `Ctrl-W` then `second`, asserting the resolved window-command.
+    fn ctrl_w_then(second: char) -> Option<Action> {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        // First key is a partial chord starter → no action yet.
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            None,
+            "Ctrl-W alone is a chord starter"
+        );
+        ks.handle(ev(KeyCode::Char(second)))
+    }
+
+    #[test]
+    fn ctrl_w_window_commands_resolve() {
+        assert_eq!(ctrl_w_then('v'), Some(Action::CompareOpen));
+        assert_eq!(ctrl_w_then('w'), Some(Action::FocusNext));
+        assert_eq!(ctrl_w_then('h'), Some(Action::FocusLeft));
+        assert_eq!(ctrl_w_then('l'), Some(Action::FocusRight));
+        assert_eq!(ctrl_w_then('q'), Some(Action::CompareClose));
+    }
+
+    #[test]
+    fn ctrl_w_then_junk_resets_without_action() {
+        // An unmapped second key clears the chord buffer (no stuck state).
+        assert_eq!(ctrl_w_then('z'), None);
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        ks.handle(evm(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        ks.handle(ev(KeyCode::Char('z'))); // junk → reset
+        // Buffer is clear: a fresh 'j' moves the cursor as usual.
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('j'))),
+            Some(Action::CursorDown(1))
+        );
+    }
+
+    #[test]
+    fn ctrl_w_is_inert_in_turbo_mode() {
+        // Turbo mode has no vim chords, so Ctrl-W never starts one.
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Turbo);
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            None
+        );
+        // The following key is dispatched on its own, not as a chord tail.
+        assert_eq!(ks.handle(ev(KeyCode::Char('v'))), None);
     }
 
     #[test]

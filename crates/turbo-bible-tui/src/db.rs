@@ -197,6 +197,31 @@ impl Db {
             .expect("active_code is always installed by construction")
     }
 
+    /// The connection for an arbitrary installed translation. All
+    /// per-translation connections are open for the `Db`'s lifetime, so
+    /// reading a non-active translation (e.g. a second compare pane) is
+    /// just a `HashMap` lookup — no open/close.
+    fn conn_for(&self, code: &str) -> Result<&Connection> {
+        self.conns
+            .get(code)
+            .ok_or_else(|| anyhow!("translation {code:?} not installed"))
+    }
+
+    /// Re-point the active translation without the books/label/passage
+    /// probe that [`Self::try_switch_translation`] performs. Compare-pane
+    /// focus changes call this so the search / quote / Find paths (which
+    /// query the active connection) follow the focused pane.
+    ///
+    /// # Errors
+    /// Fails if `code` is not installed.
+    pub fn set_active(&mut self, code: &str) -> Result<()> {
+        if !self.conns.contains_key(code) {
+            bail!("translation {code:?} not installed");
+        }
+        self.active_code = code.to_string();
+        Ok(())
+    }
+
     #[must_use]
     pub fn translation(&self) -> &str {
         &self.active_code
@@ -508,7 +533,26 @@ impl Db {
     }
 
     pub fn load_passage(&self, book: &str, chapter: i64) -> Result<Passage> {
-        let conn = self.active_conn();
+        Self::load_passage_conn(self.active_conn(), &self.active_code, book, chapter)
+    }
+
+    /// Load a chapter from an arbitrary installed translation, regardless
+    /// of which one is currently active. Used to seed a compare pane in a
+    /// translation other than the focused one.
+    ///
+    /// # Errors
+    /// Fails if `code` is not installed, the `book_label` lookup returns
+    /// no row, or any verse/heading/footnote/xref query errors.
+    pub fn load_passage_for(&self, code: &str, book: &str, chapter: i64) -> Result<Passage> {
+        Self::load_passage_conn(self.conn_for(code)?, code, book, chapter)
+    }
+
+    fn load_passage_conn(
+        conn: &Connection,
+        code: &str,
+        book: &str,
+        chapter: i64,
+    ) -> Result<Passage> {
         let (book_name, book_abbrev) = {
             let mut stmt = conn.prepare_cached(
                 "SELECT COALESCE(full_name, name), abbreviation \
@@ -563,11 +607,11 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?
         };
 
-        let footnotes = self.load_footnotes(book, chapter)?;
-        let xrefs = self.load_xrefs(book, chapter)?;
+        let footnotes = Self::load_footnotes_conn(conn, book, chapter)?;
+        let xrefs = Self::load_xrefs_conn(conn, book, chapter)?;
 
         Ok(Passage {
-            translation: self.active_code.clone(),
+            translation: code.to_string(),
             book_code: book.to_string(),
             book_name,
             book_abbrev,
@@ -579,12 +623,12 @@ impl Db {
         })
     }
 
-    fn load_footnotes(&self, book: &str, chapter: i64) -> Result<Vec<Footnote>> {
+    fn load_footnotes_conn(conn: &Connection, book: &str, chapter: i64) -> Result<Vec<Footnote>> {
         // The `footnote` table is currently unpopulated — there's no
         // upstream source. The schema and loader stay so a future
         // ingest can light the K-popup body without further plumbing.
         let prefix = format!("{book}.{chapter}.");
-        let mut stmt = self.active_conn().prepare_cached(
+        let mut stmt = conn.prepare_cached(
             "SELECT id, verse_osis, kind, body FROM footnote
              WHERE verse_osis LIKE ?1 || '%'
              ORDER BY id",
@@ -602,16 +646,16 @@ impl Db {
         Ok(footnotes)
     }
 
-    fn load_xrefs(&self, book: &str, chapter: i64) -> Result<Vec<Xref>> {
+    fn load_xrefs_conn(conn: &Connection, book: &str, chapter: i64) -> Result<Vec<Xref>> {
         // The empty xrefs.db stand-in (seeded at install) has the same
         // schema as the real one, so this query returns Vec::new()
         // naturally when the user hasn't fetched the real DB yet. No
         // pre-check needed.
-        // LEFT JOIN to_book's label table (in the active translation's
+        // LEFT JOIN to_book's label table (in the passage translation's
         // own `main` schema) so the UI can render localised
         // abbreviations without holding the full `books` list. Falls
         // back to the OSIS code when a label is missing.
-        let mut stmt = self.active_conn().prepare_cached(
+        let mut stmt = conn.prepare_cached(
             "SELECT x.from_verse,
                     x.to_book,
                     COALESCE(bl.abbreviation, x.to_book) AS to_abbrev,
@@ -807,6 +851,42 @@ mod tests {
         );
         // No xrefs.db means an empty xref list — not an error.
         assert!(passage.xrefs.is_empty());
+    }
+
+    #[test]
+    fn load_passage_for_matches_active_and_leaves_it_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::install::ensure_installed(tmp.path()).expect("install");
+        let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+
+        // `load_passage_for(active, ..)` matches `load_passage(..)`.
+        let active = db.load_passage("JHN", 3).expect("active John 3");
+        let via_for = db.load_passage_for("en-kjv", "JHN", 3).expect("for John 3");
+        assert_eq!(active.verses.len(), via_for.verses.len());
+        assert_eq!(active.verses[15].text, via_for.verses[15].text);
+
+        // set_active round-trips and is observable via load_passage.
+        db.set_active("en-kjv").expect("set_active");
+        assert_eq!(db.translation(), "en-kjv");
+
+        // A second translation (when bundled) is readable via `_for` without
+        // changing the active one.
+        if install_extra(tmp.path(), "nb-1930.db.zst").expect("install_extra") {
+            db.add_translation("nb-1930").expect("add nb-1930");
+            let nb = db.load_passage_for("nb-1930", "JHN", 3).expect("nb John 3");
+            assert_eq!(nb.translation, "nb-1930");
+            assert_ne!(nb.verses[0].text, active.verses[0].text);
+            assert_eq!(db.translation(), "en-kjv", "_for must not change active");
+        }
+    }
+
+    #[test]
+    fn set_active_rejects_uninstalled() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::install::ensure_installed(tmp.path()).expect("install");
+        let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        assert!(db.set_active("zz-nope").is_err());
+        assert_eq!(db.translation(), "en-kjv", "failed set_active is a no-op");
     }
 
     #[test]
