@@ -22,9 +22,10 @@ pub fn is_poetic(book_code: &str, chapter: i64) -> bool {
     match book_code {
         // Wholly poetic books.
         "PSA" | "PRO" | "SNG" | "LAM" => true,
-        // Job: the prose prologue (1–2) and the narrative close folded into
-        // 42 stay prose; the poetic dialogue runs 3–41. Chapter granularity
-        // is the finest split we can make without line-level data.
+        // Job: the prose prologue (1–2) stays flush. The poetic dialogue runs
+        // 3:1–42:6, but chapter 42 also carries the prose epilogue (42:7–17),
+        // so at chapter granularity we keep all of 42 flush — better to drop
+        // the indent on Job's 6-verse reply than to indent the epilogue.
         "JOB" => (3..=41).contains(&chapter),
         _ => false,
     }
@@ -36,9 +37,11 @@ mod tests {
 
     #[test]
     fn wholly_poetic_books_are_poetic_in_every_chapter() {
-        for code in ["PSA", "PRO", "SNG", "LAM"] {
+        // (book, last chapter) — exercise the first and last real chapter of
+        // each so the classifier holds across the whole book, not just ch 1.
+        for (code, last) in [("PSA", 150), ("PRO", 31), ("SNG", 8), ("LAM", 5)] {
             assert!(is_poetic(code, 1), "{code} 1 should be poetic");
-            assert!(is_poetic(code, 119), "{code} 119 should be poetic");
+            assert!(is_poetic(code, last), "{code} {last} should be poetic");
         }
     }
 
