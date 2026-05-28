@@ -97,6 +97,10 @@ impl Widget for PassageView<'_> {
             (BorderType::Double, theme::black(), theme::bright_cyan())
         } else if self.is_focused {
             // Single-pane reading view: the original bright_white chrome.
+            // NB: this is `bright_white`, not yellow — see ui-review.md
+            // finding #4. The reading-pane chapter title can read warm on
+            // the blue desktop in some captures, but the slot is white;
+            // yellow remains reserved for verse numbers + the mode pill.
             (BorderType::Plain, theme::bright_white(), theme::blue())
         } else {
             (BorderType::Plain, theme::dark_grey(), theme::blue())
