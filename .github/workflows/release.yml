@@ -381,4 +381,8 @@ jobs:
           Triggered by release ${TAG} in mathiasror/turbo-bible."
           git push -u origin "bump-${TAG}"
           gh pr create --fill --base main
+          # Queue for auto-merge once the tap's `test-bot` check passes.
+          # Tap repo must have "Allow auto-merge" enabled and a branch
+          # protection rule requiring the check, otherwise this is a no-op.
+          gh pr merge --auto --squash --delete-branch
           echo "::endgroup::"
