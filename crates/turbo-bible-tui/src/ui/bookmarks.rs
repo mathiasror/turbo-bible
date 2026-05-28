@@ -177,8 +177,11 @@ impl BookmarksDialog {
             .unwrap_or(max_h)
             .clamp(7, max_h);
         let area = dialog::center(outer, w, h);
-        let title = format!("Bookmarks ({})", self.items.len());
-        let inner = dialog::draw_modal_dialog(outer, area, &title, buf);
+        // Title carries no parenthetical count — the `N saved verses`
+        // subtitle below the frame does that job in natural-language voice.
+        // Showing `Bookmarks (3)` and `3 saved verses` would double-count
+        // the same fact across two adjacent rows.
+        let inner = dialog::draw_modal_dialog(outer, area, "Bookmarks", buf);
 
         let bg = Style::new().bg(theme::blue());
         let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());

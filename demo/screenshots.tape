@@ -101,18 +101,27 @@ Escape
 Sleep 400ms
 
 # === 06 — Bookmarks dialog ==============================================
-# Seed three bookmarks in-place via single Down presses, then open list.
-# Cursor is still at John 3:16 from earlier.
+# Seed three bookmarks across three books so the dialog demonstrates
+# cross-book sorting and doesn't read as a single-passage demo dataset.
+# Cursor is still at John 3:16 from earlier — bookmark it, then Goto each
+# of the other two and bookmark there. Final list (canon order) reads:
+# Psalm 23:1, John 3:16, Romans 8:28.
 Type "b"
 Sleep 500ms
-Down
-Sleep 350ms
+Type ":"
+Sleep 150ms
+Type "Psalms 23:1"
+Sleep 400ms
+Enter
+Sleep 1000ms
 Type "b"
 Sleep 500ms
-Down
-Sleep 350ms
-Down
-Sleep 350ms
+Type ":"
+Sleep 150ms
+Type "Romans 8:28"
+Sleep 400ms
+Enter
+Sleep 1000ms
 Type "b"
 Sleep 500ms
 Type "M"
@@ -121,6 +130,15 @@ Screenshot "docs/screenshots/06-bookmarks.png"
 Sleep 400ms
 Escape
 Sleep 400ms
+
+# Return to John 3:16 so subsequent shots (08-visual, 10-12 compare) share
+# the recognisable verse used across the rest of the tour.
+Type ":"
+Sleep 150ms
+Type "John 3:16"
+Sleep 400ms
+Enter
+Sleep 1200ms
 
 # === 07 — Translations picker ===========================================
 Type "t"
