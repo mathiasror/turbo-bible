@@ -2274,8 +2274,6 @@ mod tests {
             code: code.to_string(),
             name: format!("Name {code}"),
             language: "en".to_string(),
-            license: String::new(),
-            attribution: String::new(),
         }
     }
 
