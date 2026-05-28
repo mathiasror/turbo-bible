@@ -56,6 +56,12 @@
             "command": "git status --porcelain 2>/dev/null | grep -qE '[.]rs$' && cargo fmt --all || true",
             "timeout": 30,
             "statusMessage": "cargo fmt"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/ui-change-check.sh",
+            "timeout": 5,
+            "statusMessage": "ui-change check"
           }
         ]
       }
