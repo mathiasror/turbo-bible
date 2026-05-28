@@ -55,6 +55,23 @@ Type "jo"
 Sleep 600ms
 Screenshot "docs/screenshots/02-splash-filter.png"
 Sleep 400ms
+
+# === 16 — Splash filter, no matches =====================================
+# Wipe the active "jo" filter, then type a query that resolves to zero
+# books — captures the FILTER mode's empty-state in the picker columns.
+# Restore "jo" before Enter so the subsequent Tab+Enter still lands on
+# John.
+Ctrl+U
+Sleep 200ms
+Type "xyzzy"
+Sleep 600ms
+Screenshot "docs/screenshots/16-splash-filter-empty.png"
+Sleep 400ms
+Ctrl+U
+Sleep 200ms
+Type "jo"
+Sleep 400ms
+
 Enter
 Sleep 200ms
 
@@ -76,9 +93,29 @@ Sleep 1200ms
 Screenshot "docs/screenshots/03-reading.png"
 Sleep 400ms
 
+# === 17 — Reading view without the References sidebar ===================
+# Tab toggles the sidebar in single-pane mode. At ~130 cols it's normally
+# auto-visible (shot 03); this captures the same passage with it folded
+# away. Tab back immediately so the rest of the tour keeps its sidebar.
+Tab
+Sleep 500ms
+Screenshot "docs/screenshots/17-reading-no-sidebar.png"
+Sleep 400ms
+Tab
+Sleep 300ms
+
 # === 04 — Goto dialog ===================================================
 Type ":"
 Sleep 200ms
+
+# === 18 — Goto opened with the current verse prefilled ==================
+# Goto opens with the active reference pre-populated; the first typed
+# character clears it (see goto.rs::handle). Capture the prefilled state
+# before any keystrokes, with its distinct "(type a reference, or Enter
+# to stay here)" preview hint.
+Screenshot "docs/screenshots/18-goto-prefilled.png"
+Sleep 400ms
+
 Type "Genesis 1:1"
 Sleep 500ms
 Screenshot "docs/screenshots/04-goto.png"
@@ -97,10 +134,39 @@ Down
 Sleep 300ms
 Screenshot "docs/screenshots/05-find.png"
 Sleep 400ms
+
+# === 19 — Find with no matches ==========================================
+# Wipe "love" (Find handles Backspace but not Ctrl-U — see find.rs::handle)
+# and type a query no verse contains. The dialog renders an italic "(no
+# matches)" line where the hits would otherwise be; that empty-state is
+# the surface under audit.
+Backspace
+Sleep 50ms
+Backspace
+Sleep 50ms
+Backspace
+Sleep 50ms
+Backspace
+Sleep 100ms
+Type "xyzzy"
+Sleep 800ms
+Screenshot "docs/screenshots/19-find-no-matches.png"
+Sleep 400ms
 Escape
 Sleep 400ms
 
-# === 06 — Bookmarks dialog ==============================================
+# === 20 — Bookmarks dialog, empty =======================================
+# Open Bookmarks before any have been seeded: the dialog adapts to its
+# compact "no bookmarks yet" layout (see bookmarks.rs — content_h = 3
+# when items.is_empty()), distinct from the populated grid in shot 06.
+Type "M"
+Sleep 800ms
+Screenshot "docs/screenshots/20-bookmarks-empty.png"
+Sleep 400ms
+Escape
+Sleep 400ms
+
+# === 06 — Bookmarks dialog (populated) ==================================
 # Seed three bookmarks across three books so the dialog demonstrates
 # cross-book sorting and doesn't read as a single-passage demo dataset.
 # Cursor is still at John 3:16 from earlier — bookmark it, then Goto each
@@ -221,14 +287,21 @@ Sleep 150ms
 Type "q"
 Sleep 800ms
 
-# === 12 — Cross-reference opened in a split =============================
-# `K` opens the footnote / cross-reference popup; `s` opens the highlighted
-# cross-reference beside the current verse (instead of `Enter`, which would
-# replace it). Result: the source verse (left) and the referenced passage
-# (right), same translation — the "pull a referenced verse up next to it"
-# flow.
+# === 21 — Footnote / cross-reference popup ==============================
+# `K` opens the popup itself — a vertical list of cross-references for the
+# current verse (John 3:16) with a hint footer. Capture this state before
+# the `s` keystroke that turns it into shot 12's split.
 Type "K"
 Sleep 800ms
+Screenshot "docs/screenshots/21-footnote.png"
+Sleep 400ms
+
+# === 12 — Cross-reference opened in a split =============================
+# Continuing from the open popup (shot 21): `s` opens the highlighted
+# cross-reference beside the current verse, instead of `Enter`, which
+# would replace it. Result: the source verse (left) and the referenced
+# passage (right), same translation — the "pull a referenced verse up
+# next to it" flow.
 Type "s"
 Sleep 1300ms
 Screenshot "docs/screenshots/12-xref-split.png"
