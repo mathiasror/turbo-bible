@@ -286,6 +286,12 @@ impl KeyState {
         let ctrl = m.contains(KeyModifiers::CONTROL);
         let plain = m.is_empty() || m == KeyModifiers::SHIFT;
 
+        #[allow(
+            clippy::match_same_arms,
+            reason = "two distinct chord families both stage as Partial — keeping the \
+                      arms separate documents the classification (Ctrl-W window-command \
+                      starter vs. plain vim multi-key starters: gg / [b / ]b / ZZ / ZQ)"
+        )]
         match (c, ctrl, plain) {
             (KeyCode::Char('j'), false, true) => {
                 Resolve::Action(Action::CursorDown(self.count_or(1)))
