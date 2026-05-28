@@ -1,5 +1,12 @@
 //! Top-level frame layout: menu bar / body / status bar.
 
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "pub(crate) documents crate-internal intent in a binary crate \
+              with an empty lib.rs; the lint's suggestion to use bare `pub` \
+              is the wrong direction for our convention"
+)]
+
 pub mod bookmarks;
 pub mod desktop;
 pub mod dialog;

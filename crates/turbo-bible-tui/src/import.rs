@@ -13,6 +13,13 @@
 //!
 //! [`turbo-bible-data`]: ../../turbo-bible-data/index.html
 
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "pub(crate) documents crate-internal intent in a binary crate \
+              with an empty lib.rs; the lint's suggestion to use bare `pub` \
+              is the wrong direction for our convention"
+)]
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
