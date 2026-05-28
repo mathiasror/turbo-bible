@@ -105,7 +105,7 @@ Sleep 400ms
 # cross-book sorting and doesn't read as a single-passage demo dataset.
 # Cursor is still at John 3:16 from earlier — bookmark it, then Goto each
 # of the other two and bookmark there. Final list (canon order) reads:
-# Psalm 23:1, John 3:16, Romans 8:28.
+# Psalms 23:1, John 3:16, Romans 8:28.
 Type "b"
 Sleep 500ms
 Type ":"

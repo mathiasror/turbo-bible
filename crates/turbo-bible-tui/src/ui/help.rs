@@ -423,6 +423,46 @@ mod tests {
         }
     }
 
+    /// The `Note(text)` row variant — currently the "Refs sidebar hides while
+    /// comparing" hint under Compare panes — must render in `light_grey` so it
+    /// reads as a sub-comment, never `bright_white` (where it would mimic an
+    /// unkeyed entry) or yellow (which would leak the verse-number signal into
+    /// the help chrome).
+    #[test]
+    fn note_row_renders_in_light_grey_and_carries_no_yellow() {
+        let dlg = HelpDialog::new();
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf);
+
+        // "Refs" is the only capital-R word in the body (other rows use
+        // lowercase 'r' in "repeat"), so its 'R' uniquely identifies the
+        // Note row.
+        let mut note_y = None;
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if buf[(x, y)].symbol() == "R" {
+                    note_y = Some(y);
+                }
+            }
+        }
+        let y = note_y.expect("Note row not found in rendered buffer");
+
+        let light_grey = theme::light_grey();
+        let yellow = theme::yellow();
+        for x in area.left()..area.right() {
+            let c = &buf[(x, y)];
+            assert_ne!(c.fg, yellow, "Note row leaked yellow at col {x}");
+            if c.symbol().chars().next().is_some_and(char::is_alphabetic) {
+                assert_eq!(
+                    c.fg, light_grey,
+                    "Note row glyph at col {x} renders in {:?}, expected light_grey",
+                    c.fg
+                );
+            }
+        }
+    }
+
     #[test]
     fn scroll_thumb_drawn_when_help_overflows() {
         // A short terminal forces the cheat sheet to overflow; the right border
