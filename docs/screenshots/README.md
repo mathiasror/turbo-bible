@@ -87,8 +87,9 @@ present:
 - **State:** `/` pressed → filter input visible, filter `jo` typed →
   John, Joshua, Job narrow the columns.
 - **Intentional:**
-  - `-- FILTER --` pill in the status bar (cyan, not yellow — VISUAL
-    gets the high-contrast yellow pill, FILTER and NORMAL share cyan).
+  - `-- FILTER --` pill in the status bar (yellow on dark-grey —
+    same treatment as NORMAL / VISUAL; mode pills are one of the
+    sanctioned yellow uses per the yellow-slot rule).
   - Filter input field rendered as a sunken well at the top of the
     picker area.
 
