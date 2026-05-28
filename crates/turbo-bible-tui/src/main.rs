@@ -718,27 +718,31 @@ fn download_outcome(code: &str, result: &DownloadResult) -> DownloadMessages {
 fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>) -> Result<()> {
     use std::sync::mpsc::TryRecvError;
 
-    // Borrow only long enough to peek the channel; release before we mutate
-    // `state.download` so the take below doesn't alias the receiver.
-    let recv = match &state.download {
+    // Peek first: if no job is in flight, or the job is still running,
+    // return without consuming the slot.
+    let recv = match state.download.as_ref() {
         Some(job) => job.rx.try_recv(),
         None => return Ok(()),
     };
+    if matches!(recv, Err(TryRecvError::Empty)) {
+        return Ok(());
+    }
+    // The job has produced a terminal value (or its worker has died);
+    // take it by value so the rest of the function moves freely.
+    let job = state.download.take().expect(
+        "guarded by the as_ref() above — `state.download` cannot have transitioned to None \
+         between the peek and the take on a single-threaded event loop",
+    );
     let result = match recv {
-        Err(TryRecvError::Empty) => return Ok(()), // still downloading
-        Ok(Ok(())) => {
-            // Fetch landed the `.db`; register the connection (main-thread only).
-            match db.add_translation(&state.download.as_ref().expect("download present").code) {
-                Ok(()) => DownloadResult::Ready,
-                Err(e) => DownloadResult::RegisterFailed(e),
-            }
-        }
+        Ok(Ok(())) => match db.add_translation(&job.code) {
+            Ok(()) => DownloadResult::Ready,
+            Err(e) => DownloadResult::RegisterFailed(e),
+        },
         Ok(Err(e)) => DownloadResult::FetchFailed(e),
         // Worker dropped the sender without a value — it panicked.
         Err(TryRecvError::Disconnected) => DownloadResult::WorkerExited,
+        Err(TryRecvError::Empty) => unreachable!("returned early above"),
     };
-
-    let job = state.download.take().expect("download present");
     let DownloadMessages { warning, transient } = download_outcome(&job.code, &result);
     // Keep the stderr trail (warnings) and give immediate in-TUI feedback
     // (transient) — the async fetch removed the old synchronous freeze that
