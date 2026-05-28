@@ -2208,7 +2208,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "time",
  "toml",
  "walkdir",
  "zstd",
