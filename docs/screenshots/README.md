@@ -138,6 +138,8 @@ present:
   - `bright_cyan` highlight band across the selected verses.
   - VISUAL pill rendered yellow (high-contrast, deliberately louder than
     NORMAL/FILTER — see `statusbar.rs::render`).
+  - Footer hints read `Copy  Bookmark  Cancel` — a single exit verb
+    (PR #28 collapsed the prior `Exit` / `Cancel` duplicate pair).
 - **Related:** `15-poetry-visual.png` (same gesture across poetry).
 
 ### `13-poetry.png` — Reading, poetry indent (Psalm 119)
@@ -227,16 +229,19 @@ present:
 - **Intentional:**
   - Compact 3-row dialog body (`content_h = 3` — see
     `bookmarks.rs::render`).
-  - Title `Bookmarks (0)` — the count is part of the title.
-  - **Watch for:** is the empty state genuinely useful, or just empty?
-    A "Press `b` on a verse to add one" line would be helpful — its
-    absence is a candidate finding.
+  - Title row reads `Bookmarks`; the subtitle row reads
+    `no bookmarks yet — press b on a verse to add` (the count moved
+    to the subtitle as part of PR #30's header dedupe).
 
 ### `06-bookmarks.png` — Bookmarks dialog, populated
 
 - **Surface:** same as 20.
-- **State:** Three bookmarks seeded in canon order.
+- **State:** Three bookmarks seeded across three books (Psalms 23:1,
+  John 3:16, Romans 8:28) in canon order — demonstrates cross-book
+  sorting rather than a single-passage demo dataset.
 - **Intentional:**
+  - Title row reads `Bookmarks`; subtitle row carries the count
+    (`3 saved verses`).
   - Each cell is a reference row (cyan) + a preview row of the verse
     text (light grey unless selected).
   - Selected cell uses the `list_focus_bg` slab across both rows;
@@ -260,6 +265,14 @@ present:
 - **State:** Help opened via `:help`.
 - **Intentional:**
   - Multi-column key reference; densest dialog in the app.
+  - Section headings (`Movement`, `Reading view`, `Compare panes`,
+    etc.) render in `mid_cyan` + BOLD with a blank-row gap above each
+    non-first section (PR #31 — three hierarchy levers stacked:
+    weight, color, whitespace).
+  - The Compare panes section ends with a muted-grey `Note` row
+    (`Refs sidebar hides while comparing; use K for cross-refs.`),
+    which surfaces what used to be the persistent compare-mode status
+    hint (PR #28).
   - Drop shadow + frame discipline as elsewhere.
 - **Watch for:** legibility at this density. Help is a once-a-week
   dialog so dense is fine, but unreadable is not.
