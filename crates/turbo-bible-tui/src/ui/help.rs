@@ -29,14 +29,17 @@ pub enum HelpOutcome {
     Cancel,
 }
 
-/// Row-type for the help table; either a section heading or a
-/// `(keys, description)` entry. Module-level so `render` doesn't trip
+/// Row-type for the help table: a section heading, a `(keys, description)`
+/// entry, or a free-text note for context that doesn't bind to a key (e.g.
+/// "refs sidebar hidden while comparing" — review C-2 moved that hint out of
+/// the chrome). Module-level so `render` doesn't trip
 /// `clippy::items_after_statements`.
 enum Row {
     Section(&'static str),
     Entry(&'static str, &'static str),
+    Note(&'static str),
 }
-use Row::{Entry, Section};
+use Row::{Entry, Note, Section};
 
 /// Canonical, source-of-truth help table. Lifted to module scope so a
 /// unit test can walk it and assert removed keys (e.g. `T`) don't sneak
@@ -63,6 +66,7 @@ const ROWS: &[Row] = &[
     Entry("Ctrl-W w", "cycle focus between panes"),
     Entry("Ctrl-W h  Ctrl-W l", "focus pane left / right"),
     Entry("Ctrl-W q", "close the focused pane"),
+    Note("Refs sidebar hides while comparing; use K for cross-refs."),
     Section("Dialogs"),
     Entry("F1", "this help"),
     Entry("F2  :", "Goto reference (e.g. John 3:16)"),
@@ -181,6 +185,10 @@ impl HelpDialog {
         // For *subsequent* sections we add one blank row above each heading
         // (the third hierarchy lever, whitespace) so the eye lands on the
         // heading first when scanning.
+        // Notes (free-text context lines) render in muted grey to read as a
+        // sub-comment under the section's key rows, distinct from the
+        // bright_white description column.
+        let note = Style::new().fg(theme::light_grey()).bg(theme::blue());
         let mut seen_section = false;
         for row in ROWS {
             match row {
@@ -205,6 +213,13 @@ impl HelpDialog {
                         Span::styled("    ", bg),
                         Span::styled(format!("{k:<22}"), key),
                         Span::styled((*desc).to_string(), label),
+                    ]));
+                    is_section.push(false);
+                }
+                Note(text) => {
+                    content.push(Line::from(vec![
+                        Span::styled("    ", bg),
+                        Span::styled((*text).to_string(), note),
                     ]));
                     is_section.push(false);
                 }

@@ -1321,16 +1321,14 @@ fn open_compare_pane(
     let mut pane = Pane::new(code.to_string(), seed_pos, passage, cursor);
     pane.origin_label = origin;
     pane.clamp_cursor();
-    // One-time orientation hint on the 1 -> 2 transition (the first time the
-    // reader enters compare mode), not on every subsequent split.
-    let entering_compare = state.panes.len() == 1;
     state.panes.push(pane);
     state.focus = state.panes.len() - 1;
-    if entering_compare {
-        state.set_transient("References sidebar hidden while comparing — press K for notes");
-    }
     // The sidebar shares the body width the new pane needs; suppress it
     // while comparing (restored from `sidebar_pref` when the split closes).
+    // The "References sidebar hidden while comparing" hint that used to fire
+    // here as a 2s transient lingered into every compare-mode screenshot
+    // (review C-2: it displaced the mode pill's `2/2` focus indicator); it
+    // now lives in F1 help under the Compare panes section instead.
     state.show_sidebar = false;
     state.sync_focus_to_db(ctx.db)?;
     Ok(())
@@ -1837,6 +1835,11 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
     ]
 }
 
+// VISUAL footer: act-on-selection verbs (Copy, Bookmark) plus a single
+// exit row. `V` also leaves VISUAL (vim toggle) but advertising it next to
+// `Esc Cancel` reads as duplicate exit verbs — the review's `shot-08`
+// finding. Esc is the app-wide exit key (Goto, Find, dialogs all use
+// `Esc cancel` / `Esc close`), so it's the one we surface here.
 const STATUS_VISUAL: &[Shortcut<'static>] = &[
     Shortcut {
         key: "y",
@@ -1845,10 +1848,6 @@ const STATUS_VISUAL: &[Shortcut<'static>] = &[
     Shortcut {
         key: "b",
         action: "Bookmark",
-    },
-    Shortcut {
-        key: "V",
-        action: "Exit",
     },
     Shortcut {
         key: "Esc",
