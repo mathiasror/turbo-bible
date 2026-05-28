@@ -70,7 +70,7 @@ moves the cursor down five entries; `10G` jumps to the tenth book.
 Press `/` to enter **FILTER** mode. Type to narrow both columns
 simultaneously; the match is a case-insensitive substring against the
 book's name, abbreviation, or OSIS code. `Enter` exits filter mode keeping
-the narrowed view; `Esc` clears the filter; `Ctrl-U` wipes the input. From
+the narrowed view; `Esc` cancels the filter; `Ctrl-U` clears the input. From
 filter mode, `Enter` does **not** open the focused book — it just exits
 filter mode. Press `Enter` again (now in NORMAL mode) to actually open.
 

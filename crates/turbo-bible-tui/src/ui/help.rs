@@ -163,25 +163,45 @@ impl HelpDialog {
             .fg(theme::yellow())
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
-        // Section headers: cyan but *not* bold. The bold-yellow key column is
-        // the primary scan target; dropping bold here a half-step keeps the
-        // headers as quiet grouping labels instead of buzzing against the keys.
-        let header = Style::new().fg(theme::cyan()).bg(theme::blue());
+        // Section headers: `mid_cyan` + BOLD — the rubric §1 hierarchy levers
+        // (weight > color > whitespace) say a section heading should clearly
+        // outrank the rows below it. `mid_cyan` is the project's structural-
+        // label tier (per the yellow-slot rule: yellow stays reserved for
+        // verse numbers + the mode pill). The bold weight is what does the
+        // hierarchy work; the color just tags the role. See ui-review.md
+        // finding #6.
+        let header = Style::new()
+            .fg(theme::mid_cyan())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
 
         let mut content: Vec<Line<'static>> = Vec::new();
         // Parallel to `content`: marks which rows are section headers, so the
         // scroll logic can keep a header glued to its first entry.
         let mut is_section: Vec<bool> = Vec::new();
-        // No leading blank row: the cheat-sheet is 25 rows, which then fits a
-        // standard ~32-row terminal without scrolling — so the scroll arrows
-        // stay suppressed (see the overflow gate below) instead of a phantom ▲.
+        // No leading blank row: the cheat-sheet fits a standard ~32-row
+        // terminal without scrolling — so the scroll arrows stay suppressed
+        // (see the overflow gate below) instead of showing a phantom ▲.
+        // For *subsequent* sections we add one blank row above each heading
+        // (the third hierarchy lever, whitespace) so the eye lands on the
+        // heading first when scanning.
         // Notes (free-text context lines) render in muted grey to read as a
         // sub-comment under the section's key rows, distinct from the
         // bright_white description column.
         let note = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        let mut seen_section = false;
         for row in ROWS {
             match row {
                 Section(name) => {
+                    if seen_section {
+                        // Blank row above each non-first section. Tagged as
+                        // a non-section row so `keep_with_next`'s
+                        // orphan-guard treats the *heading* (not the gap)
+                        // as the row to keep with its first entry.
+                        content.push(Line::from(Span::styled("", bg)));
+                        is_section.push(false);
+                    }
+                    seen_section = true;
                     content.push(Line::from(vec![
                         Span::styled("  ", bg),
                         Span::styled((*name).to_string(), header),
@@ -347,10 +367,18 @@ mod tests {
 
     #[test]
     fn keep_with_next_never_orphans_a_section_header() {
-        // Build `is_section` exactly as `render` does: a leading blank, then
-        // one flag per ROW.
+        // Build `is_section` exactly as `render` does: a blank row before
+        // each *non-first* section heading (tagged false so the orphan-guard
+        // protects the heading, not the gap), then one flag per ROW.
         let mut is_section = Vec::new();
+        let mut seen_section = false;
         for row in ROWS {
+            if matches!(row, Section(_)) {
+                if seen_section {
+                    is_section.push(false);
+                }
+                seen_section = true;
+            }
             is_section.push(matches!(row, Section(_)));
         }
         let len = is_section.len();

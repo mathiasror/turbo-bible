@@ -717,8 +717,8 @@ impl SplashView {
             SplashMode::Filter => &[
                 ("type ", "to filter  "),
                 ("Enter ", "done  "),
-                ("Esc ", "clear  "),
-                ("Ctrl-U ", "wipe  "),
+                ("Esc ", "cancel  "),
+                ("Ctrl-U ", "clear  "),
             ],
         };
         lines.push(assemble_footer(

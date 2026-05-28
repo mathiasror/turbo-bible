@@ -190,7 +190,7 @@ the right.
 
 **FILTER**:
 
-- Type to narrow the list; `Enter` accepts, `Esc` clears, `Ctrl-U` wipes.
+- Type to narrow the list; `Enter` accepts, `Esc` cancels, `Ctrl-U` clears the input.
 
 The **References sidebar** sits to the right of the reading pane and
 auto-follows the cursor verse. It shows the parallel-passage refs, footnote
