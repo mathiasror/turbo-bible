@@ -22,7 +22,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, anyhow};
 use sha2::{Digest, Sha256};
 
-use crate::manifest::{TranslationManifestEntry, XREFS, XrefsManifestEntry};
+use crate::manifest::TranslationManifestEntry;
 
 /// Base URL the binary fetches from. Override with `TB_RELEASE_URL`
 /// for testing against a local mirror or a pre-release tag.
@@ -59,29 +59,6 @@ pub fn translation(translations_dir: &Path, code: &str) -> Result<()> {
         &dest,
     )
     .with_context(|| format!("fetch translation {}", entry.code))
-}
-
-/// Download the cross-references DB and install it as
-/// `<translations_dir>/xrefs.db`. No-op if the real DB is already in
-/// place. The install-time empty stand-in is overwritten in place.
-#[allow(
-    dead_code,
-    reason = "wired in once the K-popup learns to fetch xrefs on demand"
-)]
-pub fn xrefs(translations_dir: &Path) -> Result<()> {
-    xrefs_with(translations_dir, &XREFS)
-}
-
-fn xrefs_with(translations_dir: &Path, entry: &XrefsManifestEntry) -> Result<()> {
-    let dest = translations_dir.join("xrefs.db");
-    fetch_and_install(
-        translations_dir,
-        entry.file,
-        entry.sha256,
-        entry.decompressed_size,
-        &dest,
-    )
-    .context("fetch xrefs.db")
 }
 
 fn fetch_and_install(
@@ -234,17 +211,6 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
-}
-
-/// Compute the URL the binary would fetch for `code`. Useful for
-/// surfacing "you can download this manually from <url>" hints in
-/// the UI when network is unreachable.
-#[allow(
-    dead_code,
-    reason = "wired in once we add an offline-error dialog with a manual-download hint"
-)]
-pub fn translation_url(code: &str) -> Option<String> {
-    TranslationManifestEntry::by_code(code).map(|t| format!("{}/{}", base_url(), t.file))
 }
 
 #[cfg(test)]

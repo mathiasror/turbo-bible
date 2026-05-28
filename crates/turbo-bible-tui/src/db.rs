@@ -27,17 +27,6 @@ pub struct TranslationInfo {
     /// Read by `merge_picker_entries` to label on-disk translations that
     /// aren't in the static manifest (e.g. `turbo-bible import` output).
     pub language: String,
-    #[expect(
-        dead_code,
-        reason = "roadmap: shown by the Translations picker's details panel"
-    )]
-    pub license: String,
-    #[expect(
-        dead_code,
-        reason = "roadmap: surfaced by a future \"About this translation\" view; \
-                  non-empty for CC-BY-family entries (e.g. pt-blivre)"
-    )]
-    pub attribution: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -81,13 +70,6 @@ pub struct Heading {
 
 #[derive(Debug, Clone)]
 pub struct Footnote {
-    #[expect(
-        dead_code,
-        reason = "roadmap: keyed by a future xref-joining ingest. The column \
-                  stays in the schema; the Rust field stays so a future loader \
-                  doesn't need to re-thread it through every caller."
-    )]
-    pub id: String,
     pub verse_osis: String,
     pub kind: String, // 'f' or 'x' — historical; today only 'f' is ingested
     pub body: String,
@@ -109,14 +91,6 @@ pub struct Xref {
     pub to_chapter: i64,
     pub to_verse_start: i64,
     pub to_verse_end: i64,
-    #[expect(
-        dead_code,
-        reason = "Drives the load-order ORDER BY votes DESC so consumers \
-                  see top-ranked xrefs first; the value isn't read directly \
-                  today but stays on the struct so a future \"show vote score\" \
-                  UI affordance doesn't need a schema change."
-    )]
-    pub votes: i64,
 }
 
 impl Xref {
@@ -414,20 +388,13 @@ impl Db {
 }
 
 fn read_meta(conn: &Connection) -> Result<TranslationInfo> {
-    conn.query_row(
-        "SELECT code, name, language, license, attribution \
-         FROM meta LIMIT 1",
-        [],
-        |r| {
-            Ok(TranslationInfo {
-                code: r.get(0)?,
-                name: r.get(1)?,
-                language: r.get(2)?,
-                license: r.get(3)?,
-                attribution: r.get(4)?,
-            })
-        },
-    )
+    conn.query_row("SELECT code, name, language FROM meta LIMIT 1", [], |r| {
+        Ok(TranslationInfo {
+            code: r.get(0)?,
+            name: r.get(1)?,
+            language: r.get(2)?,
+        })
+    })
     .map_err(Into::into)
 }
 
@@ -697,17 +664,16 @@ impl Db {
         // ingest can light the K-popup body without further plumbing.
         let prefix = format!("{book}.{chapter}.");
         let mut stmt = conn.prepare_cached(
-            "SELECT id, verse_osis, kind, body FROM footnote
+            "SELECT verse_osis, kind, body FROM footnote
              WHERE verse_osis LIKE ?1 || '%'
              ORDER BY id",
         )?;
         let footnotes: Vec<Footnote> = stmt
             .query_map(params![prefix], |r| {
                 Ok(Footnote {
-                    id: r.get(0)?,
-                    verse_osis: r.get(1)?,
-                    kind: r.get(2)?,
-                    body: r.get(3)?,
+                    verse_osis: r.get(0)?,
+                    kind: r.get(1)?,
+                    body: r.get(2)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -729,8 +695,7 @@ impl Db {
                     COALESCE(bl.abbreviation, x.to_book) AS to_abbrev,
                     x.to_chapter,
                     x.to_verse_start,
-                    x.to_verse_end,
-                    x.votes
+                    x.to_verse_end
              FROM xrefs.xref x
              LEFT JOIN book_label bl
                ON bl.book = x.to_book
@@ -746,7 +711,6 @@ impl Db {
                     to_chapter: r.get(3)?,
                     to_verse_start: r.get(4)?,
                     to_verse_end: r.get(5)?,
-                    votes: r.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
