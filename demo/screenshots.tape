@@ -25,6 +25,13 @@ Set TypingSpeed  20ms
 Hide
 Type "export XDG_CONFIG_HOME=$(mktemp -d)"
 Enter
+# Pin the splash "verse of the day". quote.rs::day_index() reads
+# SOURCE_DATE_EPOCH (the reproducible-builds standard, integer seconds since
+# the Unix epoch) when set, so the daily verse is fixed instead of tracking
+# the calendar — keeps the three splash captures byte-reproducible across
+# re-renders on different days. The value below lands in mid-2024.
+Type "export SOURCE_DATE_EPOCH=1717000000"
+Enter
 Type "mkdir -p docs/screenshots"
 Enter
 Type "clear"
