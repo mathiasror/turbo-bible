@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <!-- ============= SEO ============= -->
-<meta name="description" content="Offline, keyboard-driven Bible reader for the terminal. Written in Rust — Vim keybindings, instant full-text search, 11 translations, every cross-reference.">
+<meta name="description" content="Offline, keyboard-driven Bible reader for the terminal. Written in Rust — Vim keybindings, instant full-text search, 11 translations side by side, every cross-reference, zero telemetry.">
 <meta name="author" content="Turbo Bible">
 <meta name="theme-color" content="#0000aa">
 <meta name="robots" content="index, follow, max-image-preview:large">
@@ -44,7 +44,7 @@
       "name": "Turbo Bible",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Linux, macOS, Windows",
-      "description": "A keyboard-driven Bible reader for the terminal, written in Rust. Vim keybindings, instant full-text search, eleven translations across seven languages, every cross-reference, offline-first, zero telemetry.",
+      "description": "A keyboard-driven Bible reader for the terminal, written in Rust. Vim keybindings, instant full-text search, eleven translations across seven languages compared side by side, every cross-reference, offline-first, zero telemetry.",
       "url": "https://turbo.bible/",
       "image": "https://turbo.bible/og-image.png",
       "screenshot": "https://turbo.bible/og-image.png",
@@ -60,7 +60,10 @@
         "Vim keybindings",
         "Instant full-text search",
         "Eleven translations across seven languages",
+        "Compare translations side by side",
         "Cross-references",
+        "Import your own translation",
+        "Bookmarks, visual selection, clipboard",
         "Offline-first, zero telemetry"
       ],
       "author": {
@@ -165,10 +168,21 @@
     <p class="caption">// real capture — verse cursor, cross-reference sidebar, John 3:16 in KJV.</p>
   </section>
 
+  <!-- ==================== COMPARE ==================== -->
+  <section class="panel showcase" data-screen-label="04 Compare">
+    <div class="title">Compare panes</div>
+    <span class="right-tag">Ctrl-W · side by side</span>
+
+    <img class="shot" src="compare.png" width="1200" height="645" loading="lazy"
+         alt="Turbo Bible comparing John 3 across two translations side by side: the King James Version in the left pane and the Spanish Reina-Valera 1909 in the focused right pane, each scrolling and searching independently.">
+
+    <p class="caption">// John 3:16 in KJV and Reina-Valera 1909 — two independent panes, one keystroke apart.</p>
+  </section>
+
   <!-- ==================== FEATURES ==================== -->
-  <section class="panel" data-screen-label="04 Features">
+  <section class="panel" data-screen-label="05 Features">
     <div class="title">What it does</div>
-    <span class="right-tag">six features, all canonical</span>
+    <span class="right-tag">eight features, all canonical</span>
 
     <div class="features-grid">
       <div class="feat">
@@ -188,24 +202,34 @@
       </div>
       <div class="feat">
         <div class="num">// 04</div>
-        <h3>Cross-references, built in.</h3>
-        <p>Every verse links to the verses it quotes or echoes. Two keystrokes to follow Paul back to the prophets. Two more to come home.</p>
+        <h3>Compare, side by side.</h3>
+        <p><code>Ctrl-W&nbsp;v</code> splits the screen into independent panes — KJV beside the Vulgate, or a cross-reference beside the verse that cites it. Each pane scrolls, searches, and selects on its own; vim window chords move between them.</p>
       </div>
       <div class="feat">
         <div class="num">// 05</div>
-        <h3>Offline. No telemetry. No accounts.</h3>
-        <p>Your reading stays between you and the page. The app works on a plane, in a cave, in a fallout shelter, on a network with no internet.</p>
+        <h3>Cross-references, built in.</h3>
+        <p>Every verse links to the verses it quotes or echoes. Two keystrokes to follow Paul back to the prophets. Two more to come home.</p>
       </div>
       <div class="feat">
         <div class="num">// 06</div>
         <h3>Bookmarks, visual selection, clipboard.</h3>
         <p>Press <code>b</code> to bookmark a verse, <code>v</code>/<code>V</code> to select a range, <code>y</code> to copy verse + reference. Quotes show up in your notes already attributed.</p>
       </div>
+      <div class="feat">
+        <div class="num">// 07</div>
+        <h3>Bring your own translation.</h3>
+        <p>Got a public-domain version we don't ship — or your own study text? <code>turbo-bible import</code> turns a JSON file into a first-class translation: searchable, selectable, indistinguishable from the rest. No data pipeline, no recompile.</p>
+      </div>
+      <div class="feat">
+        <div class="num">// 08</div>
+        <h3>Offline. No telemetry. No accounts.</h3>
+        <p>Your reading stays between you and the page. The app works on a plane, in a cave, in a fallout shelter, on a network with no internet. The only thing it ever checks is whether there's a newer version — see below.</p>
+      </div>
     </div>
   </section>
 
   <!-- ==================== MANIFESTO ==================== -->
-  <section class="panel manifesto" data-screen-label="05 Manifesto">
+  <section class="panel manifesto" data-screen-label="06 Manifesto">
     <div class="title">Why a TUI?</div>
     <span class="right-tag">a short answer, a long lineage</span>
 
@@ -224,7 +248,7 @@
   </section>
 
   <!-- ==================== QUICK START ==================== -->
-  <section class="panel" data-screen-label="06 Quick start" id="quickstart">
+  <section class="panel" data-screen-label="07 Quick start" id="quickstart">
     <div class="title">Quick start</div>
     <span class="right-tag">three keystrokes from clean shell to Psalm 23</span>
 
@@ -257,7 +281,7 @@
   </section>
 
   <!-- ==================== FAQ ==================== -->
-  <section class="panel" data-screen-label="07 FAQ">
+  <section class="panel" data-screen-label="08 FAQ">
     <div class="title">FAQ</div>
     <span class="right-tag">frequently asked</span>
 
@@ -278,10 +302,26 @@
       <div class="faq-item">
         <h3 class="faq-q"><span class="marker">Q.</span><span>Can I add a custom translation?</span></h3>
         <p class="faq-a">
-          Yes. Any text in the bundled SQLite schema works. The docs cover the
-          schema and a converter script for the most common public formats. If
-          it's already in a common Bible-database format, it's a one-command
-          import. If it's in a binder in your closet, scan it in like a pilgrim.
+          Yes. <code>turbo-bible import yours.json --code xx-myver --name "My
+          Version" --language xx</code> builds a SQLite database and installs it
+          alongside the bundled eleven — searchable and selectable like the
+          rest, no data pipeline or recompile. The input is a simple
+          books → chapters → verses JSON keyed by OSIS code; the docs cover the
+          full format and schema. If it's in a binder in your closet, scan it in
+          like a pilgrim.
+        </p>
+      </div>
+      <div class="faq-item">
+        <h3 class="faq-q"><span class="marker">Q.</span><span>Does it phone home?</span></h3>
+        <p class="faq-a">
+          No telemetry, no analytics, no accounts — ever. The one network
+          call it makes is an optional, once-a-day glance at GitHub's releases
+          page to see whether a newer version exists. If one does, the splash
+          shows you the upgrade command for however you installed
+          (<code>brew upgrade</code>, <code>cargo install --force</code>, or the
+          curl one-liner) and nothing else — it never downloads or replaces
+          itself behind your back. Silence it with <code>[updates] check =
+          false</code> or <code>TB_NO_UPDATE_CHECK=1</code>.
         </p>
       </div>
       <div class="faq-item">
@@ -306,7 +346,7 @@
   </section>
 
   <!-- ==================== FINAL CTA ==================== -->
-  <section class="panel final-cta" data-screen-label="08 Final CTA">
+  <section class="panel final-cta" data-screen-label="09 Final CTA">
     <div class="title">About</div>
     <span class="right-tag">press Esc to close</span>
 

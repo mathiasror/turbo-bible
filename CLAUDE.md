@@ -20,8 +20,9 @@ Cargo workspace under `crates/`:
   `just bundle-translations` so the TUI's `include_bytes!` macros
   have something to embed.
 
-`website/` is a hand-authored static site (no SSG, no build step);
-GitHub Pages deploy not wired up yet.
+`website/` is a hand-authored static site (no SSG, no build step),
+deployed to GitHub Pages by `.github/workflows/pages.yml` on every push
+to `main` that touches `website/**` (served at turbo.bible).
 
 ## Bundle dataflow
 
