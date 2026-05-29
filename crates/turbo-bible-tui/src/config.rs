@@ -15,6 +15,9 @@
 //! show_daily_quote   = true
 //! max_width          = 80
 //!
+//! [updates]
+//! check = true   # notify-only update check on the splash (≤ once / 24h)
+//!
 //! [theme]
 //! blue         = "#0000aa"
 //! cyan         = "#00aaaa"
@@ -55,6 +58,7 @@ pub struct Config {
     pub default_translation: Option<String>,
     pub input: InputConfig,
     pub reading: ReadingConfig,
+    pub updates: UpdatesConfig,
     pub theme: ThemeConfig,
     pub keys: KeysConfig,
 }
@@ -113,6 +117,24 @@ impl Default for ReadingConfig {
 /// pane to something unusable.
 const MIN_READING_WIDTH: u16 = 20;
 const MAX_READING_WIDTH: u16 = 400;
+
+// --------------------------- Updates ---------------------------
+
+/// Startup update-availability check (notify-only — never downloads or
+/// replaces the binary). See [`crate::update`]. Opt out with `check = false`,
+/// the `TB_NO_UPDATE_CHECK` env var, or by running in CI (`CI` set).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdatesConfig {
+    /// Check GitHub for a newer release on the splash screen (≤ once / 24h).
+    pub check: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self { check: true }
+    }
+}
 
 // --------------------------- Theme ---------------------------
 

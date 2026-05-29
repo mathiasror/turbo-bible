@@ -214,6 +214,7 @@ XDG-style paths:
 | `~/.config/turbo-bible/state.toml`      | last-position bookkeeping (book/chapter/verse) — written on quit |
 | `~/.config/turbo-bible/bookmarks.toml`  | saved bookmarks |
 | `~/.config/turbo-bible/config.toml`     | user preferences (theme, keybindings, reading layout) |
+| `~/.config/turbo-bible/update.toml`     | update-check throttle cache (last-checked timestamp + last-seen version) — managed automatically |
 | `~/.local/share/turbo-bible/translations/` | per-translation `<code>.db` files + shared `xrefs.db` (extracted from bundled assets on first launch) |
 
 Legacy `state.json` / `bookmarks.json` under `~/.config/turbo-bible/` are
@@ -228,6 +229,9 @@ default_translation = "en-kjv"
 show_sidebar     = true   # initial (Tab to toggle)
 show_daily_quote = true   # splash "verse of the day" on/off
 max_width        = 80     # reading pane max width in cols
+
+[updates]
+check            = true   # notify-only update check on the splash (≤ once/24h)
 
 [theme]
 # CGA palette by default. Any 24-bit hex color works.
@@ -259,6 +263,26 @@ quit              = ["Ctrl-q"]
 Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
 remappable.
 
+## Update notifications
+
+On the splash screen, turbo-bible checks GitHub for a newer release and, if
+one exists, shows a one-line banner with the upgrade command for *how this
+copy was installed* — `brew upgrade turbo-bible`, `cargo install turbo-bible
+--force`, or re-running the curl installer. It is **notify-only**: it never
+downloads or replaces the binary, so it never fights your package manager.
+
+The check runs in the background (launch is never delayed), at most once every
+24 hours (throttled via `update.toml`), and is best-effort — offline or any
+failure is silent, and a previously-seen update still shows from cache. It is
+suppressed entirely when:
+
+- `check = false` under `[updates]` in `config.toml`,
+- the `TB_NO_UPDATE_CHECK` environment variable is set, or
+- running in CI (the `CI` environment variable is set).
+
+Set `TB_UPDATE_CHECK_URL` to point the check at a different base URL (useful
+for testing or a private mirror).
+
 ## Notes on terminals
 
 The Turbo Vision look uses 24-bit RGB and a `▒` dither. Recent terminals
@@ -285,7 +309,8 @@ Inside `crates/turbo-bible-tui/src/`:
 - `search.rs` — FTS5 query, BM25 ranking, byte-offset highlights
 - `keys.rs` — vim sequence state machine with count prefix + user bindings
 - `state.rs` — `state.toml` load/save + JSON/legacy-translation migration
-- `config.rs` — `config.toml` schema (theme, keys, reading)
+- `config.rs` — `config.toml` schema (theme, keys, reading, updates)
+- `update.rs` — notify-only release check (curl → `releases/latest` redirect)
 - `bookmark.rs` — `bookmarks.toml` load/save
 - `theme.rs` — runtime-configurable CGA palette + drop-shadow primitive
 - `ui/translations.rs` — translation picker dialog

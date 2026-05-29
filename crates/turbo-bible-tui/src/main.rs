@@ -29,6 +29,7 @@ mod state;
 mod text;
 mod theme;
 mod ui;
+mod update;
 
 use std::borrow::Cow;
 use std::io::{self, Stdout};
@@ -283,6 +284,10 @@ struct LoopState {
     /// [`poll_download`]; rendered as an animated `-- Downloading … --`
     /// mode tag. Only one runs at a time.
     download: Option<DownloadJob>,
+    /// In-flight startup update check, if one was spawned. Polled each loop
+    /// turn by [`poll_update_check`]; on a newer-version result it seeds the
+    /// splash banner. Only spawned on the splash screen. See [`crate::update`].
+    update_check: Option<UpdateCheckJob>,
     max_reading_width: u16,
     keys: KeyState,
 }
@@ -309,6 +314,18 @@ struct DownloadJob {
     /// the fetch error. A disconnect without a value means the worker
     /// panicked.
     rx: std::sync::mpsc::Receiver<Result<()>>,
+}
+
+/// A notify-only update check running on a worker thread. The worker does
+/// only the network-bound `curl` to the `releases/latest` redirect and parses
+/// the tag; it never touches the [`Db`] or the UI. The main loop drains the
+/// one-shot result via [`poll_update_check`] and, if it's newer, seeds the
+/// splash banner. See [`crate::update`].
+struct UpdateCheckJob {
+    /// Yields exactly one value: the newest release [`update::Version`], or the
+    /// error (offline / curl missing / unparseable). A disconnect without a
+    /// value means the worker panicked — treated as a silent failure.
+    rx: std::sync::mpsc::Receiver<Result<update::Version>>,
 }
 
 /// Cache key for [`LoopState::bookmarks_cache`]: `(translation, book, chapter)`.
@@ -625,6 +642,12 @@ fn run(
         warnings,
     );
 
+    // Only the splash screen carries the update banner; launching straight
+    // into a passage (`--book`) means `Bg::Reading` and no check at all.
+    if matches!(state.bg, Bg::Splash(_)) {
+        start_update_check(&mut state, config);
+    }
+
     loop {
         draw_frame(term, &mut state)?;
 
@@ -632,6 +655,9 @@ fn run(
         // gating on input, so a completed fetch lands within one poll
         // interval whether or not the user is touching the keyboard.
         poll_download(&mut state, db, warnings)?;
+        // Likewise drain a finished update check; it only ever seeds the
+        // splash banner, never blocks.
+        poll_update_check(&mut state, warnings);
 
         if event::poll(Duration::from_millis(150))? {
             let term_height = term.size().map_or(24, |s| s.height);
@@ -758,6 +784,84 @@ fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>)
     Ok(())
 }
 
+/// Resolve how this binary was installed, defaulting to the curl/manual hint
+/// when the executable path can't be read (the safest fallback — re-running
+/// the installer always works).
+fn current_install_method() -> update::InstallMethod {
+    std::env::current_exe()
+        .map(|p| update::detect_install_method(&p))
+        .unwrap_or(update::InstallMethod::CurlOrManual)
+}
+
+/// Seed the splash banner from the cache (offline-graceful) and, if the 24h
+/// window has elapsed and checks aren't opted out, spawn a worker thread to
+/// fetch the latest release tag. Best-effort throughout: a missing current
+/// version or a disabled check simply leaves `state.update_check` as `None`.
+fn start_update_check(state: &mut LoopState, config: &config::Config) {
+    let Some(current) = update::Version::current() else {
+        return;
+    };
+    let method = current_install_method();
+    let cache = update::load_cache();
+
+    // Show a previously-discovered update straight away, even offline.
+    if let Some(text) = update::cached_banner(&cache, current, method)
+        && let Bg::Splash(s) = &mut state.bg
+    {
+        s.set_update_banner(text);
+    }
+
+    if !update::should_spawn(config.updates.check, &cache, update::now_unix()) {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(update::latest_release_tag());
+    });
+    state.update_check = Some(UpdateCheckJob { rx });
+}
+
+/// Drain a finished update check (non-blocking). On a newer-than-current
+/// result it records the discovery in the cache and seeds the splash banner;
+/// any failure (offline / curl missing / panic) is silent and — crucially —
+/// does NOT touch the cache, so the check is retried on the next launch
+/// rather than being throttled away for 24h after a transient outage.
+fn poll_update_check(state: &mut LoopState, warnings: &mut Vec<String>) {
+    use std::sync::mpsc::TryRecvError;
+
+    let recv = match state.update_check.as_ref() {
+        Some(job) => job.rx.try_recv(),
+        None => return,
+    };
+    if matches!(recv, Err(TryRecvError::Empty)) {
+        return;
+    }
+    state.update_check = None;
+
+    let Ok(Ok(latest)) = recv else {
+        return; // fetch error or worker panic: silent, retry next launch.
+    };
+
+    // A successful check is authoritative: record it (throttles the next 24h)
+    // whether or not it's newer.
+    let cache = update::UpdateCache {
+        last_checked_unix: update::now_unix(),
+        latest_seen: latest.to_string(),
+    };
+    if let Err(e) = update::write_cache(&cache) {
+        warnings.push(format!("update cache save failed: {e}"));
+    }
+
+    let Some(current) = update::Version::current() else {
+        return;
+    };
+    if update::is_newer(latest, current)
+        && let Bg::Splash(s) = &mut state.bg
+    {
+        s.set_update_banner(update::banner_text(&latest, current_install_method()));
+    }
+}
+
 /// The animated mode-tag text for an in-flight download — a trailing
 /// ellipsis that grows 0→3 dots roughly every 300 ms so the user sees the
 /// UI is alive, not frozen. Pure (time in, text out) so it's unit-testable.
@@ -835,6 +939,7 @@ impl LoopState {
             last_term_width: 0,
             transient_msg: None,
             download: None,
+            update_check: None,
             max_reading_width: config.reading.max_width,
             keys,
         }

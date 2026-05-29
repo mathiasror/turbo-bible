@@ -71,6 +71,10 @@ pub struct SplashView {
     /// Read by `main::mode_tag_for` to populate the status bar's mode pill.
     pub(crate) mode: SplashMode,
     quote: Option<DailyQuote>,
+    /// One-line "update available" banner, set by `main` when the startup
+    /// update check (or its cache) finds a newer release. `None` = no banner.
+    /// Splash-only: the reading view never shows it. See [`crate::update`].
+    update_banner: Option<String>,
     /// Chord + count state for `gg`, `G`, `5j`, etc. Shared with the
     /// list dialogs so the third copy of this state machine doesn't
     /// have to live here. Splash-specific keys (Ctrl-D/U/F/B,
@@ -113,8 +117,15 @@ impl SplashView {
             translation_code,
             mode: SplashMode::Normal,
             quote,
+            update_banner: None,
             nav: ListNav::default(),
         }
+    }
+
+    /// Set the "update available" banner line shown above the daily verse.
+    /// Called by `main` once the startup update check resolves.
+    pub fn set_update_banner(&mut self, text: String) {
+        self.update_banner = Some(text);
     }
 
     fn matches(&self, b: &Book) -> bool {
@@ -383,6 +394,7 @@ impl SplashView {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         self.render_title(&styles, inner_w, inner.height as usize, &mut lines);
+        self.render_update_banner(&styles, inner_w, &mut lines);
         self.render_quote(&styles, inner_w, &mut lines);
         self.render_filter_row(&styles, inner_w, &mut lines);
         self.render_continue_row(&styles, inner_w, &mut lines);
@@ -453,6 +465,23 @@ impl SplashView {
             &format!("· {} ·", self.translation_name),
             styles.subtitle,
         ));
+    }
+
+    /// Render the "update available" banner between the title and the daily
+    /// verse, wrapped in blank rows so it reads as its own strip. Nothing is
+    /// emitted when no update is pending.
+    fn render_update_banner(
+        &self,
+        styles: &RenderStyles,
+        inner_w: usize,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        let Some(banner) = &self.update_banner else {
+            return;
+        };
+        lines.push(blank_line(inner_w, styles.bg));
+        lines.push(center_padded(inner_w, styles.bg, banner, styles.update));
+        lines.push(blank_line(inner_w, styles.bg));
     }
 
     fn render_quote(&self, styles: &RenderStyles, inner_w: usize, lines: &mut Vec<Line<'static>>) {
@@ -797,6 +826,10 @@ struct RenderStyles {
     subtitle: Style,
     dim: Style,
     label: Style,
+    /// "Update available" banner — mid_cyan + bold. Deliberately NOT yellow:
+    /// yellow is reserved for the title, mode pills, and single operative
+    /// tokens, so an informational banner uses a structural cyan tier.
+    update: Style,
     key: Style,
     sel: Style,
     filter: Style,
@@ -820,6 +853,10 @@ impl RenderStyles {
                 .add_modifier(bold),
             dim: Style::new().fg(theme::light_grey()).bg(theme::blue()),
             label: Style::new().fg(theme::bright_white()).bg(theme::blue()),
+            update: Style::new()
+                .fg(theme::mid_cyan())
+                .bg(theme::blue())
+                .add_modifier(bold),
             key: Style::new()
                 .fg(theme::bright_white())
                 .bg(theme::blue())
@@ -1186,5 +1223,43 @@ mod tests {
         splash.cursor_ot = 0;
         splash.move_up(1);
         assert!(splash.on_continue);
+    }
+
+    /// Read the whole rendered buffer as one big string (rows concatenated),
+    /// so a banner that spans wrapped/centered cells is still findable.
+    fn rendered_text(splash: &SplashView, area: Rect) -> String {
+        let mut buf = Buffer::empty(area);
+        splash.render(area, &mut buf);
+        let mut out = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                out.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn update_banner_hidden_by_default_then_shows_when_set() {
+        let area = Rect::new(0, 0, 110, 30);
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        assert!(
+            !rendered_text(&splash, area).contains("Update available"),
+            "no banner before set_update_banner"
+        );
+
+        splash
+            .set_update_banner("Update available: v9.9.9 \u{00b7} brew upgrade turbo-bible".into());
+        let text = rendered_text(&splash, area);
+        assert!(
+            text.contains("Update available: v9.9.9"),
+            "banner text should render once set"
+        );
+        assert!(
+            text.contains("brew upgrade turbo-bible"),
+            "banner should carry the upgrade command"
+        );
     }
 }

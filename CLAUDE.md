@@ -101,6 +101,16 @@ runtime queries
   test sets `HOME` to a fresh tempdir, the TUI's auto-install
   populates `<tmp>/.local/share/turbo-bible/translations/`, and the
   PTY drives the binary from there. No developer-DB precondition.
+- **The update check (`src/update.rs`) is notify-only.** It reads the
+  GitHub `releases/latest` redirect via `curl` (no API, no token, no
+  JSON — the same minimal-dependency stance as `fetch.rs`), parses the
+  `vX.Y.Z` tag, and on a newer version seeds a splash banner with the
+  right upgrade command per detected install method (brew / cargo /
+  curl). It never downloads or swaps the binary, so there are **no
+  release-workflow changes**. Throttled to once/24h via
+  `~/.config/turbo-bible/update.toml`; suppressed by `[updates] check =
+  false`, `TB_NO_UPDATE_CHECK`, or `CI`. Override the base URL for
+  testing with `TB_UPDATE_CHECK_URL`.
 
 ## Generated artifacts
 
