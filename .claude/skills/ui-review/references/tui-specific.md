@@ -44,6 +44,12 @@ shipped uses: Goto's resolved reference in the "Will jump to: …" preview,
 Find's matched search-term highlight inside result snippets, and the
 active keycaps in the Help (`:help`) dialog. Nothing else gets yellow.
 
+Exception: the splash `TURBO BIBLE` wordmark is yellow title art — a
+block-letter logotype at the top of the home screen — not content. It
+can't be confused with a verse number, so it doesn't erode the
+verse-number signal; it's deliberate Borland/Turbo-Pascal title art and
+a sanctioned use, not a finding. (Don't recolor it.)
+
 The boundary is sharp: yellow marks the *operative token*, never
 list/content/structural elements. A dialog's cross-reference entries,
 list rows, section headers, titles, hints, and status copy are content —
