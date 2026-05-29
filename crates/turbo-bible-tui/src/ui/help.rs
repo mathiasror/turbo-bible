@@ -260,7 +260,7 @@ impl HelpDialog {
             Span::styled("\u{2191}\u{2193}/j k ", key_f),
             Span::styled("scroll  ", dim),
             Span::styled("Esc / Enter ", key_f),
-            Span::styled("close", dim),
+            Span::styled("cancel", dim),
         ];
         // Only show scroll arrows when the content actually overflows the body
         // (content_height <= viewport_height ⇒ no indicator at all).
