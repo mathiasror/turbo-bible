@@ -4,7 +4,11 @@ members = ["crates/turbo-bible-tui", "crates/turbo-bible-data"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.88"
+# Real floor, enforced by the `msrv` CI job: libsqlite3-sys 0.38 (via
+# rusqlite 0.40) calls `cfg_select!` in its build.rs, stabilized in 1.95.
+# Anything older fails to compile, so the previously-declared 1.88 was a
+# fiction. Pin rusqlite/libsqlite3-sys back if a lower floor is ever needed.
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 homepage = "https://turbo.bible"
 repository = "https://github.com/mathiasror/turbo-bible"
