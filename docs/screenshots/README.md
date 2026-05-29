@@ -225,6 +225,13 @@ present:
     `Enter` follows in place, `s` opens in a split (see shot 12).
   - Footnote bodies (if any) render above the xref list.
   - Dialog drop shadow over whatever's underneath.
+  - **Scrolls when the list overflows.** John 3:16 carries 27
+    cross-references — more than fit at once — so the body windows
+    around the selected entry and draws a ░-track / ▓-thumb scrollbar
+    in the right border (same treatment as the Help dialog, shot 09).
+    The `Enter follow · s split · …` footer is pinned to the last inner
+    row, so it can never be pushed off-screen no matter how long the
+    list runs.
 
 ### `20-bookmarks-empty.png` — Bookmarks dialog, empty
 
