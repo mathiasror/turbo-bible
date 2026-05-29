@@ -280,17 +280,29 @@ impl BookmarksDialog {
             lines.push(blank());
         }
         lines.push(blank());
-        lines.push(Line::from(vec![
-            Span::styled("  ", bg),
-            Span::styled("Enter ", key_style),
-            Span::styled("jump  ", dim),
-            Span::styled("d ", key_style),
-            Span::styled("delete  ", dim),
-            Span::styled("\u{2191}\u{2193}/j k ", key_style),
-            Span::styled("navigate  ", dim),
-            Span::styled("Esc ", key_style),
-            Span::styled("cancel", dim),
-        ]));
+        // Only advertise jump/delete/navigate when there's a bookmark to act
+        // on; otherwise just Esc cancel, so the footer doesn't promise actions
+        // the empty body can't deliver — mirrors the footnote popup.
+        let footer = if self.items.is_empty() {
+            vec![
+                Span::styled("  ", bg),
+                Span::styled("Esc ", key_style),
+                Span::styled("cancel", dim),
+            ]
+        } else {
+            vec![
+                Span::styled("  ", bg),
+                Span::styled("Enter ", key_style),
+                Span::styled("jump  ", dim),
+                Span::styled("d ", key_style),
+                Span::styled("delete  ", dim),
+                Span::styled("\u{2191}\u{2193}/j k ", key_style),
+                Span::styled("navigate  ", dim),
+                Span::styled("Esc ", key_style),
+                Span::styled("cancel", dim),
+            ]
+        };
+        lines.push(Line::from(footer));
 
         Paragraph::new(lines).style(bg).render(inner, buf);
     }
@@ -372,5 +384,49 @@ mod tests {
         let cut = truncate_chars("a much longer verse body than fits", 10);
         assert_eq!(cut.chars().count(), 10);
         assert!(cut.ends_with('\u{2026}'));
+    }
+
+    /// Flatten the whole rendered buffer into one string (row by row) so a
+    /// footer assertion can scan for verb tokens regardless of column.
+    fn buffer_text(dlg: &BookmarksDialog) -> String {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf, &[]);
+        let mut out = String::new();
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// With zero bookmarks (the `(no bookmarks yet …)` state), the footer must
+    /// advertise only the cancel verb — never jump/delete/navigate, which the
+    /// empty body can't deliver. Mirrors the footnote popup's empty footer.
+    #[test]
+    fn empty_bookmarks_footer_offers_only_cancel() {
+        let dlg = dialog_with(Vec::new());
+        assert!(dlg.items.is_empty());
+        let text = buffer_text(&dlg);
+        assert!(
+            text.contains("cancel"),
+            "footer should keep the cancel verb"
+        );
+        assert!(
+            !text.contains("jump"),
+            "empty footer must not advertise jump: {text:?}"
+        );
+        assert!(
+            !text.contains("delete"),
+            "empty footer must not advertise delete: {text:?}"
+        );
+        assert!(
+            !text.contains("navigate"),
+            "empty footer must not advertise navigate: {text:?}"
+        );
     }
 }
