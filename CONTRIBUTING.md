@@ -124,6 +124,40 @@ The release workflow takes ~15 min end-to-end. Watch it in
 `/actions`. If a build fails (e.g. scrollmapper schema changed),
 fix forward and re-tag a `v0.1.1`; tags are not edited in place.
 
+### macOS code-signing + notarization (optional)
+
+The `aarch64-apple-darwin` leg of the release workflow will Developer
+ID–sign (hardened runtime + secure timestamp) and notarize the macOS
+binary **if and only if** the six `APPLE_*` secrets below are configured
+under Settings → Secrets and variables → Actions. **Without them the
+macOS binary ships UNSIGNED — exactly the current behavior — and macOS
+users see Gatekeeper's "unidentified developer" warning on first run**
+(they can still run it via right-click → Open, or
+`xattr -d com.apple.quarantine`). All signing steps are gated on
+`secrets.APPLE_CERT_P12 != ''`, so an absent cert is a no-op, not a
+failure.
+
+| Secret | What it is / how to produce it |
+| --- | --- |
+| `APPLE_CERT_P12` | Base64 of your **Developer ID Application** certificate exported from Keychain Access as a `.p12` (includes the private key). Produce with `base64 -i DeveloperID.p12 \| pbcopy`. |
+| `APPLE_CERT_PASSWORD` | The password you set when exporting the `.p12`. |
+| `APPLE_SIGNING_IDENTITY` | The certificate's common name, e.g. `Developer ID Application: Your Name (TEAMID)`. Find it via `security find-identity -v -p codesigning`. |
+| `APPLE_ID` | The Apple ID email of the developer account used to notarize. |
+| `APPLE_TEAM_ID` | Your 10-character Apple Developer Team ID (Membership page in the developer portal). |
+| `APPLE_APP_PASSWORD` | An **app-specific password** for that Apple ID (generate at appleid.apple.com → Sign-In and Security → App-Specific Passwords). Not your account password. |
+
+Notes:
+
+- We sign the bare CLI binary and notarize it (submitting a throwaway
+  `.zip` to `notarytool`, since it does not accept `.tar.gz`). We do
+  **not** staple: `xcrun stapler` only supports app bundles, `.dmg`, and
+  installer `.pkg`, not a raw Mach-O executable. Notarization is recorded
+  against the binary's code-hash on Apple's side and Gatekeeper checks it
+  online — so the shipped `turbo-bible-aarch64-apple-darwin.tar.gz`
+  contains the signed + notarized (un-stapled) binary.
+- Only the Apple Silicon leg is signed. Intel macOS users build from
+  source via `cargo install`/Homebrew and are unaffected.
+
 The future cargo-dist migration: when the hand-rolled workflow
 becomes painful, run `cargo install cargo-dist && cargo dist init`.
 It generates a `dist-workspace.toml` and a new `release.yml`. Move

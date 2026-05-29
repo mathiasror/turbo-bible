@@ -88,6 +88,17 @@ jobs:
     needs: prepare-assets
     permissions:
       contents: write   # Upload release assets.
+    env:
+      # macOS code-signing + notarization is gated entirely on the
+      # signing secrets being present. GitHub allows secret-*presence*
+      # comparisons in expressions (this exposes the boolean, never the
+      # secret value). When APPLE_CERT_P12 is unset this evaluates to the
+      # string 'false', so every signing step below is skipped and the
+      # macOS leg builds, packages, sha256s, and uploads an UNSIGNED
+      # binary exactly as it does today. Signing turns on only when the
+      # maintainer adds the six APPLE_* secrets — see CONTRIBUTING.md
+      # "Cutting a release".
+      APPLE_SIGNING: ${{ secrets.APPLE_CERT_P12 != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -147,6 +158,21 @@ jobs:
         with:
           tool: cross
 
+      # --- macOS code-signing + notarization (Apple Silicon leg only) ---
+      # Every step in this block is gated on BOTH the target and the
+      # APPLE_SIGNING flag, so with no secrets present they all skip and
+      # the leg behaves identically to before (unsigned binary).
+
+      - name: Import Developer ID signing certificate
+        if: matrix.target == 'aarch64-apple-darwin' && env.APPLE_SIGNING == 'true'
+        # Loads the Developer ID Application cert into a temporary keychain
+        # that this job's `codesign` invocation can read. Must run before
+        # the codesign step below.
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERT_P12 }}
+          p12-password: ${{ secrets.APPLE_CERT_PASSWORD }}
+
       - name: Build release binary
         shell: bash
         run: |
@@ -155,6 +181,22 @@ jobs:
           else
             cargo build -p turbo-bible --release --target ${{ matrix.target }}
           fi
+
+      - name: Codesign binary (hardened runtime + timestamp)
+        if: matrix.target == 'aarch64-apple-darwin' && env.APPLE_SIGNING == 'true'
+        shell: bash
+        # Sign the freshly-built Mach-O with the Developer ID identity,
+        # the hardened runtime (--options runtime, required for
+        # notarization), and a secure timestamp. The signature is embedded
+        # in the binary, so the tarball packaged below carries it.
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "target/${{ matrix.target }}/release/turbo-bible"
+          codesign --verify --strict --verbose=2 \
+            "target/${{ matrix.target }}/release/turbo-bible"
 
       - name: Package tarball
         shell: bash
@@ -172,6 +214,36 @@ jobs:
             cp README.md LICENSE-MIT LICENSE-APACHE "dist-pkg/$name/" 2>/dev/null || true
             (cd dist-pkg && tar -czf "$name.tar.gz" "$name")
           fi
+
+      - name: Notarize binary
+        if: matrix.target == 'aarch64-apple-darwin' && env.APPLE_SIGNING == 'true'
+        shell: bash
+        # Apple's notarytool accepts .zip / .dmg / .pkg but NOT .tar.gz,
+        # so we wrap the already-signed binary in a throwaway .zip purely
+        # for submission. `--wait` blocks until Apple returns accepted /
+        # rejected, failing the job on rejection.
+        #
+        # We intentionally DO NOT staple. `xcrun stapler` only supports
+        # app bundles, .dmg, and installer .pkg — it cannot attach a
+        # notarization ticket to a bare CLI Mach-O executable. That is
+        # fine: notarization is recorded against the binary's code-hash on
+        # Apple's servers, and Gatekeeper validates it online on first
+        # run. The shipped turbo-bible-aarch64-apple-darwin.tar.gz
+        # therefore contains the signed + notarized (un-stapled) binary;
+        # no stapling step is needed or possible here.
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent \
+            "target/${{ matrix.target }}/release/turbo-bible" notarize.zip
+          xcrun notarytool submit notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          rm -f notarize.zip
 
       - name: Compute SHA256 sidecar
         shell: bash
