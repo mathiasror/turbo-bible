@@ -295,7 +295,7 @@ jobs:
     needs: [upload-translations, publish-crate]
     runs-on: ubuntu-latest
     steps:
-      - name: Bump formula in mathiasror/homebrew-turbo-bible
+      - name: Bump formula in mathiasror/homebrew-tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
           TAG: ${{ github.ref_name }}     # e.g. v0.1.1
@@ -325,8 +325,8 @@ jobs:
 
           echo "::group::Clone tap"
           cd "$work"
-          gh repo clone mathiasror/homebrew-turbo-bible
-          cd homebrew-turbo-bible
+          gh repo clone mathiasror/homebrew-tap
+          cd homebrew-tap
           git switch -c "bump-${TAG}"
           echo "::endgroup::"
 
