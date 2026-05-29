@@ -284,3 +284,105 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p turbo-bible --allow-dirty
+
+  bump-homebrew-formula:
+    name: bump Homebrew formula
+    # Needs both the GitHub release assets (sha256 sidecars for the
+    # prebuilt binaries) and the crates.io tarball (source-build sha
+    # for Intel macOS). Re-runs on the same tag will fail at
+    # `git switch -c bump-${TAG}` (branch exists); fix manually if it
+    # happens.
+    needs: [upload-translations, publish-crate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bump formula in mathiasror/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          TAG: ${{ github.ref_name }}     # e.g. v0.1.1
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+
+          echo "::group::Fetch sha256 sidecars from release"
+          work=$(mktemp -d)
+          cd "$work"
+          gh release download "$TAG" --repo mathiasror/turbo-bible \
+            --pattern 'turbo-bible-*.tar.gz.sha256'
+          SHA_MAC_ARM=$(awk '{print $1}' turbo-bible-aarch64-apple-darwin.tar.gz.sha256)
+          SHA_LIN_ARM=$(awk '{print $1}' turbo-bible-aarch64-unknown-linux-gnu.tar.gz.sha256)
+          SHA_LIN_X64=$(awk '{print $1}' turbo-bible-x86_64-unknown-linux-gnu.tar.gz.sha256)
+          echo "macOS arm64:  $SHA_MAC_ARM"
+          echo "Linux arm64:  $SHA_LIN_ARM"
+          echo "Linux x86_64: $SHA_LIN_X64"
+          echo "::endgroup::"
+
+          echo "::group::Compute crates.io tarball sha256"
+          SHA_CRATE=$(curl --retry 3 --retry-delay 5 -fsSL \
+            "https://static.crates.io/crates/turbo-bible/turbo-bible-${VERSION}.crate" \
+            | sha256sum | awk '{print $1}')
+          echo "crates.io: $SHA_CRATE"
+          echo "::endgroup::"
+
+          echo "::group::Clone tap"
+          cd "$work"
+          gh repo clone mathiasror/homebrew-tap
+          cd homebrew-tap
+          git switch -c "bump-${TAG}"
+          echo "::endgroup::"
+
+          echo "::group::Rewrite Formula/turbo-bible.rb"
+          VERSION="$VERSION" SHA_MAC_ARM="$SHA_MAC_ARM" SHA_LIN_ARM="$SHA_LIN_ARM" \
+          SHA_LIN_X64="$SHA_LIN_X64" SHA_CRATE="$SHA_CRATE" \
+          python3 <<'PY'
+          import os, pathlib, re, sys
+
+          p = pathlib.Path("Formula/turbo-bible.rb")
+          s = p.read_text()
+          VERSION = os.environ["VERSION"]
+
+          def replace_once(pattern, repl, label):
+              global s
+              new, n = re.subn(pattern, repl, s, count=1, flags=re.M)
+              if n != 1:
+                  sys.exit(f"FAIL: {label} matched {n} times, expected 1")
+              s = new
+
+          # Each prebuilt-binary url + its following sha256 — anchored by
+          # the target triple so the script is robust to formula reordering.
+          for target, env_key in [
+              ("aarch64-apple-darwin",      "SHA_MAC_ARM"),
+              ("aarch64-unknown-linux-gnu", "SHA_LIN_ARM"),
+              ("x86_64-unknown-linux-gnu",  "SHA_LIN_X64"),
+          ]:
+              replace_once(
+                  rf'(url "https://github\.com/mathiasror/turbo-bible/releases/download/v)[^/]+(/turbo-bible-{re.escape(target)}\.tar\.gz"\s*\n\s*sha256 ")[a-f0-9]+(")',
+                  rf'\g<1>{VERSION}\g<2>{os.environ[env_key]}\g<3>',
+                  f"prebuilt {target}",
+              )
+
+          # crates.io source-build url + sha (Intel macOS fallback).
+          replace_once(
+              r'(url "https://static\.crates\.io/crates/turbo-bible/turbo-bible-)[^"]+(\.crate"\s*\n\s*sha256 ")[a-f0-9]+(")',
+              rf'\g<1>{VERSION}\g<2>{os.environ["SHA_CRATE"]}\g<3>',
+              "crates.io source",
+          )
+
+          p.write_text(s)
+          PY
+
+          ruby -c Formula/turbo-bible.rb
+          echo "::endgroup::"
+
+          echo "::group::Commit, push, and open PR"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -am "turbo-bible ${VERSION}
+
+          Triggered by release ${TAG} in mathiasror/turbo-bible."
+          git push -u origin "bump-${TAG}"
+          gh pr create --fill --base main
+          # Queue for auto-merge once the tap's `test-bot` check passes.
+          # Tap repo must have "Allow auto-merge" enabled and a branch
+          # protection rule requiring the check, otherwise this is a no-op.
+          gh pr merge --auto --squash --delete-branch
+          echo "::endgroup::"
