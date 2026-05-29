@@ -132,18 +132,21 @@ impl FootnoteDialog {
         let bg = Style::new().bg(theme::blue());
         let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
         let body_style = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        // Section labels ("Cross-references", footnote-kind headers) use the
+        // mid-cyan structural-label tier, matching the sidebar and help
+        // dialog. Yellow is reserved for verse numbers + mode pills (see
+        // sidebar.rs and the yellow-slot rule in tui-specific.md).
         let header_style = Style::new()
-            .fg(theme::yellow())
+            .fg(theme::mid_cyan())
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let sel = Style::new()
             .fg(theme::bright_white())
             .bg(theme::list_focus_bg())
             .add_modifier(Modifier::BOLD);
-        let xref_color = Style::new()
-            .fg(theme::yellow())
-            .bg(theme::blue())
-            .add_modifier(Modifier::UNDERLINED);
+        // Cross-reference entries — dim cyan (teal), no underline; the `→`
+        // arrow already signals navigability. Mirrors sidebar.rs::xref_style.
+        let xref_color = Style::new().fg(theme::teal()).bg(theme::blue());
 
         let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
 
