@@ -71,9 +71,26 @@ pub fn pick(db: &Db, translation: &str) -> Result<Option<DailyQuote>> {
 }
 
 fn day_index() -> usize {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+    // `SOURCE_DATE_EPOCH` (the reproducible-builds standard: integer seconds
+    // since the Unix epoch) pins the day so screenshot captures don't drift
+    // with the calendar. When unset, fall back to the real wall clock.
+    day_index_from(std::env::var("SOURCE_DATE_EPOCH").ok().as_deref())
+}
+
+/// The day-of-epoch index, given an optional `SOURCE_DATE_EPOCH` override.
+/// When the override is present and parses as a `u64` of epoch-seconds it
+/// pins the result; otherwise we read the real wall clock. Split out from
+/// [`day_index`] so the override branch is testable without mutating the
+/// process environment (this crate is `#![forbid(unsafe_code)]`, and
+/// `std::env::set_var` is `unsafe` on edition 2024).
+fn day_index_from(override_epoch: Option<&str>) -> usize {
+    let secs = override_epoch
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        });
     (secs / 86_400) as usize
 }
 
@@ -98,4 +115,32 @@ fn lookup(
         reference: crate::reference::format(&name, chapter, verse, translation),
         text: text.replace('\n', " "),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::day_index_from;
+
+    #[test]
+    fn day_index_honors_source_date_epoch() {
+        // No env mutation, no global state — passing the override directly
+        // means the assertion can't race a sibling test (and sidesteps the
+        // `unsafe` `std::env::set_var` this crate forbids). The expected
+        // value is computed from the pinned epoch the screenshot tape uses.
+        let secs: u64 = 1_717_000_000; // mid-2024
+        let expected = (secs / 86_400) as usize; // == 19_872
+
+        assert_eq!(day_index_from(Some("1717000000")), expected);
+        // Surrounding whitespace is trimmed before parsing.
+        assert_eq!(day_index_from(Some("  1717000000  ")), expected);
+    }
+
+    #[test]
+    fn day_index_ignores_unparseable_override() {
+        // A non-numeric (or absent) override must not pin the day — it falls
+        // through to the wall clock, which lands well past the pinned epoch.
+        let pinned = day_index_from(Some("1717000000"));
+        assert!(day_index_from(Some("not-a-number")) > pinned);
+        assert!(day_index_from(None) > pinned);
+    }
 }
