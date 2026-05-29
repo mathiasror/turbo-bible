@@ -50,9 +50,12 @@ present:
 
 - **CGA palette discipline.** Every color on screen maps to a named
   constant in `crates/turbo-bible-tui/src/theme.rs`.
-- **Yellow-slot rule.** Yellow appears on verse numbers and the
-  `NORMAL`/`VISUAL`/`FILTER` mode pill — and nowhere else. Sidebar
-  headers, dialog titles, hint copy: all cyan tiers.
+- **Yellow-slot rule.** Yellow appears on verse numbers, the
+  `NORMAL`/`VISUAL`/`FILTER` mode pill, and the single *operative token*
+  inside an input dialog (Goto's resolved reference, Find's matched-term
+  highlight, Help's active keycaps) — never on list/content/structural
+  elements. Sidebar headers, dialog titles, hint copy, and dialog list
+  rows or xref entries are content: all cyan tiers.
 - **▒ dither glyph.** Used for drop shadows and the desktop fill. Not
   visual noise — it's the Turbo Vision DNA.
 - **Drop shadow on every dialog.** Two-cell offset down-right, dark grey.

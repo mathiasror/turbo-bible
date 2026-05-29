@@ -36,10 +36,24 @@ how they're expressed, but the *roles* are fixed.
 
 ### The yellow-slot rule
 
-**Yellow is reserved for verse numbers in the scripture pane and the
-NORMAL/VISUAL mode pill in the status bar. Nothing else.** Sidebar
-headers, dialog titles, status hints, daily-quote attribution — all of
-those use cyan tiers. Yellow used elsewhere collapses the verse-number
+**Yellow is reserved for verse numbers in the scripture pane, the
+NORMAL/VISUAL/FILTER mode pill in the status bar, and — inside an input
+dialog only — the single *operative token*: the one answer/highlight the
+dialog exists to surface.** That operative-token slot is exactly three
+shipped uses: Goto's resolved reference in the "Will jump to: …" preview,
+Find's matched search-term highlight inside result snippets, and the
+active keycaps in the Help (`:help`) dialog. Nothing else gets yellow.
+
+The boundary is sharp: yellow marks the *operative token*, never
+list/content/structural elements. A dialog's cross-reference entries,
+list rows, section headers, titles, hints, and status copy are content —
+a list of items is content, never "the operative token," even in a
+dialog — and use cyan tiers (`mid_cyan` for structural labels/headers,
+`teal` for navigable entries; e.g. the `K` footnote/xref popup's header
+is `mid_cyan` and its xref entries are `teal`, no underline, matching the
+sidebar). Sidebar headers, dialog titles, status hints, and daily-quote
+attribution likewise use cyan tiers. Yellow used outside the verse pane,
+the mode pill, or the operative-token slot collapses the verse-number
 signal and is always a finding (severity Major when on a real surface,
 Blocker if it touches the verse pane itself).
 
