@@ -416,10 +416,16 @@ impl SplashView {
         // leave that room, fall back to the one-line title. Side-by-side first,
         // then stacked, then the one-liner.
         const BANNER_RESERVE: usize = 12;
+        // One blank row of "luft" so the art doesn't butt against the dialog's
+        // top border; counted into the height budget below.
+        const TOP_LUFT: usize = 1;
         let turbo_w = TITLE_TURBO[0].chars().count();
         let combined_w = turbo_w + 2 + TITLE_BIBLE[0].chars().count();
-        let side_by_side_h = TITLE_TURBO.len() + 1; // art rows + subtitle
-        let stacked_h = TITLE_TURBO.len() + TITLE_BIBLE.len() + 1;
+        let side_by_side_h = TOP_LUFT + TITLE_TURBO.len() + 1; // luft + art + subtitle
+        let stacked_h = TOP_LUFT + TITLE_TURBO.len() + TITLE_BIBLE.len() + 1;
+        for _ in 0..TOP_LUFT {
+            lines.push(blank_line(inner_w, styles.bg));
+        }
         if inner_w >= combined_w && avail >= side_by_side_h + BANNER_RESERVE {
             for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(
@@ -1120,12 +1126,13 @@ mod tests {
         splash.render_title(&styles, 110, 30, &mut lines);
         assert_eq!(
             lines.len(),
-            TITLE_TURBO.len() + 1,
-            "full side-by-side banner is {} art rows + the subtitle, got {}",
+            TITLE_TURBO.len() + 2,
+            "full side-by-side banner is one luft row + {} art rows + the subtitle, got {}",
             TITLE_TURBO.len(),
             lines.len(),
         );
-        let title: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        // lines[0] is the blank luft row; the art starts at lines[1].
+        let title: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
             !title.contains("T U R B O"),
             "expected the block-letter art, not the compact one-liner, got {title:?}",
@@ -1142,11 +1149,12 @@ mod tests {
         splash.render_title(&styles, 110, 8, &mut lines);
         assert_eq!(
             lines.len(),
-            2,
-            "compact title is one art row + the subtitle, got {}",
+            3,
+            "compact title is one luft row + one art row + the subtitle, got {}",
             lines.len(),
         );
-        let title: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        // lines[0] is the blank luft row; the compact title is lines[1].
+        let title: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
             title.contains("T U R B O"),
             "expected the compact one-liner, got {title:?}",
