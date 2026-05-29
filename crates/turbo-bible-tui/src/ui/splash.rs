@@ -22,14 +22,15 @@ use crate::theme;
 use crate::ui::dialog;
 use crate::ui::listnav::{ListNav, Step};
 
-// 5-row block letters (the classic ANSI-Shadow glyphs with one redundant
-// middle row dropped) so the splash logo carries less vertical bulk and the
-// book picker rises. Keep both arrays the same height; `render_title` zips them
-// side by side.
+// 6-row ANSI-Shadow block letters — the full glyphs. The 4th row carries the
+// B's lower bowl and the E's middle bar, so dropping it (as a past "compact"
+// pass did) mangles those letterforms; keep all six. Both arrays must stay the
+// same height; `render_title` zips them side by side.
 const TITLE_TURBO: &[&str] = &[
     "████████╗██╗   ██╗██████╗ ██████╗  ██████╗ ",
     "╚══██╔══╝██║   ██║██╔══██╗██╔══██╗██╔═══██╗",
     "   ██║   ██║   ██║██████╔╝██████╔╝██║   ██║",
+    "   ██║   ██║   ██║██╔══██╗██╔══██╗██║   ██║",
     "   ██║   ╚██████╔╝██║  ██║██████╔╝╚██████╔╝",
     "   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝  ╚═════╝ ",
 ];
@@ -37,6 +38,7 @@ const TITLE_BIBLE: &[&str] = &[
     "██████╗ ██╗██████╗ ██╗     ███████╗",
     "██╔══██╗██║██╔══██╗██║     ██╔════╝",
     "██████╔╝██║██████╔╝██║     █████╗  ",
+    "██╔══██╗██║██╔══██╗██║     ██╔══╝  ",
     "██████╔╝██║██████╔╝███████╗███████╗",
     "╚═════╝ ╚═╝╚═════╝ ╚══════╝╚══════╝",
 ];
@@ -406,15 +408,25 @@ impl SplashView {
         avail: usize,
         lines: &mut Vec<Line<'static>>,
     ) {
-        // The full block-letter banner is the home screen's "moment" — but only
-        // on first launch / when there's no saved reading position. For
-        // returning users (a Continue target exists) it collapses to the
-        // one-line title so the daily verse + book picker own the screen.
-        // Narrow terminals also fall back to compact. Side-by-side, then
-        // stacked, then the one-liner.
-        let combined_w = TITLE_TURBO[0].chars().count() + 2 + TITLE_BIBLE[0].chars().count();
-        let want_full = self.last.is_none();
-        if want_full && inner_w >= combined_w && avail >= 10 {
+        // The full block-letter banner is the home screen's "moment" — shown for
+        // returning users as well as first-launch, as long as the terminal has
+        // the room. We reserve `BANNER_RESERVE` rows below the art for the daily
+        // verse, filter row, Continue row, and book picker so the banner never
+        // squeezes the picker off-screen; when even the stacked banner wouldn't
+        // leave that room, fall back to the one-line title. Side-by-side first,
+        // then stacked, then the one-liner.
+        const BANNER_RESERVE: usize = 12;
+        // One blank row of "luft" so the art doesn't butt against the dialog's
+        // top border; counted into the height budget below.
+        const TOP_LUFT: usize = 1;
+        let turbo_w = TITLE_TURBO[0].chars().count();
+        let combined_w = turbo_w + 2 + TITLE_BIBLE[0].chars().count();
+        let side_by_side_h = TOP_LUFT + TITLE_TURBO.len() + 1; // luft + art + subtitle
+        let stacked_h = TOP_LUFT + TITLE_TURBO.len() + TITLE_BIBLE.len() + 1;
+        for _ in 0..TOP_LUFT {
+            lines.push(blank_line(inner_w, styles.bg));
+        }
+        if inner_w >= combined_w && avail >= side_by_side_h + BANNER_RESERVE {
             for (t, b) in TITLE_TURBO.iter().zip(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(
                     inner_w,
@@ -423,7 +435,7 @@ impl SplashView {
                     styles.title,
                 ));
             }
-        } else if want_full && inner_w >= TITLE_TURBO[0].chars().count() && avail >= 18 {
+        } else if inner_w >= turbo_w && avail >= stacked_h + BANNER_RESERVE {
             for row in TITLE_TURBO.iter().chain(TITLE_BIBLE.iter()) {
                 lines.push(center_padded(inner_w, styles.bg, row, styles.title));
             }
@@ -1096,10 +1108,10 @@ mod tests {
     }
 
     #[test]
-    fn returning_user_gets_compact_title() {
-        // A saved reading position (Continue target) must collapse the banner
-        // to the one-line title, even on a terminal wide/tall enough that a
-        // first-launch splash would draw the full block-letter art.
+    fn returning_user_still_gets_full_banner() {
+        // A saved reading position (Continue target) no longer collapses the
+        // banner: the block-letter art is the home screen's "moment" for
+        // returning users too, as long as the terminal has the room.
         let last = Some((
             Position {
                 book: "O00".into(),
@@ -1114,11 +1126,35 @@ mod tests {
         splash.render_title(&styles, 110, 30, &mut lines);
         assert_eq!(
             lines.len(),
-            2,
-            "compact title is one art row + the subtitle, got {}",
+            TITLE_TURBO.len() + 2,
+            "full side-by-side banner is one luft row + {} art rows + the subtitle, got {}",
+            TITLE_TURBO.len(),
             lines.len(),
         );
-        let title: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        // lines[0] is the blank luft row; the art starts at lines[1].
+        let title: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            !title.contains("T U R B O"),
+            "expected the block-letter art, not the compact one-liner, got {title:?}",
+        );
+    }
+
+    #[test]
+    fn short_terminal_falls_back_to_compact_title() {
+        // Too few rows to leave room for the picker below either the
+        // side-by-side or stacked banner: collapse to the one-line title.
+        let splash = SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let styles = RenderStyles::new(splash.mode);
+        let mut lines = Vec::new();
+        splash.render_title(&styles, 110, 8, &mut lines);
+        assert_eq!(
+            lines.len(),
+            3,
+            "compact title is one luft row + one art row + the subtitle, got {}",
+            lines.len(),
+        );
+        // lines[0] is the blank luft row; the compact title is lines[1].
+        let title: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
             title.contains("T U R B O"),
             "expected the compact one-liner, got {title:?}",
