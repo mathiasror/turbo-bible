@@ -99,6 +99,89 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-features
 
+  msrv:
+    name: msrv (rust-version)
+    runs-on: ubuntu-latest
+    # `rust-version` in the root Cargo.toml is the contract we publish to
+    # crates.io / docs.rs; this job proves the workspace still *builds* on
+    # exactly that floor so it can't silently drift upward. We `cargo check`,
+    # not `test`: the goal is "does it compile on the MSRV", and a full
+    # build+test (incl. the PTY e2e suite) on a second toolchain would roughly
+    # double CI for no extra signal — `check` is enough and keeps it fast.
+    env:
+      # Deliberately NOT `-D warnings` (unlike the workflow-level default that
+      # the `check` job inherits): an MSRV pass must gate on *compilation*, not
+      # on lints/deprecations that newer std or deps emit when seen through an
+      # older compiler. Promoting those to errors would make the MSRV job fail
+      # for reasons unrelated to "does it build on the floor". The clippy gate
+      # in `check` owns warning-cleanliness on the pinned stable toolchain.
+      RUSTFLAGS: ''
+    steps:
+      - uses: actions/checkout@v6
+
+      # The same asset staging the `check` job needs: the TUI's include_bytes!
+      # sites read crates/turbo-bible-tui/assets/*.db.zst, which are gitignored,
+      # so without these the build fails at macro-expansion before the compiler
+      # ever exercises our code. Mirrors the cache + clone + bundle steps above
+      # (separate job, same recipe — a shared composite action would be the
+      # DRY win if a third consumer ever appears).
+      - name: Cache translation assets
+        id: assets-cache
+        uses: actions/cache@v4
+        with:
+          path: crates/turbo-bible-tui/assets
+          key: tb-assets-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
+
+      - name: Clone scrollmapper at pinned ref
+        if: steps.assets-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
+          sparse-checkout: |
+            formats/json
+            formats/sqlite/extras
+          sparse-checkout-cone-mode: true
+
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        # Single source of truth: parse `rust-version` out of the root
+        # manifest so this job tracks a bump automatically and can never
+        # silently disagree with what we publish.
+        run: |
+          ver=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([0-9.]+)".*/\1/')
+          echo "Detected MSRV: $ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Install MSRV + stable toolchains
+        # The data pipeline (built below to bundle assets) is plain stable Rust
+        # with no MSRV constraint, so it rides the rust-toolchain.toml stable
+        # default; the MSRV toolchain is selected explicitly via `cargo +<ver>`
+        # in the check step.
+        run: |
+          rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
+          rustup show
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Bundle translations into TUI assets/
+        if: steps.assets-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+          mkdir -p crates/turbo-bible-tui/assets
+          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
+
+      - name: cargo +MSRV check
+        run: |
+          cargo +${{ steps.msrv.outputs.version }} check \
+            --workspace --all-features --all-targets
+
   audit:
     name: cargo audit
     # The `deny` job below already runs `check advisories` against the
