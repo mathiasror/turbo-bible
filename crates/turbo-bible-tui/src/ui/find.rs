@@ -274,14 +274,21 @@ impl FindDialog {
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
         let dim_f = Style::new().fg(theme::light_grey()).bg(theme::blue());
-        let mut footer = vec![
-            Span::styled("  Enter ", key_f),
-            Span::styled("jump   ", dim_f),
-            Span::styled("\u{2191}\u{2193} ", key_f),
-            Span::styled("navigate   ", dim_f),
-            Span::styled("Esc ", key_f),
-            Span::styled("cancel", dim_f),
-        ];
+        // Only advertise jump/navigate when there's a result to act on;
+        // otherwise just Esc cancel, so the footer doesn't promise actions the
+        // empty (no-matches) state can't deliver — mirrors the footnote popup.
+        let mut footer = if self.results.is_empty() {
+            vec![Span::styled("  Esc ", key_f), Span::styled("cancel", dim_f)]
+        } else {
+            vec![
+                Span::styled("  Enter ", key_f),
+                Span::styled("jump   ", dim_f),
+                Span::styled("\u{2191}\u{2193} ", key_f),
+                Span::styled("navigate   ", dim_f),
+                Span::styled("Esc ", key_f),
+                Span::styled("cancel", dim_f),
+            ]
+        };
         // Right-aligned position readout ("3 of 50") so the user can tell
         // whether the wanted verse is in range or the query needs refining.
         if !self.results.is_empty() {
@@ -431,5 +438,44 @@ mod tests {
             .find(|s| s.content == "love")
             .expect("the matched word should be its own span");
         assert_eq!(hit.style.fg, Some(theme::yellow()));
+    }
+
+    /// Flatten the whole rendered buffer into one string (row by row) so a
+    /// footer assertion can scan for verb tokens regardless of column.
+    fn buffer_text(dlg: &FindDialog) -> String {
+        use ratatui::layout::Rect;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf, &[]);
+        let mut out = String::new();
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// With zero results (the `(no matches)` state), the footer must advertise
+    /// only the cancel verb — never jump/navigate, which the empty body can't
+    /// deliver. Mirrors the footnote popup's empty-state footer.
+    #[test]
+    fn empty_results_footer_offers_only_cancel() {
+        let dlg = FindDialog::new("en-kjv");
+        assert!(dlg.results.is_empty());
+        let text = buffer_text(&dlg);
+        assert!(
+            text.contains("cancel"),
+            "footer should keep the cancel verb"
+        );
+        assert!(
+            !text.contains("jump"),
+            "empty footer must not advertise jump: {text:?}"
+        );
+        assert!(
+            !text.contains("navigate"),
+            "empty footer must not advertise navigate: {text:?}"
+        );
     }
 }
