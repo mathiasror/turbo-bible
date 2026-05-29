@@ -216,7 +216,7 @@ impl FootnoteDialog {
             vec![
                 Span::styled("  ", bg),
                 Span::styled("Esc ", key_style),
-                Span::styled("close", dim),
+                Span::styled("cancel", dim),
             ]
         } else {
             vec![
@@ -228,7 +228,7 @@ impl FootnoteDialog {
                 Span::styled("\u{2191}\u{2193}/j k ", key_style),
                 Span::styled("navigate   ", dim),
                 Span::styled("Esc ", key_style),
-                Span::styled("close", dim),
+                Span::styled("cancel", dim),
             ]
         };
         lines.push(Line::from(footer));

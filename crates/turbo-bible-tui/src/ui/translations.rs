@@ -219,7 +219,7 @@ impl TranslationsDialog {
             Span::styled("\u{2191}\u{2193}/j k ", key_style),
             Span::styled("navigate  ", dim),
             Span::styled("Esc ", key_style),
-            Span::styled("close", dim),
+            Span::styled("cancel", dim),
         ]));
 
         Paragraph::new(lines).style(bg).render(inner, buf);
