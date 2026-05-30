@@ -143,6 +143,17 @@ Project-local Claude Code tooling, so a session knows it's there:
   `regen-assets` (re-render the VHS demo, screenshots, og-image). The
   `rust-review` skill (user-global) is the release-readiness pass; it writes a
   gitignored `rust-review.md` and is fed by `just baseline`.
+- **`/feature <description>`** (`.claude/commands/`): the default end-to-end
+  pipeline for any non-trivial feature — research → plan → worktree → implement
+  → designer loop (if visual) → independent reviewer↔implementer loop → PR with
+  before/after screenshots. **Routing rule:** when the user asks to
+  implement / build / add a feature in natural language (without typing the
+  slash), invoke the `feature` skill rather than free-handing the work; the
+  pipeline's gates (after the plan, before the PR) keep it from running away.
+  It supersedes the ad-hoc chaining that the worktree-isolation /
+  reviewer-loop / before-after-screenshot memories describe — those are now the
+  *why* behind its phases. Skip it for one-line fixes, refactors, docs, or
+  questions.
 - **`/release-checklist [vX.Y.Z]`** (`.claude/commands/`): the skeptical
   go/no-go gate to run before pushing a `v*` tag.
 - **Worktrees** for parallel branches live under `.claude/worktrees/`
