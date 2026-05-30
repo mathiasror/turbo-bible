@@ -138,7 +138,8 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 
 Mouse selection mirrors the keyboard `v`/`V` model — a drag leaves a normal
 visual selection you can keep extending with `j`/`k`, copy with `y`, or bookmark
-with `b`. `Shift`-**drag** falls through to your terminal's own text selection.
+with `b`. On most terminals, `Shift`-**drag** bypasses the app for native
+text selection.
 
 ### Search & navigation
 

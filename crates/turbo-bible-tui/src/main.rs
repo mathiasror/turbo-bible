@@ -252,7 +252,7 @@ enum PickerIntent {
 /// pane, which drives auto-scroll on idle ticks (crossterm emits no `Drag`
 /// while the pointer is held still past an edge, so the scroll has to advance
 /// itself).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct MouseDrag {
     pane: usize,
     anchor: i64,
@@ -260,7 +260,7 @@ struct MouseDrag {
 }
 
 /// Which way (if any) a drag is currently spilling past its pane's edge.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EdgeScroll {
     None,
     Up,
@@ -2431,6 +2431,10 @@ fn handle_mouse(
                 } else {
                     return Ok(false);
                 };
+                // `click` only ever yields `Continue` or `OpenBook` (it can't quit
+                // or open a dialog the way a key can), so the resulting step is
+                // always `Continue` — there's nothing for the run loop to act on.
+                // Apply it for its side effects and report the event consumed.
                 apply_splash_outcome(state, ctx, outcome)?;
                 Ok(true)
             } else {
@@ -2465,6 +2469,10 @@ fn pane_at(rects: &[Rect], col: u16, row: u16) -> Option<usize> {
 /// no selection recovers the same map the draw laid out.
 fn verse_at_pane_point(pane: &Pane, rect: Rect, row: u16) -> Option<i64> {
     let empty = std::collections::BTreeSet::new();
+    // Wrap at `rect.width` — the same interior width the draw used. This equals
+    // the cached `pane.wrap_width`, but it's re-derived from the very rect the
+    // click was hit-tested against, so the two can't desync; don't "simplify"
+    // it to read the cached field.
     let rendered = render::render_passage(
         &pane.passage,
         pane.cursor_verse,
@@ -2637,6 +2645,55 @@ mod tests {
             name: format!("Name {code}"),
             language: "en".to_string(),
         }
+    }
+
+    /// A click in the reading body must resolve to the verse drawn on that row,
+    /// honouring the pane's content-rect offset (not just origin 0,0). Exercises
+    /// the reading-side composition — render → scroll → row→verse — through a
+    /// real `Pane` and an offset `Rect`, the path `reading_mouse_down` relies on.
+    #[test]
+    fn verse_at_pane_point_resolves_clicks_through_a_real_pane() {
+        let verses = (1..=10)
+            .map(|n| db::Verse {
+                number: n,
+                text: format!("verse {n}"),
+                footnote_count: 0,
+                xref_note_count: 0,
+            })
+            .collect();
+        let passage = db::Passage {
+            translation: "en-kjv".into(),
+            book_code: "GEN".into(),
+            book_name: "Genesis".into(),
+            book_abbrev: "Gen".into(),
+            chapter: 1,
+            verses,
+            headings: vec![],
+            footnotes: vec![],
+            xrefs: vec![],
+        };
+        let pane = Pane::new(
+            "en-kjv".into(),
+            Position {
+                book: "GEN".into(),
+                chapter: 1,
+                verse: None,
+            },
+            passage,
+            1,
+        );
+        // Content rect offset from the origin (top=3) and tall enough that the
+        // 10 short verses don't scroll, so row→line is `row - top`.
+        let rect = Rect::new(2, 3, 40, 20);
+        // render_passage opens with a blank row, so the interior top snaps to v1.
+        assert_eq!(verse_at_pane_point(&pane, rect, rect.top()), Some(1));
+        // Line index k (k>0) is verse k for this single-line-per-verse passage.
+        assert_eq!(verse_at_pane_point(&pane, rect, rect.top() + 5), Some(5));
+        assert_eq!(verse_at_pane_point(&pane, rect, rect.top() + 10), Some(10));
+        // Below the last rendered line (11 lines: blank + 10 verses) → no verse.
+        assert_eq!(verse_at_pane_point(&pane, rect, rect.top() + 11), None);
+        // Above the interior → no verse.
+        assert_eq!(verse_at_pane_point(&pane, rect, rect.top() - 1), None);
     }
 
     #[test]

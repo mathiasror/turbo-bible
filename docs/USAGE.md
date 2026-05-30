@@ -253,8 +253,8 @@ is the anchor and the range follows the pointer, exactly as `v` + motion
 would. Dragging past the top or bottom edge auto-scrolls to keep extending.
 `Shift`-click extends the current selection to the clicked verse. A
 mouse-made selection is an ordinary visual selection — keep growing it with
-`j`/`k`, or act on it with `b`/`y`. (`Shift`-**drag** is left to your
-terminal's own copy-on-drag.)
+`j`/`k`, or act on it with `b`/`y`. (On most terminals, `Shift`-**drag**
+bypasses the app for native copy-on-drag.)
 
 Range-aware actions:
 
