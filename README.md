@@ -126,6 +126,21 @@ selected translation becomes the default for the next launch.
 
 Count prefixes work: `5j` moves the cursor down 5 verses.
 
+### Mouse
+
+| Action | Result |
+| --- | --- |
+| left-click a verse | move the cursor there (clears any selection); focuses the pane it lands in |
+| click-drag across verses | select a range (linewise visual, like `v` + motion); drag past the top/bottom edge auto-scrolls |
+| `Shift`-click a verse | extend the current selection to the clicked verse |
+| scroll wheel | scroll the reading pane |
+| click a book on the splash | open it (same as `Enter`); click **Continue** to resume |
+
+Mouse selection mirrors the keyboard `v`/`V` model — a drag leaves a normal
+visual selection you can keep extending with `j`/`k`, copy with `y`, or bookmark
+with `b`. On most terminals, `Shift`-**drag** bypasses the app for native
+text selection.
+
 ### Search & navigation
 
 | Keys | Action |
@@ -326,7 +341,6 @@ Inside `crates/turbo-bible-tui/src/`:
 - Inline (mid-verse) footnote markers — markers sit at end of verse
 - Word-level translation diff (compare panes show translations side by
   side, but differences aren't highlighted)
-- Mouse-driven verse selection (clicks on menu / status bar work)
 
 ## Contributing
 

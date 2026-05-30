@@ -44,9 +44,19 @@ pub fn draw_dialog(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
             Style::new().fg(theme::bright_white()).bg(theme::blue()),
         )))
         .style(Style::new().bg(theme::blue()));
-    let inner = block.inner(area);
+    let inner = inner_of(area);
     block.render(area, buf);
     inner
+}
+
+/// The inner content rect of a dialog drawn at `area`: `area` inset by the
+/// one-cell border on every side. Pure (no drawing), so a mouse hit-test can
+/// recover the same interior [`draw_dialog`] renders its content into without
+/// re-running the draw. (The border inset is one cell regardless of
+/// [`BorderType`], so this matches `block.inner(area)` for any dialog here.)
+#[must_use]
+pub fn inner_of(area: Rect) -> Rect {
+    Block::default().borders(Borders::ALL).inner(area)
 }
 
 /// A Turbo-Vision "sunken" text input field, shared by Goto and Find so the

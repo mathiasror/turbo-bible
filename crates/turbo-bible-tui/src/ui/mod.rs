@@ -24,7 +24,7 @@ pub mod translations;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::db::Passage;
 
@@ -252,19 +252,49 @@ pub(crate) fn pane_viewports(
     max_reading_width: u16,
     show_sidebar: bool,
 ) -> Vec<(u16, u16)> {
+    pane_content_rects(area, panes, max_reading_width, show_sidebar)
+        .iter()
+        .map(|r| (r.width, r.height))
+        .collect()
+}
+
+/// The text-interior [`Rect`] of each reading pane for the given terminal
+/// `area`, pane count, and layout — one entry per pane, left-to-right, in
+/// absolute screen coordinates. Shares the same [`panes_layout`] (and so
+/// [`body_layout`]) that [`Frame::render`] draws into, then insets each pane
+/// rect by its border exactly as [`passage::PassageView`] does, so a mouse
+/// hit-test lands on the very cells the draw painted.
+///
+/// This is the single source the run loop's click handling and the
+/// viewport-sizing [`pane_viewports`] both derive from, so the geometry the
+/// mouse tests against can't drift from the geometry that was rendered.
+pub(crate) fn pane_content_rects(
+    area: Rect,
+    panes: usize,
+    max_reading_width: u16,
+    show_sidebar: bool,
+) -> Vec<Rect> {
     let (_menu, body, _status) = split(area);
     let (rects, _sidebar) = panes_layout(body, panes, max_reading_width, show_sidebar);
     rects
         .iter()
-        // PassageView wraps each rect in a bordered Block (Borders::ALL), so the
-        // text interior is the rect inset by one border cell on every side.
-        .map(|r| (r.width.saturating_sub(2), r.height.saturating_sub(2)))
+        // PassageView wraps each rect in a bordered Block (Borders::ALL); the
+        // text interior is that block's inner rect — inset one cell per side.
+        .map(|r| Block::default().borders(Borders::ALL).inner(*r))
         .collect()
+}
+
+/// The body rect — the terminal `area` minus the one-row menu strip and the
+/// one-row status bar. The region the reading panes and the splash are laid
+/// out within; exposed so the run loop's mouse handling can reconstruct the
+/// same region the draw used (see [`Frame::render`] and the splash draw).
+pub(crate) fn body_area(area: Rect) -> Rect {
+    split(area).1
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{body_layout, pane_viewports, panes_layout};
+    use super::{body_layout, pane_content_rects, pane_viewports, panes_layout};
     use ratatui::layout::Rect;
 
     #[test]
@@ -343,6 +373,38 @@ mod tests {
                     *vp,
                     (rect.width.saturating_sub(2), rect.height.saturating_sub(2)),
                     "viewport must equal the pane rect inset by its border (n={n})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pane_content_rects_are_the_border_inset_of_the_drawn_panes() {
+        // The mouse hit-test maps clicks against these rects, so each must be
+        // the pane rect panes_layout draws, inset one cell per border side, in
+        // absolute screen coords — the interior PassageView renders verses into.
+        let area = Rect::new(0, 0, 200, 40);
+        let (_menu, body, _status) = super::split(area);
+        for n in 1..=3usize {
+            let contents = pane_content_rects(area, n, 80, true);
+            let (rects, _) = panes_layout(body, n, 80, true);
+            assert_eq!(
+                contents.len(),
+                rects.len(),
+                "one content rect per pane (n={n})"
+            );
+            for (c, rect) in contents.iter().zip(&rects) {
+                assert_eq!(c.x, rect.x + 1, "inset left by border (n={n})");
+                assert_eq!(c.y, rect.y + 1, "inset top by border (n={n})");
+                assert_eq!(
+                    c.width,
+                    rect.width.saturating_sub(2),
+                    "interior width (n={n})"
+                );
+                assert_eq!(
+                    c.height,
+                    rect.height.saturating_sub(2),
+                    "interior height (n={n})"
                 );
             }
         }
