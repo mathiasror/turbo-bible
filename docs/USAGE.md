@@ -131,6 +131,13 @@ not remappable.
 History is populated by every Goto / Find / bookmark jump and by chapter-
 and book-level navigation. It is in-memory — quitting clears it.
 
+The mouse works too: **left-click a verse** to move the cursor there (it
+also focuses the pane the click lands in, when comparing), and the **scroll
+wheel** scrolls the reading pane. On the splash screen, **clicking a book**
+opens it and clicking **Continue** resumes your last position. See
+[Visual selection and yank](#visual-selection-and-yank) for click-drag
+selection.
+
 ## Goto: jumping to a reference
 
 ![Goto dialog — typing a reference shows a live preview of the destination](screenshots/04-goto.png)
@@ -240,6 +247,14 @@ politely.
 Press `v` to enter **VISUAL** mode. The current cursor verse becomes the
 anchor; moving the cursor (`j`/`k`, `Ctrl-D`, `gg`, count prefix, etc.)
 extends the highlighted range. `V` or `Esc` cancels.
+
+You can also **click-drag** across verses with the mouse: the press verse
+is the anchor and the range follows the pointer, exactly as `v` + motion
+would. Dragging past the top or bottom edge auto-scrolls to keep extending.
+`Shift`-click extends the current selection to the clicked verse. A
+mouse-made selection is an ordinary visual selection — keep growing it with
+`j`/`k`, or act on it with `b`/`y`. (`Shift`-**drag** is left to your
+terminal's own copy-on-drag.)
 
 Range-aware actions:
 

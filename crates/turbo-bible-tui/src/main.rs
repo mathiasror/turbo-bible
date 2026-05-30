@@ -48,6 +48,7 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 
 use crate::db::{Book, Db, Passage, TranslationInfo};
 use crate::keys::{Action, KeyState};
@@ -244,6 +245,28 @@ enum PickerIntent {
     OpenNewPane,
 }
 
+/// A live left-button drag in the reading view, tracked between the `Down`
+/// that starts it and the `Up` that ends it. `anchor` is the verse the press
+/// landed on — the fixed end of the visual selection the drag grows; `edge`
+/// records whether the pointer is currently held past the top or bottom of the
+/// pane, which drives auto-scroll on idle ticks (crossterm emits no `Drag`
+/// while the pointer is held still past an edge, so the scroll has to advance
+/// itself).
+#[derive(Clone, Copy)]
+struct MouseDrag {
+    pane: usize,
+    anchor: i64,
+    edge: EdgeScroll,
+}
+
+/// Which way (if any) a drag is currently spilling past its pane's edge.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EdgeScroll {
+    None,
+    Up,
+    Down,
+}
+
 /// Mutable state owned by the run loop but threaded through the
 /// extracted dispatch helpers. Separating this from the externally-owned
 /// reader state (`AppCtx`) keeps method signatures short and lets the
@@ -290,6 +313,9 @@ struct LoopState {
     update_check: Option<UpdateCheckJob>,
     max_reading_width: u16,
     keys: KeyState,
+    /// In-flight reading-view mouse drag, if the left button is down. `None`
+    /// when no drag is active. See [`MouseDrag`].
+    mouse_drag: Option<MouseDrag>,
 }
 
 /// A translation download running on a worker thread. The worker does
@@ -660,15 +686,28 @@ fn run(
         poll_update_check(&mut state, warnings);
 
         if event::poll(Duration::from_millis(150))? {
-            let term_height = term.size().map_or(24, |s| s.height);
+            let size = term.size().unwrap_or(ratatui::layout::Size {
+                width: 80,
+                height: 24,
+            });
+            let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
             let raw_event = event::read()?;
+            let mut ctx = AppCtx { db, warnings };
             let synth: Option<KeyEvent> = match raw_event {
                 Event::Key(k) if k.kind == KeyEventKind::Press => Some(k),
-                Event::Mouse(me) => mouse_to_key(me, term_height, make_status(&state)),
+                // Passage/splash clicks and drags mutate state directly (they
+                // name a pane + verse, which a synthetic key can't); only the
+                // scroll wheel and status-bar clicks fall through to a key.
+                Event::Mouse(me) => {
+                    if handle_mouse(&mut state, &mut ctx, me, area)? {
+                        None
+                    } else {
+                        mouse_to_key(me, area.height, make_status(&state))
+                    }
+                }
                 _ => None,
             };
             if let Some(key) = synth {
-                let mut ctx = AppCtx { db, warnings };
                 let step = dispatch_key(&mut state, &mut ctx, key)?;
                 if matches!(step, DispatchStep::Quit) {
                     // Persist the focused pane's final position (the pane the
@@ -681,6 +720,9 @@ fn run(
             }
         } else {
             state.tick();
+            // Keep a drag held past the pane edge scrolling while the pointer
+            // is still (crossterm emits no Drag events until it moves again).
+            state.autoscroll_drag();
         }
     }
 }
@@ -942,6 +984,7 @@ impl LoopState {
             update_check: None,
             max_reading_width: config.reading.max_width,
             keys,
+            mouse_drag: None,
         }
     }
 
@@ -1006,6 +1049,30 @@ impl LoopState {
         {
             self.transient_msg = None;
         }
+    }
+
+    /// Advance a drag that's spilling past its pane's edge by one verse, so
+    /// holding the pointer below (or above) the pane keeps growing the visual
+    /// selection even though crossterm emits no further `Drag` events while the
+    /// pointer is still. Called on each idle poll tick; a no-op unless a drag is
+    /// active with a live [`EdgeScroll`] direction. The derived scroll follows
+    /// the cursor on the next draw, revealing the newly-selected verse.
+    fn autoscroll_drag(&mut self) {
+        let Some(drag) = self.mouse_drag else { return };
+        let step = match drag.edge {
+            EdgeScroll::Up => -1,
+            EdgeScroll::Down => 1,
+            EdgeScroll::None => return,
+        };
+        // Guard the pane index: a pane could in principle have closed between
+        // events (it can't mid-drag today, but stay defensive).
+        let Some(pane) = self.panes.get_mut(drag.pane) else {
+            self.mouse_drag = None;
+            return;
+        };
+        let last = pane.passage.verses.last().map_or(1, |v| v.number);
+        pane.cursor_verse = (pane.cursor_verse + step).clamp(1, last);
+        pane.visual_anchor = Some(drag.anchor);
     }
 
     /// Whether the terminal is wide enough to add one more reading pane
@@ -1465,6 +1532,18 @@ fn dispatch_splash(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
     } else {
         return Ok(DispatchStep::Continue);
     };
+    apply_splash_outcome(state, ctx, outcome)
+}
+
+/// Apply a [`SplashOutcome`] — opening a book, resuming, or surfacing a dialog.
+/// Shared by the keyboard ([`dispatch_splash`]) and the mouse click path so a
+/// clicked book opens through the exact same load + history + bg-transition
+/// steps as `Enter`.
+fn apply_splash_outcome(
+    state: &mut LoopState,
+    ctx: &mut AppCtx,
+    outcome: SplashOutcome,
+) -> Result<DispatchStep> {
     match outcome {
         SplashOutcome::Continue => Ok(DispatchStep::Continue),
         SplashOutcome::Quit => Ok(DispatchStep::Quit),
@@ -2321,6 +2400,180 @@ fn persist_default_translation(code: &str) -> Result<()> {
     let mut cfg = config::load_quiet();
     cfg.default_translation = Some(code.to_string());
     config::save(&cfg)
+}
+
+/// Handle a mouse event against the reading view or the splash, mutating state
+/// directly — a click names a pane and a verse, which a synthetic key can't
+/// carry. Returns `true` when the event was consumed; `false` leaves it for
+/// [`mouse_to_key`] (the scroll-wheel → ↑/↓ and status-bar-click fallback).
+/// `area` is the full terminal rect.
+fn handle_mouse(
+    state: &mut LoopState,
+    ctx: &mut AppCtx,
+    me: MouseEvent,
+    area: Rect,
+) -> Result<bool> {
+    // A modal dialog owns the screen: let the scroll wheel / status bar fall
+    // through, but don't treat body clicks as passage or splash hits.
+    if !matches!(state.dialog, Dialog::None) {
+        return Ok(false);
+    }
+    match me.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // The status bar (bottom row) keeps its existing click handling.
+            if me.row + 1 == area.height {
+                return Ok(false);
+            }
+            if matches!(state.bg, Bg::Splash(_)) {
+                let body = ui::body_area(area);
+                let outcome = if let Bg::Splash(s) = &mut state.bg {
+                    s.click(body, me.column, me.row)
+                } else {
+                    return Ok(false);
+                };
+                apply_splash_outcome(state, ctx, outcome)?;
+                Ok(true)
+            } else {
+                reading_mouse_down(state, ctx, me, area)
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) if matches!(state.bg, Bg::Reading) => {
+            reading_mouse_drag(state, me, area);
+            Ok(true)
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            // End any drag. The resulting selection stays put (sticky), so the
+            // keyboard can keep extending it — matching `v`/`V` + motion.
+            Ok(state.mouse_drag.take().is_some())
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Index of the pane whose text interior contains `(col, row)`, if any.
+fn pane_at(rects: &[Rect], col: u16, row: u16) -> Option<usize> {
+    rects
+        .iter()
+        .position(|r| col >= r.left() && col < r.right() && row >= r.top() && row < r.bottom())
+}
+
+/// The verse at terminal `row` within a pane whose text interior is `rect`, or
+/// `None` if the row is past the rendered chapter (e.g. the blank space below a
+/// short chapter). Re-renders the pane exactly as the draw does — same wrap
+/// width, same cursor-anchored scroll — so the row→verse map matches the
+/// screen. Styling inputs don't change the line *count*, so a bare render with
+/// no selection recovers the same map the draw laid out.
+fn verse_at_pane_point(pane: &Pane, rect: Rect, row: u16) -> Option<i64> {
+    let empty = std::collections::BTreeSet::new();
+    let rendered = render::render_passage(
+        &pane.passage,
+        pane.cursor_verse,
+        None,
+        &empty,
+        None,
+        rect.width,
+    );
+    let cursor_line = render::line_index_for_verse(&rendered, pane.cursor_verse);
+    let scroll = render::scroll_offset(rendered.len(), cursor_line, rect.height as usize);
+    render::verse_at_screen_row(&rendered, scroll, rect.top(), row)
+}
+
+/// A left-press in the reading view: focus the clicked pane and move its cursor
+/// to the clicked verse. Shift extends the current selection to that verse; a
+/// plain click clears any selection (vim's "click moves the cursor"). Records
+/// the drag anchor so a following drag can grow a selection from here.
+fn reading_mouse_down(
+    state: &mut LoopState,
+    ctx: &mut AppCtx,
+    me: MouseEvent,
+    area: Rect,
+) -> Result<bool> {
+    let rects = ui::pane_content_rects(
+        area,
+        state.panes.len(),
+        state.max_reading_width,
+        state.show_sidebar,
+    );
+    let Some(i) = pane_at(&rects, me.column, me.row) else {
+        // Off every pane (menu strip, inter-pane gap): nothing to do.
+        state.mouse_drag = None;
+        return Ok(false);
+    };
+    // Click-to-focus, mirroring vim's click-in-another-window behaviour.
+    if state.focus != i {
+        state.focus = i;
+        state.sync_focus_to_db(ctx.db)?;
+    }
+    let Some(verse) = verse_at_pane_point(&state.panes[i], rects[i], me.row) else {
+        // Clicked the pane but below its last verse: focus only, no move, and
+        // no drag (a drag from empty space shouldn't select).
+        state.mouse_drag = None;
+        return Ok(true);
+    };
+    let shift = me.modifiers.contains(KeyModifiers::SHIFT);
+    let pane = &mut state.panes[i];
+    if shift {
+        // Extend: keep (or set) the anchor, move the cursor to the click.
+        let anchor = pane.visual_anchor.unwrap_or(pane.cursor_verse);
+        pane.visual_anchor = Some(anchor);
+        pane.cursor_verse = verse;
+        state.mouse_drag = Some(MouseDrag {
+            pane: i,
+            anchor,
+            edge: EdgeScroll::None,
+        });
+    } else {
+        // Plain click: move the cursor, drop any selection.
+        pane.cursor_verse = verse;
+        pane.visual_anchor = None;
+        state.mouse_drag = Some(MouseDrag {
+            pane: i,
+            anchor: verse,
+            edge: EdgeScroll::None,
+        });
+    }
+    Ok(true)
+}
+
+/// A left-drag in the reading view: grow the visual selection from the press
+/// anchor to the verse under the pointer, entering visual mode if it wasn't
+/// already. A drag past the pane's top/bottom edge arms auto-scroll (see
+/// [`LoopState::autoscroll_drag`]); back inside the pane it disarms it. The
+/// drag is confined to the pane it started in.
+fn reading_mouse_drag(state: &mut LoopState, me: MouseEvent, area: Rect) {
+    let Some(mut drag) = state.mouse_drag else {
+        return;
+    };
+    let rects = ui::pane_content_rects(
+        area,
+        state.panes.len(),
+        state.max_reading_width,
+        state.show_sidebar,
+    );
+    let Some(rect) = rects.get(drag.pane).copied() else {
+        return;
+    };
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    // Edge detection drives idle auto-scroll; clamp the row into the pane so a
+    // drag above/below selects to the first/last visible verse, not nothing.
+    drag.edge = if me.row < rect.top() {
+        EdgeScroll::Up
+    } else if me.row >= rect.bottom() {
+        EdgeScroll::Down
+    } else {
+        EdgeScroll::None
+    };
+    let clamped_row = me.row.clamp(rect.top(), rect.bottom().saturating_sub(1));
+    let pane = &mut state.panes[drag.pane];
+    if let Some(verse) = verse_at_pane_point(pane, rect, clamped_row) {
+        // A drag is a selection: anchor the fixed end, follow with the cursor
+        // (even when still on the anchor verse — that's a one-verse selection).
+        pane.visual_anchor = Some(drag.anchor);
+        pane.cursor_verse = verse;
+    }
+    state.mouse_drag = Some(drag);
 }
 
 /// Translate a mouse event into a synthetic key event so clicks on the

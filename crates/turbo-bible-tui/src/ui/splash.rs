@@ -93,6 +93,25 @@ pub enum SplashOutcome {
     Quit,
 }
 
+/// Screen geometry of the on-screen book picker, recomputed for a mouse
+/// hit-test by replaying the same header builders [`SplashView::render`] uses —
+/// so the first-book row and column spans can't drift from what was drawn.
+/// All coordinates are absolute terminal cells.
+struct BookGrid {
+    /// Row of the "Continue" entry, when one is shown.
+    continue_row: Option<u16>,
+    /// Row of the first book entry (below the column header + underline).
+    first_book_row: u16,
+    /// Number of book rows visible below the headers.
+    visible_rows: usize,
+    /// Left edge and width of the Old-Testament column.
+    ot_x: u16,
+    ot_w: u16,
+    /// Left edge and width of the New-Testament column.
+    nt_x: u16,
+    nt_w: u16,
+}
+
 impl SplashView {
     pub fn new(
         books: Vec<Book>,
@@ -228,6 +247,121 @@ impl SplashView {
             chapter: 1,
             verse: None,
         })
+    }
+
+    /// Recompute the book-picker geometry for a mouse hit-test by replaying the
+    /// header builders [`Self::render`] runs, then reading off where the first
+    /// book row lands. `inner` is the dialog's interior rect (see
+    /// [`dialog::inner_of`]).
+    fn book_grid(&self, inner: Rect) -> BookGrid {
+        let styles = RenderStyles::new(self.mode);
+        let inner_w = inner.width as usize;
+        // A throwaway buffer of lines built with the exact same calls render()
+        // makes, so `scratch.len()` tracks the real header height through the
+        // dynamic title art / quote / banner / Continue rows.
+        let mut scratch: Vec<Line<'static>> = Vec::new();
+        self.render_title(&styles, inner_w, inner.height as usize, &mut scratch);
+        self.render_update_banner(&styles, inner_w, &mut scratch);
+        self.render_quote(&styles, inner_w, &mut scratch);
+        self.render_filter_row(&styles, inner_w, &mut scratch);
+        // The Continue entry, when present, is the next line render_continue_row
+        // pushes (it then pushes a trailing blank).
+        let continue_idx = self.last.as_ref().map(|_| scratch.len());
+        self.render_continue_row(&styles, inner_w, &mut scratch);
+        // render_columns always pushes two rows (the column header + its
+        // underline) before the first book row; mirror that `+ 2` here.
+        let first_book_idx = scratch.len() + 2;
+        let visible_rows = (inner.height as usize)
+            .saturating_sub(first_book_idx)
+            .saturating_sub(1); // trailing footer row
+        let (col_left, col_right, gap) = split_columns(inner_w);
+        let to_u16 = |v: usize| u16::try_from(v).unwrap_or(u16::MAX);
+        let ot_w = to_u16(col_left);
+        let nt_x = inner
+            .left()
+            .saturating_add(ot_w)
+            .saturating_add(to_u16(gap));
+        BookGrid {
+            continue_row: continue_idx.map(|i| inner.top().saturating_add(to_u16(i))),
+            first_book_row: inner.top().saturating_add(to_u16(first_book_idx)),
+            visible_rows,
+            ot_x: inner.left(),
+            ot_w,
+            nt_x,
+            nt_w: to_u16(col_right),
+        }
+    }
+
+    /// Handle a left-click at terminal `(col, row)`, with the splash dialog
+    /// centered inside `outer` (the body region). A click on a book row opens
+    /// that book exactly as `Enter`/`o` would; a click on "Continue" resumes the
+    /// last position; anything else (chrome, the inter-column gap, an empty cell
+    /// below the list) is a no-op. Filter- and scroll-aware: it maps to the same
+    /// (possibly filtered, possibly scrolled) book the draw showed at that row.
+    pub fn click(&mut self, outer: Rect, col: u16, row: u16) -> SplashOutcome {
+        // Recover the dialog interior without drawing — mirrors render().
+        let w = outer.width.saturating_sub(6).min(110);
+        let h = outer.height.saturating_sub(2);
+        let area = dialog::center(outer, w, h);
+        let inner = dialog::inner_of(area);
+        let inside = col >= inner.left()
+            && col < inner.right()
+            && row >= inner.top()
+            && row < inner.bottom();
+        if !inside {
+            return SplashOutcome::Continue;
+        }
+
+        let grid = self.book_grid(inner);
+
+        // The "Continue" entry sits above the columns.
+        if grid.continue_row == Some(row) {
+            self.on_continue = true;
+            return self
+                .open_current()
+                .map_or(SplashOutcome::Continue, SplashOutcome::OpenBook);
+        }
+
+        // Book rows.
+        if row < grid.first_book_row {
+            return SplashOutcome::Continue;
+        }
+        let book_row = usize::from(row - grid.first_book_row);
+        if book_row >= grid.visible_rows {
+            return SplashOutcome::Continue;
+        }
+        let column = if col >= grid.ot_x && col < grid.ot_x.saturating_add(grid.ot_w) {
+            SplashColumn::OT
+        } else if col >= grid.nt_x && col < grid.nt_x.saturating_add(grid.nt_w) {
+            SplashColumn::NT
+        } else {
+            // The gap between the two columns.
+            return SplashOutcome::Continue;
+        };
+
+        let entries = self.entries(column);
+        let cursor = match column {
+            SplashColumn::OT => self.cursor_ot,
+            SplashColumn::NT => self.cursor_nt,
+        };
+        // The scroll the draw used is keyed on the *current* cursor, so resolve
+        // the clicked index against that before moving the cursor.
+        let idx = scroll_for(cursor, entries.len(), grid.visible_rows) + book_row;
+        if idx >= entries.len() {
+            // An empty cell below the (possibly filtered) list.
+            return SplashOutcome::Continue;
+        }
+
+        // Commit the click to the selection so open_current() — and the visible
+        // cursor, should the open somehow no-op — reflect it, then open as Enter.
+        self.focus = column;
+        self.on_continue = false;
+        match column {
+            SplashColumn::OT => self.cursor_ot = idx,
+            SplashColumn::NT => self.cursor_nt = idx,
+        }
+        self.open_current()
+            .map_or(SplashOutcome::Continue, SplashOutcome::OpenBook)
     }
 
     fn move_down(&mut self, step: usize) {
@@ -1110,6 +1244,84 @@ mod tests {
                 "NT cursor invisible at {target}"
             );
         }
+    }
+
+    /// The screen row carrying the focused cursor marker `▸` — the row the
+    /// draw actually put the selected entry on, found independently of the
+    /// hit-test geometry. (`find_cursor_row` is unreliable here: the filter
+    /// input field shares the selection background, so it matches first.)
+    fn marker_row(buf: &Buffer) -> Option<u16> {
+        (0..buf.area.height)
+            .find(|&y| (0..buf.area.width).any(|x| buf[(x, y)].symbol() == "\u{25B8}"))
+    }
+
+    #[test]
+    fn click_on_a_book_row_opens_that_book() {
+        // Render with the OT cursor on a known book, find the row the draw put
+        // its `▸` marker on, then click that row+column. The geometry the
+        // hit-test recomputes must agree with the draw, so the click resolves
+        // back to the same book — across targets that force a scroll offset.
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let area = Rect::new(0, 0, 110, 36);
+        for target in [0usize, 5, 20, 38] {
+            splash.focus = SplashColumn::OT;
+            splash.cursor_ot = target;
+            splash.on_continue = false;
+            let mut buf = Buffer::empty(area);
+            splash.render(area, &mut buf);
+            let row = marker_row(&buf).expect("OT cursor marker drawn");
+            // col 5 sits inside the OT column for a 110-wide splash.
+            match splash.click(area, 5, row) {
+                SplashOutcome::OpenBook(p) => {
+                    assert_eq!(p.book, format!("O{target:02}"), "clicked OT row {row}");
+                }
+                _ => panic!("expected OpenBook for OT target {target} at row {row}"),
+            }
+        }
+    }
+
+    #[test]
+    fn click_on_continue_row_resumes_last_position() {
+        let last = (
+            Position {
+                book: "N03".into(),
+                chapter: 2,
+                verse: Some(4),
+            },
+            "NT Book 3 2:4".to_string(),
+        );
+        // A returning user: `on_continue` starts true, so the Continue row wears
+        // the `▸` marker.
+        let mut splash = SplashView::new(
+            fake_books(39, 27),
+            Some(last),
+            "t".into(),
+            "en-kjv".into(),
+            None,
+        );
+        let area = Rect::new(0, 0, 110, 36);
+        let mut buf = Buffer::empty(area);
+        splash.render(area, &mut buf);
+        let row = marker_row(&buf).expect("Continue marker drawn");
+        match splash.click(area, 5, row) {
+            SplashOutcome::OpenBook(p) => {
+                assert_eq!(p.book, "N03");
+                assert_eq!(p.chapter, 2);
+            }
+            _ => panic!("expected OpenBook resuming the last position"),
+        }
+    }
+
+    #[test]
+    fn click_off_the_picker_is_a_no_op() {
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let area = Rect::new(0, 0, 110, 36);
+        let mut buf = Buffer::empty(area);
+        splash.render(area, &mut buf);
+        // The very top-left corner is dialog chrome / desktop, never a book.
+        assert!(matches!(splash.click(area, 0, 0), SplashOutcome::Continue));
     }
 
     #[test]
