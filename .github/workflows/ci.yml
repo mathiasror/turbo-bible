@@ -198,9 +198,15 @@ jobs:
       # deprecation class can't recur here. Same `token` input; the `deny` job's
       # `check advisories` is the hard advisory gate on every PR — this weekly
       # run is belt-and-braces.
+      #
+      # createIssues: false keeps this a pure advisory gate (matching the old
+      # rustsec/audit-check behavior). The successor otherwise defaults to
+      # opening issues on main, which the read-only default workflow token
+      # can't do — it fails silently but spams the log on an advisory week.
       - uses: actions-rust-lang/audit@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          createIssues: false
 
   deny:
     name: cargo deny
