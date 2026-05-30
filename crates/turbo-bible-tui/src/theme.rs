@@ -52,6 +52,9 @@ pub fn yellow() -> Color {
 pub fn hotkey_red() -> Color {
     theme().hotkey_red.to_color()
 }
+pub fn diff_word() -> Color {
+    theme().diff_word.to_color()
+}
 pub fn black() -> Color {
     theme().black.to_color()
 }

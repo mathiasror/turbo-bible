@@ -14,6 +14,7 @@
 //! show_sidebar       = true
 //! show_daily_quote   = true
 //! max_width          = 80
+//! compare_word_diff  = true   # highlight diverging words across compare panes
 //!
 //! [updates]
 //! check = true   # notify-only update check on the splash (≤ once / 24h)
@@ -30,6 +31,7 @@
 //! dark_grey    = "#555555"
 //! yellow       = "#ffff55"
 //! hotkey_red   = "#aa0000"
+//! diff_word    = "#2ad4d4"
 //! black        = "#000000"
 //!
 //! [keys]
@@ -99,6 +101,9 @@ pub struct ReadingConfig {
     pub show_daily_quote: bool,
     /// Maximum width (cols) of the reading pane; centered if terminal is wider.
     pub max_width: u16,
+    /// Highlight the words that diverge between same-language compare panes.
+    /// The initial state; `Ctrl-W d` toggles it for the session.
+    pub compare_word_diff: bool,
 }
 
 impl Default for ReadingConfig {
@@ -107,6 +112,7 @@ impl Default for ReadingConfig {
             show_sidebar: true,
             show_daily_quote: true,
             max_width: 80,
+            compare_word_diff: true,
         }
     }
 }
@@ -159,6 +165,11 @@ pub struct ThemeConfig {
     pub dark_grey: HexColor,
     pub yellow: HexColor,
     pub hotkey_red: HexColor,
+    /// Word-level diff emphasis — the foreground (over the row fill, + bold)
+    /// applied to words that diverge between same-language compare panes. Its
+    /// own slot so it can be tuned without disturbing the structural-label
+    /// `mid_cyan` it currently mirrors.
+    pub diff_word: HexColor,
     pub black: HexColor,
 }
 
@@ -178,6 +189,7 @@ impl Default for ThemeConfig {
             dark_grey: HexColor::new(85, 85, 85),
             yellow: HexColor::new(255, 255, 85),
             hotkey_red: HexColor::new(170, 0, 0),
+            diff_word: HexColor::new(42, 212, 212), // #2ad4d4 cyan-tier diff emphasis
             black: HexColor::new(0, 0, 0),
         }
     }

@@ -157,6 +157,7 @@ position, cursor, scroll, and visual selection.
 | `Ctrl-W w` | cycle focus between panes |
 | `Ctrl-W h` / `Ctrl-W l` | focus the pane to the left / right |
 | `Ctrl-W q` | close the focused pane |
+| `Ctrl-W d` | toggle word-level diff highlighting |
 | `Tab` | focus the next pane (while ≥2 panes are open) |
 | `s` (in the `K` popup) | open the selected cross-reference in a new pane |
 
@@ -165,6 +166,14 @@ others dim. Motion keys (`j`/`k`, `h`/`l`, search, Goto) act on the focused
 pane only. The References sidebar is hidden while comparing — the panes use the
 width. A pane is refused (with a brief status hint) if the terminal is too
 narrow to keep every column readable.
+
+**Word-level diff.** When two or more panes show the *same passage* in the
+*same language*, turbo-bible lights the words that diverge between them — the
+words every translation agrees on stay calm, so where the wordings part company
+is obvious at a glance. It's a read-only reading aid: it never moves a cursor or
+syncs scroll, and panes in different languages (or on different passages) never
+diff. On by default (`[reading] compare_word_diff`); `Ctrl-W d` toggles it for
+the session.
 
 The `Ctrl-W` chords and the `K`-popup `s` shortcut are part of the vim keymap
 (the default); they aren't remappable via `[keys]`.
@@ -229,6 +238,7 @@ default_translation = "en-kjv"
 show_sidebar     = true   # initial (Tab to toggle)
 show_daily_quote = true   # splash "verse of the day" on/off
 max_width        = 80     # reading pane max width in cols
+compare_word_diff = true  # highlight diverging words across compare panes (Ctrl-W d)
 
 [updates]
 check            = true   # notify-only update check on the splash (≤ once/24h)
@@ -249,6 +259,8 @@ light_grey   = "#aaaaaa"
 dark_grey    = "#555555"
 yellow       = "#ffff55"
 hotkey_red   = "#aa0000"
+# Word-diff emphasis (compare panes): the fg, + bold, on words that differ.
+diff_word    = "#2ad4d4"
 black        = "#000000"
 
 [keys]
@@ -324,8 +336,10 @@ Inside `crates/turbo-bible-tui/src/`:
   the source data carries no `\q` line breaks, so each verse is indented
   as one block rather than laid out line by line.
 - Inline (mid-verse) footnote markers — markers sit at end of verse
-- Word-level translation diff (compare panes show translations side by
-  side, but differences aren't highlighted)
+- Positional / word-order diff. Compare panes highlight the words that
+  *differ* between same-language translations (`Ctrl-W d`), but the model is
+  vocabulary-level: a word that merely moved, or a repeated word where only one
+  occurrence changes, is flagged at the word level rather than per-position.
 - Mouse-driven verse selection (clicks on menu / status bar work)
 
 ## Contributing

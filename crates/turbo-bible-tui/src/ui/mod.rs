@@ -48,6 +48,9 @@ pub struct PaneRender<'a> {
     /// it can faintly tint the matching verse (a passive cross-pane locator).
     /// `None` on the focused pane and the single-pane view.
     pub peer_verse: Option<i64>,
+    /// This pane's cross-pane word diff (verse → diverging word keys), or
+    /// `None` when the toggle is off or there's nothing to compare against.
+    pub word_diff: Option<&'a crate::worddiff::PaneDiff>,
 }
 
 pub struct Frame<'a> {
@@ -91,6 +94,7 @@ impl Frame<'_> {
                 origin_label: pane.origin_label,
                 peer_verse: pane.peer_verse,
                 suppress_shadow: compare_mode && i != last,
+                word_diff: pane.word_diff,
             }
             .render(*rect, buf);
         }

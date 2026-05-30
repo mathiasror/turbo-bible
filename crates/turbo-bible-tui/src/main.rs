@@ -30,6 +30,7 @@ mod text;
 mod theme;
 mod ui;
 mod update;
+mod worddiff;
 
 use std::borrow::Cow;
 use std::io::{self, Stdout};
@@ -289,6 +290,10 @@ struct LoopState {
     /// splash banner. Only spawned on the splash screen. See [`crate::update`].
     update_check: Option<UpdateCheckJob>,
     max_reading_width: u16,
+    /// Highlight the words that diverge between same-language compare panes.
+    /// Initial state from `[reading] compare_word_diff`; `Ctrl-W d` flips it
+    /// for the session. Only has a visible effect while ≥2 panes are open.
+    compare_word_diff: bool,
     keys: KeyState,
 }
 
@@ -649,7 +654,7 @@ fn run(
     }
 
     loop {
-        draw_frame(term, &mut state)?;
+        draw_frame(term, &mut state, db)?;
 
         // Apply a finished background download (non-blocking) before
         // gating on input, so a completed fetch lands within one poll
@@ -941,6 +946,7 @@ impl LoopState {
             download: None,
             update_check: None,
             max_reading_width: config.reading.max_width,
+            compare_word_diff: config.reading.compare_word_diff,
             keys,
         }
     }
@@ -1033,7 +1039,7 @@ fn pane_fits_width(total_width: u16, current_panes: usize) -> bool {
 /// One pass of the draw cycle. Kept inline (vs split into per-bg
 /// helpers) because the closure borrows many fields and pulling it apart
 /// duplicates the dialog overlay match.
-fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
+fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
     // Refresh the open-pane width guard, per-pane render geometry, and the
     // per-pane bookmark caches up front, while we still hold `&mut state` — the
     // draw closure below borrows `state` immutably.
@@ -1083,6 +1089,44 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
     // sign-off before we touch motion handling.
     let focused_verse = state.panes.get(state.focus).map_or(1, |p| p.cursor_verse);
     let comparing = state.panes.len() > 1;
+    // Cross-pane word diff: light the words that diverge between same-language
+    // panes on the same passage. Computed here, where every pane's text is in
+    // hand, and only while comparing with the toggle on; otherwise an empty Vec
+    // so every `.get(i)` below is `None` and the panes render exactly as before.
+    let pane_diffs: Vec<worddiff::PaneDiff> = if comparing && state.compare_word_diff {
+        let language_of = |code: &str| {
+            db.translations()
+                .iter()
+                .find(|t| t.code == code)
+                .map_or("", |t| t.language.as_str())
+        };
+        // Owned per-pane verse lists, borrowed by the `DiffInput`s below.
+        let verse_lists: Vec<Vec<(i64, &str)>> = state
+            .panes
+            .iter()
+            .map(|p| {
+                p.passage
+                    .verses
+                    .iter()
+                    .map(|v| (v.number, v.text.as_str()))
+                    .collect()
+            })
+            .collect();
+        let inputs: Vec<worddiff::DiffInput<'_>> = state
+            .panes
+            .iter()
+            .zip(&verse_lists)
+            .map(|(p, verses)| worddiff::DiffInput {
+                language: language_of(&p.translation),
+                book_code: &p.passage.book_code,
+                chapter: p.passage.chapter,
+                verses,
+            })
+            .collect();
+        worddiff::compute(&inputs)
+    } else {
+        Vec::new()
+    };
     let pane_renders: Vec<ui::PaneRender<'_>> = state
         .panes
         .iter()
@@ -1109,6 +1153,7 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState) -> Result<()> {
                 // The cue is read-only and only for the *other* panes, so the
                 // focused pane never tints itself.
                 peer_verse: (comparing && !is_focused).then_some(focused_verse),
+                word_diff: pane_diffs.get(i),
             }
         })
         .collect();
@@ -1798,6 +1843,17 @@ fn dispatch_reading(
         Action::FocusLeft => state.focus_dir(false, ctx.db)?,
         Action::FocusRight => state.focus_dir(true, ctx.db)?,
         Action::CompareClose => close_focused_pane(state, ctx)?,
+        Action::ToggleWordDiff => {
+            // Session toggle; the `[reading] compare_word_diff` config sets the
+            // initial state. A transient confirms it even when no diverging
+            // words are on screen (or no compare pane is open yet).
+            state.compare_word_diff = !state.compare_word_diff;
+            state.set_transient(if state.compare_word_diff {
+                "Word diff on"
+            } else {
+                "Word diff off"
+            });
+        }
         _ => {
             let f = state.focus;
             let pane = &mut state.panes[f];
@@ -2171,7 +2227,8 @@ fn apply_action(
         | Action::FocusNext
         | Action::FocusLeft
         | Action::FocusRight
-        | Action::CompareClose => Ok(false),
+        | Action::CompareClose
+        | Action::ToggleWordDiff => Ok(false),
     }
 }
 
