@@ -45,7 +45,7 @@ jobs:
       # must travel together).
       - name: Cache translation assets
         id: assets-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5  # node24 runtime (v4 ran on the deprecated node20)
         with:
           path: crates/turbo-bible-tui/assets
           key: tb-assets-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
@@ -127,7 +127,7 @@ jobs:
       # DRY win if a third consumer ever appears).
       - name: Cache translation assets
         id: assets-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5  # node24 runtime (v4 ran on the deprecated node20)
         with:
           path: crates/turbo-bible-tui/assets
           key: tb-assets-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
@@ -192,7 +192,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: rustsec/audit-check@v2
+      # actions-rust-lang/audit is the maintained composite successor to
+      # rustsec/audit-check (whose latest tag, v2, is stuck on the deprecated
+      # node20 runtime). Composite actions have no node runtime, so this whole
+      # deprecation class can't recur here. Same `token` input; the `deny` job's
+      # `check advisories` is the hard advisory gate on every PR — this weekly
+      # run is belt-and-braces.
+      - uses: actions-rust-lang/audit@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 

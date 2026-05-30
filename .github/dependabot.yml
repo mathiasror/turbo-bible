@@ -1,0 +1,32 @@
+# Keep GitHub Actions pinned to current major versions so runtime
+# deprecations (e.g. the node20 -> node24 forced migration) surface as a
+# review-able PR instead of a silent CI annotation we only notice once a
+# deadline forces the runner to swap underneath us.
+#
+# Scoped to github-actions ONLY — Rust deps are deliberately governed
+# elsewhere: `cargo deny check advisories bans licenses sources` runs on
+# every PR (deny.toml) and a weekly `cargo audit` heartbeat backs it up,
+# while the MSRV job and release reproducibility depend on a hand-curated
+# Cargo.lock. A `cargo` ecosystem here would duplicate that signal and
+# fight the curated lockfile. The github-actions class is the one with no
+# existing guardrail, so it's the gap this file closes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    groups:
+      # One rollup PR per week rather than N noisy single-action PRs.
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      # Matches the repo's Conventional Commits "ci:" scope for workflow changes.
+      prefix: ci
+    labels:
+      - dependencies
+    open-pull-requests-limit: 5
