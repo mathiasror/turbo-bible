@@ -17,8 +17,9 @@ The repo is a Cargo workspace; the root `Cargo.toml` only carries
 ## Prerequisites
 
 - Rust stable (the project tracks the latest stable via
-  `rust-toolchain.toml`; the MSRV gate is `rust-version = "1.88"` in
-  the root `Cargo.toml`).
+  `rust-toolchain.toml`; the MSRV gate is `rust-version = "1.95"` in
+  the root `Cargo.toml`, enforced by the `msrv` CI job — `libsqlite3-sys`
+  needs 1.95, so that's the true floor).
 - `just` task runner — `cargo install just` or
   `brew install just`. Optional but convenient.
 - `cargo-audit` for the audit recipe — `cargo install cargo-audit`.

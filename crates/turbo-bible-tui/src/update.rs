@@ -223,20 +223,40 @@ pub struct UpdateCache {
     pub latest_seen: String,
 }
 
-fn cache_path() -> Result<std::path::PathBuf> {
-    Ok(paths::config_dir()?.join("update.toml"))
+/// The `update.toml` path under an explicit config base directory. Taking the
+/// dir as an argument lets tests point the round-trip at a tempdir without
+/// mutating the process environment (this crate is `#![forbid(unsafe_code)]`,
+/// so `std::env::set_var` to steer `paths::config_dir()` isn't available).
+fn cache_path_in(config_dir: &Path) -> std::path::PathBuf {
+    config_dir.join("update.toml")
+}
+
+/// Read the cache from `config_dir`, tolerating a missing or malformed file
+/// (→ `Default`). The check is best-effort, so a bad cache must never be fatal.
+fn load_cache_from(config_dir: &Path) -> UpdateCache {
+    std::fs::read_to_string(cache_path_in(config_dir))
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 /// Read the cache, tolerating a missing or malformed file (→ `Default`). The
 /// check is best-effort, so a bad cache must never be fatal.
 pub fn load_cache() -> UpdateCache {
-    let Ok(path) = cache_path() else {
+    let Ok(dir) = paths::config_dir() else {
         return UpdateCache::default();
     };
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    load_cache_from(&dir)
+}
+
+/// Persist the cache under `config_dir` (creating it if needed).
+///
+/// # Errors
+/// The dir can't be created, TOML serialization fails, or the write fails.
+fn write_cache_to(config_dir: &Path, cache: &UpdateCache) -> Result<()> {
+    std::fs::create_dir_all(config_dir)?;
+    std::fs::write(cache_path_in(config_dir), toml::to_string_pretty(cache)?)?;
+    Ok(())
 }
 
 /// Persist the cache (creating the config dir if needed).
@@ -244,12 +264,7 @@ pub fn load_cache() -> UpdateCache {
 /// # Errors
 /// Config dir can't be created, TOML serialization fails, or the write fails.
 pub fn write_cache(cache: &UpdateCache) -> Result<()> {
-    let path = cache_path()?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, toml::to_string_pretty(cache)?)?;
-    Ok(())
+    write_cache_to(&paths::config_dir()?, cache)
 }
 
 /// Seconds since the Unix epoch, or 0 if the clock is before it.
@@ -267,13 +282,26 @@ pub fn should_check(last_checked_unix: i64, now: i64) -> bool {
     now - last_checked_unix >= DAY_SECS
 }
 
+/// Gating predicate with the environment lookup injected, so tests can model
+/// the opt-out / CI vars without mutating the process environment (this crate
+/// is `#![forbid(unsafe_code)]`, so `std::env::set_var` isn't available). The
+/// closure answers "is this env var present?" for the two suppress switches.
+fn should_spawn_with(
+    cfg_check: bool,
+    cache: &UpdateCache,
+    now: i64,
+    env_present: impl Fn(&str) -> bool,
+) -> bool {
+    cfg_check
+        && !env_present("TB_NO_UPDATE_CHECK")
+        && !env_present("CI")
+        && should_check(cache.last_checked_unix, now)
+}
+
 /// Whether to spawn a fresh network check: enabled in config, no opt-out env
 /// (`TB_NO_UPDATE_CHECK`), not in CI (`CI`), and outside the 24h window.
 pub fn should_spawn(cfg_check: bool, cache: &UpdateCache, now: i64) -> bool {
-    cfg_check
-        && std::env::var_os("TB_NO_UPDATE_CHECK").is_none()
-        && std::env::var_os("CI").is_none()
-        && should_check(cache.last_checked_unix, now)
+    should_spawn_with(cfg_check, cache, now, |k| std::env::var_os(k).is_some())
 }
 
 /// Banner text seeded from the cache (offline-graceful): `Some` when the
@@ -418,5 +446,64 @@ mod tests {
 
         let empty = UpdateCache::default();
         assert!(cached_banner(&empty, current, InstallMethod::Cargo).is_none());
+    }
+
+    #[test]
+    fn cache_round_trips_through_a_dir() {
+        // Hermetic by construction: `write_cache_to` / `load_cache_from` take
+        // the config dir as an argument, so this drives a `tempdir()` and never
+        // touches `paths::config_dir()` (i.e. no real `~/.config/turbo-bible/`)
+        // and no process-env juggling — which this `#![forbid(unsafe_code)]`
+        // crate can't do anyway (`std::env::set_var` is `unsafe`). No env means
+        // no inter-test race.
+        let dir = tempfile::tempdir().unwrap();
+
+        // Missing file reads back as the default (best-effort, never fatal).
+        assert_eq!(
+            load_cache_from(dir.path()).last_checked_unix,
+            UpdateCache::default().last_checked_unix
+        );
+
+        let cache = UpdateCache {
+            last_checked_unix: 1_700_000_000,
+            latest_seen: "0.9.1".to_string(),
+        };
+        write_cache_to(dir.path(), &cache).unwrap();
+
+        let back = load_cache_from(dir.path());
+        assert_eq!(back.last_checked_unix, cache.last_checked_unix);
+        assert_eq!(back.latest_seen, cache.latest_seen);
+
+        // A garbage file is tolerated → default, not a panic.
+        std::fs::write(cache_path_in(dir.path()), "this is not toml = = =").unwrap();
+        assert_eq!(load_cache_from(dir.path()).latest_seen, String::new());
+    }
+
+    #[test]
+    fn should_spawn_gating_matrix() {
+        // `should_spawn_with` takes the env lookup as a closure, so each case
+        // models the suppress switches in-memory — no `std::env::set_var`
+        // (unavailable under `#![forbid(unsafe_code)]`) and no save/restore
+        // race against sibling tests.
+        let stale = UpdateCache::default(); // last_checked_unix = 0 → always due
+        let now = DAY_SECS; // strictly past the 24h window vs. epoch
+        let none = |_: &str| false;
+
+        // Happy path: enabled, no suppress env, window elapsed → spawn.
+        assert!(should_spawn_with(true, &stale, now, none));
+
+        // Config opt-out wins regardless of everything else.
+        assert!(!should_spawn_with(false, &stale, now, none));
+
+        // Either suppress env present → no spawn.
+        assert!(!should_spawn_with(true, &stale, now, |k| k == "TB_NO_UPDATE_CHECK"));
+        assert!(!should_spawn_with(true, &stale, now, |k| k == "CI"));
+
+        // Inside the 24h window (just checked) → no spawn even when enabled.
+        let fresh = UpdateCache {
+            last_checked_unix: now,
+            latest_seen: String::new(),
+        };
+        assert!(!should_spawn_with(true, &fresh, now, none));
     }
 }
