@@ -311,6 +311,14 @@ the others dim so your eye lands on the active column. The mode line shows
 which pane is focused (e.g. `-- NORMAL | 2/3 --`). Motion, search, Goto,
 bookmarks, and yank all act on the focused pane only.
 
+When two or more panes show the **same passage in the same language**,
+turbo-bible lights the words that **diverge** between them — the words every
+translation agrees on stay calm, so where the wordings part company is obvious
+at a glance. It's a read-only aid: it never moves a cursor or syncs scroll, and
+panes in different languages (or on different passages) never diff. It's on by
+default (`[reading] compare_word_diff`) and **`Ctrl-W d`** toggles it for the
+session; the emphasis colour is the `diff_word` theme slot.
+
 To pull up a **cross-referenced** passage beside the current one, open the
 `K` popup, highlight a cross-reference with `↑`/`↓`, and press **`s`**
 (instead of `Enter`, which would replace the current passage). The target
@@ -349,7 +357,7 @@ created on first save (e.g., the first time you switch translations).
 
 ### Theme
 
-Override any of the twelve palette slots with a 24-bit hex colour. The
+Override any of the thirteen palette slots with a 24-bit hex colour. The
 defaults are the CGA Turbo-Vision palette. Example: a high-contrast
 green-on-black variant:
 
@@ -369,6 +377,9 @@ light_grey   = "#7fbf7f"
 dark_grey    = "#1a331a"
 yellow       = "#ffff66"
 hotkey_red   = "#ff5555"
+# Word-level diff emphasis across same-language compare panes; seeded at the
+# bright_cyan value by default so diverging words out-rank the cursor-row body.
+diff_word    = "#2a662a"
 black        = "#000000"
 ```
 
@@ -379,9 +390,10 @@ you want a solid look without dither, set them equal.
 
 ```toml
 [reading]
-show_sidebar     = true   # Tab toggles at runtime
-show_daily_quote = true   # splash verse-of-the-day on/off
-max_width        = 80     # cap reading pane width in cols
+show_sidebar      = true   # Tab toggles at runtime
+show_daily_quote  = true   # splash verse-of-the-day on/off
+max_width         = 80     # cap reading pane width in cols
+compare_word_diff = true   # highlight diverging words across same-language panes (Ctrl-W d)
 ```
 
 ### Keys

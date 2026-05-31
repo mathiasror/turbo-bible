@@ -17,6 +17,11 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
   independent reader with its own translation, position, cursor, scroll, and
   visual selection. `s` in the `K` cross-reference popup opens the selected xref
   in a new pane.
+- **Word-level diff highlighting across compare panes.** When two or more panes
+  show the same passage in the same language, the words that diverge between
+  them are emphasised so the wordings that part company stand out at a glance.
+  On by default (`[reading] compare_word_diff`), toggled per session with
+  `Ctrl-W d`, and themed by a dedicated `diff_word` palette slot.
 - **Mouse-driven verse selection** in the reading view and on the splash: click
   to move the cursor, click-drag to select a range (auto-scrolling at the
   edges), shift-click to extend the selection, the scroll wheel to scroll, and a
