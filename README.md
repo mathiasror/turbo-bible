@@ -1,5 +1,10 @@
 # turbo-bible
 
+[![crates.io](https://img.shields.io/crates/v/turbo-bible.svg)](https://crates.io/crates/turbo-bible)
+[![CI](https://github.com/mathiasror/turbo-bible/actions/workflows/ci.yml/badge.svg)](https://github.com/mathiasror/turbo-bible/actions/workflows/ci.yml)
+[![License](https://img.shields.io/crates/l/turbo-bible.svg)](#license)
+[![Downloads](https://img.shields.io/crates/d/turbo-bible.svg)](https://crates.io/crates/turbo-bible)
+
 Turbo Vision–styled terminal Bible reader written in Rust. Ships
 eleven public-domain (and CC0 / CC-BY) translations across seven
 languages:
