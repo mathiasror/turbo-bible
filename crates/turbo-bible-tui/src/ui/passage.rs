@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::db::Passage;
-use crate::render::{pad_to_width, render_passage};
+use crate::render::{pad_to_width, render_passage_with_diff};
 use crate::theme;
 
 pub struct PassageView<'a> {
@@ -41,6 +41,11 @@ pub struct PassageView<'a> {
     /// neighbor's border; the single pane and the group's right edge keep
     /// their shadow over the blue desktop.
     pub suppress_shadow: bool,
+    /// Cross-pane word diff for this pane: verse number → the diverging word
+    /// keys to light in the `diff_word` tier (see [`crate::worddiff`]). `None`
+    /// for the single-pane view and when the toggle is off — then the body
+    /// renders unchanged.
+    pub word_diff: Option<&'a crate::worddiff::PaneDiff>,
 }
 
 impl Widget for PassageView<'_> {
@@ -173,13 +178,14 @@ impl Widget for PassageView<'_> {
             }
         }
 
-        let rendered = render_passage(
+        let rendered = render_passage_with_diff(
             self.passage,
             self.cursor_verse,
             self.selection,
             self.bookmarked,
             self.peer_verse,
             inner.width,
+            self.word_diff,
         );
         let cursor_line = crate::render::line_index_for_verse(&rendered, self.cursor_verse);
         let viewport = inner.height as usize;
@@ -247,6 +253,7 @@ mod tests {
                 origin_label: None,
                 peer_verse: None,
                 suppress_shadow: true,
+                word_diff: None,
             },
             40,
             10,
@@ -287,6 +294,7 @@ mod tests {
                 origin_label: None,
                 peer_verse: None,
                 suppress_shadow: false,
+                word_diff: None,
             },
             40,
             10,
@@ -315,6 +323,7 @@ mod tests {
                 origin_label: None,
                 peer_verse: Some(1),
                 suppress_shadow: true,
+                word_diff: None,
             },
             40,
             10,
@@ -344,6 +353,7 @@ mod tests {
                 origin_label: Some("John 3:16"),
                 peer_verse: None,
                 suppress_shadow: true,
+                word_diff: None,
             },
             60,
             10,
@@ -374,6 +384,7 @@ mod tests {
                 origin_label: None,
                 peer_verse: None,
                 suppress_shadow: true,
+                word_diff: None,
             },
             60,
             10,

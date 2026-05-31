@@ -1,12 +1,16 @@
 //! Build the visual representation of a chapter: interleave headings, inject
 //! footnote markers, and produce a `Vec<Line>` ready for ratatui.
 
+use std::collections::HashSet;
+
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::db::Passage;
 use crate::text::word_wrap;
 use crate::theme;
+use crate::worddiff::PaneDiff;
 
 /// One line on screen, tagged with the verse it belongs to (if any).
 #[derive(Debug, Clone)]
@@ -59,12 +63,8 @@ enum RowKind {
     Idle,
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "weaves verse/heading/marker/gutter state — splitting per concern \
-              would force the shared `out`, `headings_by_anchor`, and per-verse \
-              context across helper signatures without a meaningful gain."
-)]
+/// Render a chapter with no word-diff overlay (the single-pane path, and every
+/// test). A thin wrapper over [`render_passage_with_diff`].
 pub fn render_passage(
     p: &Passage,
     cursor_verse: i64,
@@ -72,6 +72,37 @@ pub fn render_passage(
     bookmarked: &std::collections::BTreeSet<i64>,
     peer_verse: Option<i64>,
     wrap_width: u16,
+) -> Vec<RenderedLine> {
+    render_passage_with_diff(
+        p,
+        cursor_verse,
+        selection,
+        bookmarked,
+        peer_verse,
+        wrap_width,
+        None,
+    )
+}
+
+/// As [`render_passage`], but with an optional per-pane word-diff overlay:
+/// `diff` maps a verse number to the case-folded word keys that diverge from
+/// the other same-language compare panes (see [`crate::worddiff`]). Those words
+/// are lit in the `diff_word` tier; `None` (or an empty set) renders exactly as
+/// the no-diff path.
+#[allow(
+    clippy::too_many_lines,
+    reason = "weaves verse/heading/marker/gutter state — splitting per concern \
+              would force the shared `out`, `headings_by_anchor`, and per-verse \
+              context across helper signatures without a meaningful gain."
+)]
+pub fn render_passage_with_diff(
+    p: &Passage,
+    cursor_verse: i64,
+    selection: Option<(i64, i64)>,
+    bookmarked: &std::collections::BTreeSet<i64>,
+    peer_verse: Option<i64>,
+    wrap_width: u16,
+    diff: Option<&PaneDiff>,
 ) -> Vec<RenderedLine> {
     let mut out: Vec<RenderedLine> = Vec::new();
 
@@ -291,6 +322,22 @@ pub fn render_passage(
         // under it. Splitting the loop lets us move `num_str` into the
         // first span instead of cloning it.
         let body_style = verse_text_style(kind);
+        // Word-diff overlay: the case-folded keys that diverge from the other
+        // compare panes for this verse. Suppressed on a Selected row — the
+        // brightest-cyan selection slab owns that row, and a cyan-on-cyan
+        // emphasis would be illegible on it. `None`/empty ⇒ the body renders as
+        // a single span, byte-for-byte the no-diff layout.
+        let divergent: Option<&HashSet<String>> = if kind == RowKind::Selected {
+            None
+        } else {
+            diff.and_then(|d| d.get(&v.number))
+                .filter(|s| !s.is_empty())
+        };
+        // A diverging word keeps the row fill but switches to the `diff_word`
+        // fg and goes bold, so it pops without a competing background.
+        let diff_style = body_style
+            .fg(theme::diff_word())
+            .add_modifier(Modifier::BOLD);
         // Left panel inset; the highlight bar still reaches the border because
         // the pad cell carries the row bg.
         let pad_style = Style::new().bg(row_bg);
@@ -302,7 +349,7 @@ pub fn render_passage(
                 }
                 _ => (chunk, ""),
             };
-            spans.push(Span::styled(body.to_string(), body_style));
+            push_body_spans(&mut spans, body, body_style, diff_style, divergent);
             if !tail.is_empty() {
                 spans.push(Span::styled(tail.to_string(), marker_style));
             }
@@ -354,6 +401,42 @@ pub fn render_passage(
 
 const fn is_marker_glyph(c: char) -> bool {
     c == '*' || c == '+' || c == ' '
+}
+
+/// Push the verse body onto `spans`, lighting the words whose case-folded form
+/// is in `divergent` (the cross-pane word diff) in `diff_style` and leaving
+/// everything else — agreeing words, punctuation, spaces — in `body_style`.
+///
+/// Tokenizes with the same UAX #29 word boundaries as [`crate::worddiff`], so
+/// the two agree on what a word is. Each wrapped chunk is tokenized
+/// independently, which is why the diff is positionless (a set membership test)
+/// rather than offset-mapped across the wrap.
+fn push_body_spans(
+    spans: &mut Vec<Span<'static>>,
+    body: &str,
+    body_style: Style,
+    diff_style: Style,
+    divergent: Option<&HashSet<String>>,
+) {
+    let Some(divergent) = divergent else {
+        spans.push(Span::styled(body.to_string(), body_style));
+        return;
+    };
+    let mut last = 0usize;
+    for (start, word) in body.unicode_word_indices() {
+        if !divergent.contains(&word.to_lowercase()) {
+            continue;
+        }
+        if start > last {
+            spans.push(Span::styled(body[last..start].to_string(), body_style));
+        }
+        let end = start + word.len();
+        spans.push(Span::styled(body[start..end].to_string(), diff_style));
+        last = end;
+    }
+    if last < body.len() {
+        spans.push(Span::styled(body[last..].to_string(), body_style));
+    }
 }
 
 /// Find the first line index that belongs to a given verse, for scroll
@@ -638,6 +721,100 @@ mod render_tests {
             col += span.content.chars().count();
         }
         panic!("body span {body:?} not found on verse {verse}");
+    }
+
+    /// A one-verse word-diff map for `verse`, lighting the given word keys.
+    fn diff_map(verse: i64, keys: &[&str]) -> crate::worddiff::PaneDiff {
+        let mut m = crate::worddiff::PaneDiff::new();
+        m.insert(verse, keys.iter().map(|k| (*k).to_string()).collect());
+        m
+    }
+
+    /// True if any span across `verse`'s lines carries exactly `text` in the
+    /// diff-emphasis style (the `diff_word` fg, bold).
+    fn verse_has_diff_span(lines: &[RenderedLine], verse: i64, text: &str) -> bool {
+        lines
+            .iter()
+            .filter(|rl| rl.verse == verse)
+            .flat_map(|rl| &rl.line.spans)
+            .any(|s| {
+                s.content == text
+                    && s.style.fg == Some(theme::diff_word())
+                    && s.style.add_modifier.contains(Modifier::BOLD)
+            })
+    }
+
+    #[test]
+    fn word_diff_lights_only_the_divergent_word() {
+        let bookmarked = BTreeSet::new();
+        let diff = diff_map(1, &["beta"]);
+        let lines = render_passage_with_diff(
+            &passage_with(vec![v(1, "alpha beta gamma")], vec![]),
+            99, // cursor elsewhere → idle row
+            None,
+            &bookmarked,
+            None,
+            80,
+            Some(&diff),
+        );
+        assert!(
+            verse_has_diff_span(&lines, 1, "beta"),
+            "the divergent word must be lit in the diff style",
+        );
+        assert!(
+            !verse_has_diff_span(&lines, 1, "alpha"),
+            "an agreeing word must not be lit",
+        );
+        assert!(
+            !verse_has_diff_span(&lines, 1, "gamma"),
+            "an agreeing word must not be lit",
+        );
+        // The full verse text is still intact across the (now-split) spans.
+        assert!(line_text(line_for_verse(&lines, 1)).contains("alpha beta gamma"));
+    }
+
+    #[test]
+    fn word_diff_follows_a_word_onto_a_wrapped_line() {
+        // A narrow wrap pushes the last word onto a continuation line; the
+        // highlight must follow it there (chunks are tokenized independently).
+        let bookmarked = BTreeSet::new();
+        let diff = diff_map(1, &["foxtrot"]);
+        let lines = render_passage_with_diff(
+            &passage_with(vec![v(1, "alpha bravo charlie delta echo foxtrot")], vec![]),
+            99,
+            None,
+            &bookmarked,
+            None,
+            40, // forces a wrap before the last word
+            Some(&diff),
+        );
+        let verse_lines = lines.iter().filter(|rl| rl.verse == 1).count();
+        assert!(verse_lines >= 2, "test needs the verse to wrap");
+        assert!(
+            verse_has_diff_span(&lines, 1, "foxtrot"),
+            "a divergent word on a wrapped continuation line must still be lit",
+        );
+    }
+
+    #[test]
+    fn word_diff_is_suppressed_on_a_selected_row() {
+        // The brightest-cyan selection slab owns its row; the diff overlay
+        // stands down there (cyan-on-cyan would be illegible anyway).
+        let bookmarked = BTreeSet::new();
+        let diff = diff_map(1, &["beta"]);
+        let lines = render_passage_with_diff(
+            &passage_with(vec![v(1, "alpha beta gamma")], vec![]),
+            1,
+            Some((1, 1)), // verse 1 is the selection
+            &bookmarked,
+            None,
+            80,
+            Some(&diff),
+        );
+        assert!(
+            !verse_has_diff_span(&lines, 1, "beta"),
+            "no diff emphasis on a selected row",
+        );
     }
 
     #[test]

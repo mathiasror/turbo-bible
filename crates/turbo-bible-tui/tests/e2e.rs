@@ -316,6 +316,37 @@ fn compare_split_keeps_panes_independent_and_persists_focused() {
     );
 }
 
+/// Toggling word-level diff (`Ctrl-W d`) in a live compare split exercises the
+/// real cross-pane diff path on two same-language panes and must not crash:
+/// the app keeps running across an off→on flip and quits cleanly. (Color isn't
+/// assertable over a PTY; the diff *logic* is covered by the `worddiff` and
+/// `render` unit tests — this guards the wiring.)
+#[test]
+fn word_diff_toggle_in_a_split_does_not_crash() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "JHN", "--chapter", "3"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+
+    // Open a second en-kjv pane on the same passage → the diff path runs.
+    key(&mut p, CTRL_W);
+    key(&mut p, "v");
+    key(&mut p, "\r");
+    // Ctrl-W d twice: toggle the overlay off, then back on.
+    key(&mut p, CTRL_W);
+    key(&mut p, "d");
+    key(&mut p, CTRL_W);
+    key(&mut p, "d");
+    key(&mut p, "j"); // still responsive
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"JHN\""), "expected JHN, got:\n{st}");
+}
+
 /// `Ctrl-W q` with only one pane open is a no-op (not a crash or quit):
 /// the app keeps running, and a subsequent `q` quits cleanly with state
 /// persisted as usual.

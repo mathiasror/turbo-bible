@@ -2192,6 +2192,7 @@ dependencies = [
  "tempfile",
  "time",
  "toml",
+ "unicode-segmentation",
  "zstd",
 ]
 

@@ -66,6 +66,7 @@ const ROWS: &[Row] = &[
     Entry("Ctrl-W w", "cycle focus between panes"),
     Entry("Ctrl-W h  Ctrl-W l", "focus pane left / right"),
     Entry("Ctrl-W q", "close the focused pane"),
+    Entry("Ctrl-W d", "toggle word-diff highlighting"),
     Note("Refs sidebar hides while comparing; use K for cross-refs."),
     Section("Dialogs"),
     Entry("F1", "this help"),
