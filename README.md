@@ -37,6 +37,18 @@ GitHub Release assets and fetched on demand.
 
 [scrollmapper]: https://github.com/scrollmapper/bible_databases
 
+## Install
+
+```sh
+curl -fsSL turbo.bible/install.sh | sh        # prebuilt binary; all 11 translations pre-staged, fully offline
+brew install mathiasror/tap/turbo-bible       # Homebrew
+cargo install turbo-bible                      # from crates.io
+```
+
+`cargo` and `brew` installs ship with the King James Version embedded and
+fetch the other ten translations on demand; the curl installer pre-stages
+all eleven up front. See [Setup](#setup) for the offline details.
+
 ## Setup
 
 Nothing to install — the King James Version is embedded in the binary
@@ -84,6 +96,9 @@ See [`docs/IMPORT.md`](docs/IMPORT.md) for the full input format, every
 flag, and the resulting database schema.
 
 ## Run
+
+`cargo run -p turbo-bible --release` is for running from a cloned checkout
+(building from source / contributing); installed binaries just run `turbo-bible`.
 
 ```sh
 cargo run -p turbo-bible --release
