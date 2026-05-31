@@ -4,7 +4,41 @@ All notable changes to this project will be documented here. Format
 roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions roughly follow [SemVer](https://semver.org/) until 1.0.
 
-## [Unreleased]
+## [0.2.0] - 2026-06-04
+
+### Added
+
+- **`turbo-bible import`** — build and install a custom translation from a JSON
+  file (books → chapters → verses keyed by OSIS code or English book name),
+  without the data pipeline. It compiles a SQLite DB alongside the bundled
+  translations, selectable via `--translation` and in the `t` picker.
+- **Side-by-side compare panes.** vim-style `Ctrl-W` window-splits read several
+  translations — or a cross-referenced passage — at once; each pane is an
+  independent reader with its own translation, position, cursor, scroll, and
+  visual selection. `s` in the `K` cross-reference popup opens the selected xref
+  in a new pane.
+- **Mouse-driven verse selection** in the reading view and on the splash: click
+  to move the cursor, click-drag to select a range (auto-scrolling at the
+  edges), shift-click to extend the selection, the scroll wheel to scroll, and a
+  click on a splash book to open it.
+- **Notify-only update banner** on the splash: checks GitHub for a newer release
+  at most once every 24 hours and surfaces the right upgrade command for how the
+  copy was installed (brew / cargo / curl). It never downloads or replaces the
+  binary, and is suppressed by `[updates] check = false`, `TB_NO_UPDATE_CHECK`,
+  or `CI`.
+- **Homebrew tap** as a third install method (`brew install` from
+  `mathiasror/tap`).
+- **Off-event-loop translation downloads** — fetching the non-bundled
+  translations and the cross-references DB now happens on a background thread, so
+  the UI stays responsive and download outcomes (and distinct failure modes) are
+  surfaced in-TUI.
+- **Poetry-passage indent** — known poetic passages (Psalms, Proverbs, Song of
+  Solomon, Lamentations, and Job's dialogue) get a whole-verse left indent to set
+  them apart from prose.
+- **Localized book-name labels** for German / French / Portuguese / Latin, plus
+  Portuguese and Latin testament headings on the splash.
+- **Viewport-sized page motion** — `Ctrl-D` / `Ctrl-U` / `Ctrl-F` / `Ctrl-B`
+  now scale their half-/full-page jumps to the number of visible rows.
 
 ### Changed
 
@@ -115,3 +149,6 @@ Initial release.
 - `#![deny(unsafe_code)]` at the crate root.
 - A RAII terminal guard that restores the terminal even if a draw
   panics, and atomic translation switching that rolls back on failure.
+
+[0.2.0]: https://github.com/mathiasror/turbo-bible/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/mathiasror/turbo-bible/releases/tag/v0.1.0

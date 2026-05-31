@@ -26,10 +26,10 @@ reference, see the [README](../README.md). For an animated overview, see
 The King James Version is embedded in the binary and extracted into
 `$XDG_DATA_HOME/turbo-bible/translations/` on first launch, so there is
 nothing to install before reading. Launch with `cargo run -p turbo-bible
---release`. The first launch rebuilds the FTS5 index with a
-diacritic-folding tokenizer and a prefix index. This takes about a
-second and is cached — subsequent launches start instantly. (The other
-ten translations and the shared cross-references DB download from GitHub
+--release`. Search works immediately — the FTS5 index (a
+diacritic-folding tokenizer and a prefix index) ships prebuilt in each
+translation database, so there is no runtime rebuild. (The other ten
+translations and the shared cross-references DB download from GitHub
 Releases the first time you open them.)
 
 You land on the splash screen. If you'd rather skip it and jump straight
@@ -82,7 +82,7 @@ Goto, `/` is filter on splash but `F3` for Find from anywhere,
 
 ## The reading view
 
-![Reading view — John 3:16, cursor verse highlighted in cyan](screenshots/03-reading.png)
+![Reading view — John 3:16, cursor verse highlighted in teal](screenshots/03-reading.png)
 
 Opening a book lands you at chapter 1, verse 1. The layout has four
 regions:
@@ -157,9 +157,9 @@ wins, so `1 John` is preferred over `1` matching nothing. A word boundary
 is required after the book name (space, digit, or end-of-input) so `Job`
 won't accidentally match `Joh` (John).
 
-For the chapter/verse separator, all four are accepted: `:`, `,`, `.`,
-and a plain space. Norwegian convention is `,` (`Sal 23,4`); English is
-`:` (`Ps 23:4`).
+For the chapter/verse separator, three are accepted: `:`, `,`, and `.`
+(a space only separates the book name from the chapter number).
+Norwegian convention is `,` (`Sal 23,4`); English is `:` (`Ps 23:4`).
 
 You can also use the dialog for the two `ex:` commands:
 
@@ -349,14 +349,21 @@ created on first save (e.g., the first time you switch translations).
 
 ### Theme
 
-Override any of the eight palette slots with a 24-bit hex colour. The
+Override any of the twelve palette slots with a 24-bit hex colour. The
 defaults are the CGA Turbo-Vision palette. Example: a high-contrast
 green-on-black variant:
 
 ```toml
 [theme]
 blue         = "#000000"
+# Cyan/teal tiers — selection (bright_cyan), structural labels such as sidebar
+# headers (mid_cyan), list focus (cyan), cursor row (teal), input wells
+# (input_teal).
 cyan         = "#003300"
+mid_cyan     = "#1f4d1f"
+bright_cyan  = "#2a662a"
+teal         = "#002600"
+input_teal   = "#001f00"
 bright_white = "#bfffbf"
 light_grey   = "#7fbf7f"
 dark_grey    = "#1a331a"
@@ -396,6 +403,21 @@ Key syntax: `"q"`, `"Ctrl-d"`, `"Shift-Tab"`, `"Alt-x"`, `"F5"`, `"Esc"`,
 
 Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
 remappable.
+
+The reading view ships two key profiles, selected by `[input] keymap`:
+
+```toml
+[input]
+keymap = "vim"   # "vim" (default) or "turbo"
+```
+
+`"vim"` is the full vim layer — `hjkl`, `gg`/`G`, `n`/`N`, count prefixes
+(`5j`), chords (`gg`, `[b`, `ZZ`), the `:` and `/` ex-commands, and the
+single-letter shortcuts (`y`, `v`, `b`, `K`). `"turbo"` is a subtractive
+profile for readers who want a plain pager: it keeps the arrow keys,
+`PgUp`/`PgDn`, `Home`/`End`, the F-keys, `Tab`, `Esc`, `Enter`, `Space`,
+`q`-to-quit, and `/`-opens-Find, while dropping the vim letter keys, the
+multi-key chords, and the count prefixes.
 
 ## Where things live
 

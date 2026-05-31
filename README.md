@@ -99,8 +99,8 @@ Translation resolution at startup:
 --translation flag  >  config.default_translation  >  first translation in DB
 ```
 
-First launch rebuilds the FTS5 index with a diacritic-folding tokenizer and a
-prefix index — takes ~1 s and is cached.
+Search works immediately — the FTS5 index (diacritic-folding tokenizer +
+prefix index) ships prebuilt in each translation database.
 
 ## Switching translations
 
@@ -137,9 +137,10 @@ Count prefixes work: `5j` moves the cursor down 5 verses.
 | click a book on the splash | open it (same as `Enter`); click **Continue** to resume |
 
 Mouse selection mirrors the keyboard `v`/`V` model — a drag leaves a normal
-visual selection you can keep extending with `j`/`k`, copy with `y`, or bookmark
-with `b`. On most terminals, `Shift`-**drag** bypasses the app for native
-text selection.
+visual selection you can keep extending with `j`/`k` or bookmark with `b`
+(`b` toggles the bookmark across the whole selection). `y` copies the cursor
+verse plus its reference (the selected range isn't yanked in v1). On most
+terminals, `Shift`-**drag** bypasses the app for native text selection.
 
 ### Search & navigation
 
@@ -240,6 +241,9 @@ migrated to TOML on first launch and removed.
 ```toml
 default_translation = "en-kjv"
 
+[input]
+keymap = "vim"   # "vim" (default) or "turbo" (arrows/F-keys/PgUp-PgDn only)
+
 [reading]
 show_sidebar     = true   # initial (Tab to toggle)
 show_daily_quote = true   # splash "verse of the day" on/off
@@ -277,6 +281,12 @@ quit              = ["Ctrl-q"]
 
 Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
 remappable.
+
+The `[input]` `keymap` selects the reading-view key profile. `"vim"` (the
+default) is the full vim layer documented in the keymap above. `"turbo"` is a
+subtractive profile that keeps the arrow keys, `PgUp`/`PgDn`, `Home`/`End`,
+F-keys, `Tab`, `Esc`, `Enter`, `Space`, `q`-to-quit, and `/`-opens-Find, while
+dropping the vim letter keys, multi-key chords, and count prefixes.
 
 ## Update notifications
 
