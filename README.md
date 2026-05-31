@@ -24,6 +24,8 @@ languages:
 
 **Website:** [turbo.bible](https://turbo.bible) — one-line install, screenshots, and the feature tour.
 
+**Changelog:** [CHANGELOG.md](CHANGELOG.md) — what's new in each release.
+
 For a narrative walk-through of every feature, see
 [`docs/USAGE.md`](docs/USAGE.md). The keymap and config layout below are
 the reference; the guide is the tutorial.
