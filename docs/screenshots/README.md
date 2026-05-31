@@ -336,6 +336,27 @@ present:
   - The poetry indent holds per-pane even at the reduced column width,
     not only in a full-width single-pane reader.
 
+### `22-compare-word-diff.png` / `23-compare-word-diff-off.png` — Word-level diff
+
+- **Surface:** `crates/turbo-bible-tui/src/worddiff.rs` +
+  `render.rs::render_passage_with_diff`. **Standalone** — sourced from
+  `demo/word-diff.tape` (`just word-diff-screenshots`), not the 21-shot
+  `screenshots.tape` tour, so re-rendering them never churns the rest.
+- **State:** en-kjv (left) | en-asv (right, focused), both at John 3:16.
+  `22` has the overlay **on** (the feature); `23` is the same split with
+  `Ctrl-W d` **off** — the no-diff path, identical to `main`. They're the
+  before/after pair.
+- **Intentional:**
+  - Diverging words are lit in the `diff_word` tier (`bright_cyan` value,
+    + bold) so they out-rank the `bright_white` cursor-row body; agreeing
+    words stay calm. **Not** a yellow-slot violation — `diff_word` is a
+    cyan tier.
+  - Only **same-language, same-passage** panes diff. Cross-language pairs
+    (e.g. shot 10's en-kjv | es-rv1909) and panes on different passages
+    correctly show no highlighting.
+  - Suppressed on a `bright_cyan` selection row (no same-row collision
+    with the selection slab).
+
 ---
 
 ## Maintenance

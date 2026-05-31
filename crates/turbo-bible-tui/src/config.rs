@@ -31,7 +31,7 @@
 //! dark_grey    = "#555555"
 //! yellow       = "#ffff55"
 //! hotkey_red   = "#aa0000"
-//! diff_word    = "#2ad4d4"
+//! diff_word    = "#55ffff"
 //! black        = "#000000"
 //!
 //! [keys]
@@ -166,9 +166,12 @@ pub struct ThemeConfig {
     pub yellow: HexColor,
     pub hotkey_red: HexColor,
     /// Word-level diff emphasis — the foreground (over the row fill, + bold)
-    /// applied to words that diverge between same-language compare panes. Its
-    /// own slot so it can be tuned without disturbing the structural-label
-    /// `mid_cyan` it currently mirrors.
+    /// applied to words that diverge between same-language compare panes.
+    /// Seeded at the `bright_cyan` value so it out-ranks the `bright_white`
+    /// cursor-row body (a dimmer tier inverts the emphasis there); its own slot
+    /// so a retheme can move it without touching the selection tier. House-legal
+    /// despite mirroring `bright_cyan`: diff is suppressed on selection rows, so
+    /// the two never collide on one row.
     pub diff_word: HexColor,
     pub black: HexColor,
 }
@@ -189,7 +192,7 @@ impl Default for ThemeConfig {
             dark_grey: HexColor::new(85, 85, 85),
             yellow: HexColor::new(255, 255, 85),
             hotkey_red: HexColor::new(170, 0, 0),
-            diff_word: HexColor::new(42, 212, 212), // #2ad4d4 cyan-tier diff emphasis
+            diff_word: HexColor::new(85, 255, 255), // #55ffff bright-cyan diff emphasis
             black: HexColor::new(0, 0, 0),
         }
     }

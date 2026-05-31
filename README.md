@@ -260,7 +260,7 @@ dark_grey    = "#555555"
 yellow       = "#ffff55"
 hotkey_red   = "#aa0000"
 # Word-diff emphasis (compare panes): the fg, + bold, on words that differ.
-diff_word    = "#2ad4d4"
+diff_word    = "#55ffff"
 black        = "#000000"
 
 [keys]
