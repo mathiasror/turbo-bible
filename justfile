@@ -92,6 +92,12 @@ screenshots:
     cargo build -p turbo-bible --release
     vhs demo/screenshots.tape
 
+# Re-render the word-diff before/after pair (docs/screenshots/22 + 23). A
+# standalone tape so this feature's captures don't churn the 21-shot tour.
+word-diff-screenshots:
+    cargo build -p turbo-bible --release
+    vhs demo/word-diff.tape
+
 # Re-render website/og-image.png (the 1200x630 social card) — a real VHS
 # capture of the splash, same toolchain as `demo` / `screenshots`.
 og-image:

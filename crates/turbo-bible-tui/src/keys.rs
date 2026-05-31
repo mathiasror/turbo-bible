@@ -66,6 +66,9 @@ pub enum Action {
     FocusRight,
     /// `Ctrl-W q` — close the focused compare pane (no-op with one pane).
     CompareClose,
+    /// `Ctrl-W d` — toggle word-level diff highlighting across compare panes
+    /// (visible only while ≥2 panes are open). Vim-layer only.
+    ToggleWordDiff,
 }
 
 pub struct KeyState {
@@ -231,6 +234,7 @@ impl KeyState {
                     KeyCode::Char('h') => Resolve::Action(Action::FocusLeft),
                     KeyCode::Char('l') => Resolve::Action(Action::FocusRight),
                     KeyCode::Char('q') => Resolve::Action(Action::CompareClose),
+                    KeyCode::Char('d') => Resolve::Action(Action::ToggleWordDiff),
                     _ => Resolve::Unknown,
                 };
             }
@@ -416,6 +420,7 @@ mod tests {
         assert_eq!(ctrl_w_then('h'), Some(Action::FocusLeft));
         assert_eq!(ctrl_w_then('l'), Some(Action::FocusRight));
         assert_eq!(ctrl_w_then('q'), Some(Action::CompareClose));
+        assert_eq!(ctrl_w_then('d'), Some(Action::ToggleWordDiff));
     }
 
     #[test]
