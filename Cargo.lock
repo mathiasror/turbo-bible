@@ -2174,7 +2174,7 @@ checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "turbo-bible"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2190,7 +2190,6 @@ dependencies = [
  "sha2 0.11.0",
  "smallvec",
  "tempfile",
- "time",
  "toml",
  "unicode-segmentation",
  "zstd",
@@ -2198,7 +2197,7 @@ dependencies = [
 
 [[package]]
 name = "turbo-bible-data"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
