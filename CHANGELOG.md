@@ -4,7 +4,7 @@ All notable changes to this project will be documented here. Format
 roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions roughly follow [SemVer](https://semver.org/) until 1.0.
 
-## [0.2.0] - 2026-06-04
+## [0.2.0] - 2026-05-31
 
 ### Added
 
