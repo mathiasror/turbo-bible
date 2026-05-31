@@ -235,10 +235,10 @@ migrated to TOML on first launch and removed.
 default_translation = "en-kjv"
 
 [reading]
-show_sidebar     = true   # initial (Tab to toggle)
-show_daily_quote = true   # splash "verse of the day" on/off
-max_width        = 80     # reading pane max width in cols
-compare_word_diff = true  # highlight diverging words across compare panes (Ctrl-W d)
+show_sidebar      = true   # initial (Tab to toggle)
+show_daily_quote  = true   # splash "verse of the day" on/off
+max_width         = 80     # reading pane max width in cols
+compare_word_diff = true   # highlight diverging words across compare panes (Ctrl-W d)
 
 [updates]
 check            = true   # notify-only update check on the splash (≤ once/24h)

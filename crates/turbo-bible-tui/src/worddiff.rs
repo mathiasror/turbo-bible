@@ -52,10 +52,11 @@ pub struct DiffInput<'a> {
 /// punctuation and whitespace excluded (so `"loved,"` keys as `loved`) and
 /// case folded (so `"The"` and `"the"` don't flag as different).
 ///
-/// Shared by both sides of the feature: the consensus is built from these
-/// keys, and the renderer tests each displayed word the same way, so the two
-/// agree on what counts as a "word".
-pub fn word_keys(text: &str) -> impl Iterator<Item = String> + '_ {
+/// The renderer ([`crate::render`]) independently applies the same rule
+/// (`unicode_word_indices()` + `to_lowercase()` — it needs the byte offsets,
+/// which this iterator drops), so the keys it tests against these consensus
+/// sets agree on what counts as a "word". This is the canonical definition.
+fn word_keys(text: &str) -> impl Iterator<Item = String> + '_ {
     text.unicode_words().map(str::to_lowercase)
 }
 
@@ -88,7 +89,9 @@ pub fn compute(inputs: &[DiffInput]) -> Vec<PaneDiff> {
 
 /// Fill `out` for one group of two or more aligned panes.
 fn diff_group(inputs: &[DiffInput], members: &[usize], out: &mut [PaneDiff]) {
-    // Per member: verse number → that verse's key set. Built once.
+    // Per member: verse number → that verse's key set. Built once, in `members`
+    // order — so `per_pane[k]` is the verse map for pane `members[k]`. The
+    // write-back loop below relies on that alignment (`per_pane.iter().zip(members)`).
     let per_pane: Vec<HashMap<i64, HashSet<String>>> = members
         .iter()
         .map(|&i| {
@@ -253,6 +256,44 @@ mod tests {
         let a = [(1i64, "alpha beta gamma")];
         let diffs = compute(&[input("en", &a)]);
         assert!(keys(&diffs, 0, 1).is_empty());
+    }
+
+    #[test]
+    fn versification_gap_compares_per_verse_not_per_group() {
+        // Verse 2 exists in panes 0 and 2 but not pane 1 (a real versification
+        // gap). Consensus for verse 2 is over the panes that carry it, so the
+        // denominator is 2, not the group size of 3.
+        let a = [(1i64, "shared word"), (2i64, "alpha beta")];
+        let b = [(1i64, "shared word")]; // no verse 2
+        let c = [(1i64, "shared word"), (2i64, "alpha gamma")];
+        let diffs = compute(&[input("en", &a), input("en", &b), input("en", &c)]);
+        // Verse 1: identical across all three → nothing.
+        assert!(keys(&diffs, 0, 1).is_empty());
+        // Verse 2: "alpha" is in both present panes; "beta"/"gamma" diverge.
+        assert_eq!(keys(&diffs, 0, 2), vec!["beta"]);
+        assert_eq!(keys(&diffs, 2, 2), vec!["gamma"]);
+        // Pane 1 has no verse 2 → no entry at all.
+        assert!(keys(&diffs, 1, 2).is_empty());
+    }
+
+    #[test]
+    fn verse_present_in_only_one_pane_is_never_flagged() {
+        // Verse 2 exists only in pane 0 → nothing to compare against.
+        let a = [(1i64, "shared"), (2i64, "lonely verse text")];
+        let b = [(1i64, "shared")];
+        let diffs = compute(&[input("en", &a), input("en", &b)]);
+        assert!(keys(&diffs, 0, 2).is_empty());
+    }
+
+    #[test]
+    fn duplicate_word_in_one_pane_is_not_flagged() {
+        // "love" appears twice in pane 0, once in pane 1. The set model counts
+        // per-pane presence, not occurrences, so it stays calm in both.
+        let a = [(1i64, "love love peace")];
+        let b = [(1i64, "love peace")];
+        let diffs = compute(&[input("en", &a), input("en", &b)]);
+        assert!(keys(&diffs, 0, 1).is_empty());
+        assert!(keys(&diffs, 1, 1).is_empty());
     }
 
     #[test]

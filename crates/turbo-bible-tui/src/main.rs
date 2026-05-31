@@ -1846,13 +1846,16 @@ fn dispatch_reading(
         Action::ToggleWordDiff => {
             // Session toggle; the `[reading] compare_word_diff` config sets the
             // initial state. A transient confirms it even when no diverging
-            // words are on screen (or no compare pane is open yet).
+            // words are on screen. With a single pane the overlay has nothing
+            // to act on yet, so the on-hint points at how to see it — mirroring
+            // the context-aware `Ctrl-W q` "Only one pane" message.
             state.compare_word_diff = !state.compare_word_diff;
-            state.set_transient(if state.compare_word_diff {
-                "Word diff on"
-            } else {
-                "Word diff off"
-            });
+            let msg = match (state.compare_word_diff, state.panes.len() >= 2) {
+                (true, true) => "Word diff on",
+                (true, false) => "Word diff on \u{2014} open a compare pane (Ctrl-W v) to see it",
+                (false, _) => "Word diff off",
+            };
+            state.set_transient(msg);
         }
         _ => {
             let f = state.focus;
