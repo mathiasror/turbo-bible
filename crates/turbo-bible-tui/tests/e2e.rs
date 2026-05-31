@@ -635,3 +635,40 @@ fn out_of_range_chapter_clamps_to_last() {
         "John has 21 chapters; an over-range request should clamp to 21; got:\n{st}"
     );
 }
+
+/// Send a raw SGR mouse report (`ESC [ < btn ; col ; row M/m`) and pause for the
+/// event poll, mirroring [`key`]. `final_byte` is `'M'` for press/drag, `'m'`
+/// for release; `btn` is 0 for the left button, 32 for a left-drag.
+fn mouse(p: &mut PtySession, btn: u8, col: u16, row: u16, final_byte: char) {
+    p.send(&format!("\x1b[<{btn};{col};{row}{final_byte}"))
+        .unwrap();
+    p.flush().unwrap();
+    sleep(Duration::from_millis(250));
+}
+
+/// Smoke test: a left press → drag → release sequence in the reading view must
+/// not panic the run loop, and the app must still quit cleanly. rexpect spawns a
+/// 0-width PTY (see the compare-pane tests), so the panes have no real geometry
+/// here — this exercises the mouse event wiring end-to-end without asserting
+/// cursor movement (the row→verse mapping is covered by the render/splash unit
+/// tests). It guards against a regression that breaks the event loop on a click.
+#[test]
+fn mouse_press_drag_release_does_not_crash_the_loop() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "ROM", "--chapter", "8"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    // Left press, drag down two rows, release — into the body, away from the
+    // bottom status row.
+    mouse(&mut p, 0, 10, 10, 'M');
+    mouse(&mut p, 32, 10, 12, 'M');
+    mouse(&mut p, 0, 10, 12, 'm');
+    // The loop is still alive and responsive: `q` quits and state persists.
+    key(&mut p, "q");
+    p.exp_eof().unwrap();
+
+    let st = read(&state_path(&tmp));
+    assert!(st.contains("book = \"ROM\""), "got:\n{st}");
+}

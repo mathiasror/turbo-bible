@@ -445,6 +445,43 @@ pub fn line_index_for_verse(lines: &[RenderedLine], verse: i64) -> usize {
     lines.iter().position(|rl| rl.verse == verse).unwrap_or(0)
 }
 
+/// The vertical scroll offset (index of the top visible rendered line) the
+/// reading pane uses to keep `cursor_line` about a third of the way down a
+/// `viewport`-row window over a chapter of `rendered_len` lines. Extracted so
+/// the draw ([`crate::ui::passage::PassageView`]) and the mouse hit-test
+/// ([`verse_at_screen_row`]) agree on which line sits at the pane's top edge.
+#[must_use]
+pub fn scroll_offset(rendered_len: usize, cursor_line: usize, viewport: usize) -> u16 {
+    let target_top = cursor_line.saturating_sub(viewport / 3);
+    let max_top = rendered_len.saturating_sub(viewport);
+    // Scroll fits in `u16`: the rendered chapter is bounded by visible rows ×
+    // wrap width; clamp to u16::MAX in the (unreachable) case where it doesn't.
+    u16::try_from(target_top.min(max_top)).unwrap_or(u16::MAX)
+}
+
+/// Map an absolute terminal `click_row` back to the verse it lands on, given a
+/// pane whose text interior starts at screen row `content_top` and is scrolled
+/// by `scroll` rendered lines. A click on a heading/blank row snaps to the
+/// nearest verse (scanning downward first). Returns `None` when the row is
+/// above the interior or past the last rendered line — e.g. the empty space
+/// below a short chapter — so the caller can leave the cursor put.
+#[must_use]
+pub fn verse_at_screen_row(
+    rendered: &[RenderedLine],
+    scroll: u16,
+    content_top: u16,
+    click_row: u16,
+) -> Option<i64> {
+    if click_row < content_top {
+        return None;
+    }
+    let idx = usize::from(scroll) + usize::from(click_row - content_top);
+    if idx >= rendered.len() {
+        return None;
+    }
+    nearest_verse(rendered, idx, true)
+}
+
 /// The verse the cursor should land on after paging `line_delta` rendered rows
 /// (negative scrolls up) from `from_verse`, given this chapter's layout at
 /// `wrap_width`. This is vim `Ctrl-D` / `Ctrl-F` semantics: a "page" is a span
@@ -598,6 +635,67 @@ mod render_tests {
             .iter()
             .find(|rl| rl.verse == verse)
             .unwrap_or_else(|| panic!("no rendered line for verse {verse}"))
+    }
+
+    /// A bare rendered line tagged with `verse` (0 == heading/blank).
+    fn rl(verse: i64) -> RenderedLine {
+        RenderedLine {
+            line: Line::from(""),
+            verse,
+        }
+    }
+
+    #[test]
+    fn scroll_offset_keeps_cursor_a_third_down_and_clamps() {
+        // Mid-chapter: cursor a third of the viewport down from the top.
+        assert_eq!(scroll_offset(100, 50, 30), 40);
+        // Near the top: target saturates to 0 (can't scroll above line 0).
+        assert_eq!(scroll_offset(10, 5, 30), 0);
+        // Near the end: clamped to max_top (rendered_len - viewport).
+        assert_eq!(scroll_offset(100, 95, 30), 70);
+        // Degenerate inputs don't panic.
+        assert_eq!(scroll_offset(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn verse_at_screen_row_maps_rows_and_snaps_headings() {
+        // Line indices: 0 blank, 1 v1, 2 v1 (wrap), 3 v2, 4 heading, 5 v3.
+        let lines = vec![rl(0), rl(1), rl(1), rl(2), rl(0), rl(3)];
+        let top = 5; // pane interior starts at screen row 5; idx = row - top
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 5), Some(1)); // blank snaps down
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 6), Some(1));
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 7), Some(1)); // v1's wrapped tail
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 8), Some(2));
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 9), Some(3)); // heading snaps down to v3
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 10), Some(3));
+        // Past the last rendered line, and above the interior: no verse.
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 11), None);
+        assert_eq!(verse_at_screen_row(&lines, 0, top, 4), None);
+    }
+
+    #[test]
+    fn verse_at_screen_row_accounts_for_scroll() {
+        let lines = vec![rl(0), rl(1), rl(1), rl(2), rl(0), rl(3)];
+        // Scrolled down 2 lines: the top visible row is index 2 (v1's tail).
+        assert_eq!(verse_at_screen_row(&lines, 2, 0, 0), Some(1));
+        assert_eq!(verse_at_screen_row(&lines, 2, 0, 1), Some(2));
+    }
+
+    #[test]
+    fn click_round_trips_to_cursor_verse_through_the_real_renderer() {
+        // The cursor line, projected to its on-screen row via the shared scroll
+        // helper, must resolve back to the cursor verse — ties verse_at_screen_row,
+        // scroll_offset, and line_index_for_verse to what the draw lays out.
+        let p = passage_with(vec![v(1, "alpha"), v(2, "beta"), v(3, "gamma")], vec![]);
+        let rendered = render_passage(&p, 2, None, &BTreeSet::new(), None, 40);
+        let viewport = 10;
+        let cursor_line = line_index_for_verse(&rendered, 2);
+        let scroll = scroll_offset(rendered.len(), cursor_line, viewport);
+        let screen_row = u16::try_from(cursor_line - scroll as usize).unwrap();
+        assert_eq!(
+            verse_at_screen_row(&rendered, scroll, 0, screen_row),
+            Some(2)
+        );
     }
 
     /// Concatenate every span's content into the raw printable text for a line.
