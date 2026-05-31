@@ -353,7 +353,7 @@ Inside `crates/turbo-bible-tui/src/`:
 - `ui/translations.rs` — translation picker dialog
 - `ui/` — desktop, menubar, statusbar, passage view, sidebar, dialogs
 
-## What's not in v1
+## Known limitations
 
 - Line-level poetry layout (intra-verse poetic lines / Hebrew parallelism).
   Known poetic passages — Psalms, Proverbs, Song of Solomon, Lamentations,
