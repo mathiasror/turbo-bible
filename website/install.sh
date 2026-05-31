@@ -9,9 +9,12 @@
 # Usage:  curl -fsSL turbo.bible/install.sh | sh
 #
 # Env vars:
-#   TB_VERSION=v0.1.0   Pin to a specific tag instead of latest.
+#   TB_VERSION=v0.2.0   Pin to a specific tag instead of latest.
 #   TB_INSTALL_DIR=...  Override the install directory.
-#   TB_REPO=mathiasror/turbo-bible
+#   TB_REPO=...         Pull from a different fork/mirror. Power-user
+#                       escape hatch: the binary is checksum-verified
+#                       against *that* repo's own release, so only point
+#                       it at a source you trust.
 #
 # Exits non-zero on any failure. No telemetry.
 

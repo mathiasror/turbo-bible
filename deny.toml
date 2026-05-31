@@ -30,9 +30,6 @@ allow = [
     # BSL-1.0 is OSI-approved and FSF-Free; arboard's Windows backend
     # (clipboard-win, error-code) uses it. Permissive, no copyleft.
     "BSL-1.0",
-    # CDLA-Permissive-2.0 is the Linux Foundation's permissive data
-    # license; webpki-roots distributes Mozilla's CA bundle under it.
-    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "Unicode-3.0",
