@@ -255,7 +255,9 @@ pub fn load_cache() -> UpdateCache {
 /// The dir can't be created, TOML serialization fails, or the write fails.
 fn write_cache_to(config_dir: &Path, cache: &UpdateCache) -> Result<()> {
     std::fs::create_dir_all(config_dir)?;
-    std::fs::write(cache_path_in(config_dir), toml::to_string_pretty(cache)?)?;
+    let txt = toml::to_string_pretty(cache)?;
+    // Atomic rename so a crash mid-write can't truncate the throttle cache.
+    paths::atomic_write(&cache_path_in(config_dir), txt.as_bytes())?;
     Ok(())
 }
 

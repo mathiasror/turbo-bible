@@ -45,6 +45,14 @@ fn launch(tmp: &TempDir, extra: &[&str]) -> PtySession {
     // deterministically, regardless of whether the CI runner has
     // connectivity or the release tag exists yet.
     cmd.env("TB_RELEASE_URL", "https://127.0.0.1:1");
+    // The splash also runs a notify-only update check against GitHub. The
+    // `env_clear()` above wiped `CI` (which would otherwise suppress it), so
+    // without this the check would reach the real github.com on every launch —
+    // breaking the "no e2e test ever touches the real network" guarantee and
+    // making the suite flaky/slow offline. Disable it outright; pointing
+    // `TB_UPDATE_CHECK_URL` at a dead port is belt-and-suspenders.
+    cmd.env("TB_NO_UPDATE_CHECK", "1");
+    cmd.env("TB_UPDATE_CHECK_URL", "https://127.0.0.1:1");
     for a in extra {
         cmd.arg(a);
     }

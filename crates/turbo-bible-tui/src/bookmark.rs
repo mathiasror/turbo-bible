@@ -139,7 +139,9 @@ impl BookmarkStore {
         fs::create_dir_all(&dir)?;
         let path = bookmarks_path()?;
         let txt = toml::to_string_pretty(self)?;
-        fs::write(path, txt)?;
+        // Atomic rename — a crash mid-write must never truncate the user's
+        // bookmarks (the whole store is rewritten on every add/delete).
+        paths::atomic_write(&path, txt.as_bytes())?;
         if let Ok(legacy) = legacy_bookmarks_path() {
             let _ = fs::remove_file(legacy);
         }
