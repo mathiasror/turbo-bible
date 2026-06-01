@@ -1,6 +1,6 @@
 //! Find dialog (F3 / `/`). FTS5 search with live results.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -78,7 +78,15 @@ impl FindDialog {
                 self.refresh(db);
                 FindOutcome::Continue
             }
-            KeyCode::Char(c) => {
+            // Ctrl-U clears the query (matches the splash filter); without this
+            // the `Char(c)` arm below would otherwise insert a literal 'u'.
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.clear();
+                self.refresh(db);
+                FindOutcome::Continue
+            }
+            // Gate insertion on no-Ctrl so Ctrl-W / Ctrl-<x> don't type a literal.
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.input.push(c);
                 self.refresh(db);
                 FindOutcome::Continue
