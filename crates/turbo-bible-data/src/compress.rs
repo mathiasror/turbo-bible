@@ -10,7 +10,6 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags};
@@ -31,6 +30,9 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
     let mut translations = Vec::new();
     let mut xrefs_entry: Option<XrefsEntry> = None;
     let mut scrollmapper_commit = String::new();
+    // Carried out of the per-translation meta (not the wall clock) so the
+    // manifest is reproducible: identical inputs → identical manifest bytes.
+    let mut built_at: Option<i64> = None;
 
     let mut entries: Vec<_> = fs::read_dir(in_dir)
         .with_context(|| format!("read_dir {}", in_dir.display()))?
@@ -70,6 +72,7 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
                     meta.source_commit
                 );
             }
+            built_at.get_or_insert(meta.built_at);
             translations.push(TranslationEntry {
                 code: meta.code,
                 name: meta.name,
@@ -89,13 +92,8 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
         bail!("no translation .db files found in {}", in_dir.display());
     }
 
-    let built_at = i64::try_from(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .context("system clock is before the unix epoch")?
-            .as_secs(),
-    )
-    .context("build timestamp overflows i64")?;
+    let built_at =
+        built_at.context("no translation .db provided a built_at (only xrefs.db present?)")?;
 
     let manifest = Manifest {
         schema_version: 1,
@@ -174,15 +172,16 @@ struct DbMeta {
     license: String,
     attribution: String,
     source_commit: String,
+    built_at: i64,
     verse_count: i64,
 }
 
 fn read_meta(db: &Path) -> Result<DbMeta> {
     let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let (code, name, language, license, attribution, source_commit, verse_count) = conn
+    let (code, name, language, license, attribution, source_commit, built_at, verse_count) = conn
         .query_row(
-            "SELECT code, name, language, license, attribution, source_commit, verse_count \
-             FROM meta LIMIT 1",
+            "SELECT code, name, language, license, attribution, source_commit, built_at, \
+             verse_count FROM meta LIMIT 1",
             [],
             |row| {
                 Ok((
@@ -193,6 +192,7 @@ fn read_meta(db: &Path) -> Result<DbMeta> {
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
                 ))
             },
         )
@@ -204,6 +204,7 @@ fn read_meta(db: &Path) -> Result<DbMeta> {
         license,
         attribution,
         source_commit,
+        built_at,
         verse_count,
     })
 }

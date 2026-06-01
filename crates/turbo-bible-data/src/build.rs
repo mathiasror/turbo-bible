@@ -5,7 +5,6 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
@@ -21,6 +20,9 @@ use crate::xrefs;
 pub fn run(scrollmapper: &Path, manifest_path: &Path, out: &Path, only: &[String]) -> Result<()> {
     let source = ManifestSource::load(manifest_path)?;
     let scrollmapper_commit = git_head_commit(scrollmapper)?;
+    // Resolved once and stamped into every translation so a single build run is
+    // internally consistent and reproducible (see `resolve_built_at`).
+    let built_at = resolve_built_at(scrollmapper)?;
     fs::create_dir_all(out).with_context(|| format!("create {}", out.display()))?;
 
     let filter: Option<Vec<&str>> =
@@ -34,8 +36,14 @@ pub fn run(scrollmapper: &Path, manifest_path: &Path, out: &Path, only: &[String
         }
         let db_path = out.join(format!("{}.db", entry.code));
         eprintln!("→ build {} -> {}", entry.code, db_path.display());
-        build_translation(scrollmapper, entry, &db_path, &scrollmapper_commit)
-            .with_context(|| format!("build {}", entry.code))?;
+        build_translation(
+            scrollmapper,
+            entry,
+            &db_path,
+            &scrollmapper_commit,
+            built_at,
+        )
+        .with_context(|| format!("build {}", entry.code))?;
     }
 
     // xrefs only when nothing was filtered or `xrefs` was implied.
@@ -52,6 +60,7 @@ fn build_translation(
     entry: &TranslationEntry,
     db_path: &Path,
     scrollmapper_commit: &str,
+    built_at: i64,
 ) -> Result<()> {
     if db_path.exists() {
         fs::remove_file(db_path).with_context(|| format!("remove stale {}", db_path.display()))?;
@@ -67,7 +76,8 @@ fn build_translation(
     populate_book(&tx)?;
     populate_book_label(&tx, &entry.code)?;
     let verse_count = populate_verse(&tx, &entry.code, &parsed)?;
-    populate_meta(&tx, entry, scrollmapper_commit, verse_count)?;
+    assert_canonical_coverage(&tx, &entry.code)?;
+    populate_meta(&tx, entry, scrollmapper_commit, built_at, verse_count)?;
     tx.commit()?;
 
     conn.execute_batch("VACUUM; PRAGMA optimize;")?;
@@ -150,15 +160,9 @@ fn populate_meta(
     tx: &rusqlite::Transaction<'_>,
     entry: &TranslationEntry,
     scrollmapper_commit: &str,
+    built_at: i64,
     verse_count: i64,
 ) -> Result<()> {
-    let built_at = i64::try_from(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .context("system clock is before the unix epoch")?
-            .as_secs(),
-    )
-    .context("build timestamp overflows i64")?;
     tx.execute(
         "INSERT INTO meta
            (code, name, language, license, attribution,
@@ -199,6 +203,62 @@ fn git_head_commit(scrollmapper: &Path) -> Result<String> {
         .context("git output not utf-8")?
         .trim()
         .to_string())
+}
+
+/// A deterministic build timestamp, so two builds from the identical pinned
+/// scrollmapper ref produce byte-identical `.db` files (and therefore stable
+/// sha256s in the manifest). Precedence: `SOURCE_DATE_EPOCH` (the
+/// reproducible-builds standard) if set, else the scrollmapper HEAD commit's
+/// committer date — which keeps a default build reproducible without any
+/// environment setup, since the recorded provenance and the timestamp then
+/// share one source.
+fn resolve_built_at(scrollmapper: &Path) -> Result<i64> {
+    if let Ok(raw) = std::env::var("SOURCE_DATE_EPOCH") {
+        return raw
+            .trim()
+            .parse()
+            .with_context(|| format!("SOURCE_DATE_EPOCH is not an integer: {raw:?}"));
+    }
+    git_commit_unixtime(scrollmapper)
+}
+
+/// `git -C <scrollmapper> show -s --format=%ct HEAD` — the HEAD commit's
+/// committer date as a Unix timestamp.
+fn git_commit_unixtime(scrollmapper: &Path) -> Result<i64> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(scrollmapper)
+        .args(["show", "-s", "--format=%ct", "HEAD"])
+        .output()
+        .with_context(|| format!("invoke git on {}", scrollmapper.display()))?;
+    if !output.status.success() {
+        bail!(
+            "git -C {} show -s --format=%ct HEAD failed: {}",
+            scrollmapper.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    String::from_utf8(output.stdout)
+        .context("git output not utf-8")?
+        .trim()
+        .parse()
+        .context("git committer timestamp not an integer")
+}
+
+/// Guard against a truncated or partial source export silently shipping: every
+/// one of the 66 canonical books must have received at least one verse. The
+/// bundled translations are full Bibles, so a missing book means the upstream
+/// JSON changed shape — fail the build rather than publish a hole.
+fn assert_canonical_coverage(tx: &rusqlite::Transaction<'_>, code: &str) -> Result<()> {
+    let present: i64 = tx.query_row("SELECT COUNT(DISTINCT book) FROM verse", [], |r| r.get(0))?;
+    let expected = i64::try_from(BOOKS.len()).unwrap_or(i64::MAX);
+    if present != expected {
+        bail!(
+            "{code}: only {present} of {expected} canonical books have verses — \
+             source export looks truncated"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -292,5 +352,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v2, "and the earth was without form");
+    }
+
+    #[test]
+    fn canonical_coverage_rejects_a_truncated_build() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(crate::schema::TRANSLATION_SCHEMA_SQL)
+            .expect("apply schema");
+        let tx = conn.transaction().expect("begin tx");
+        populate_book(&tx).expect("populate canonical books");
+
+        // Only Genesis gets a verse — 1 of the 66 canonical books.
+        let json = r#"{"translation":"t","books":[
+            {"name":"Genesis","chapters":[{"chapter":1,"verses":[{"verse":1,"text":"x"}]}]}
+        ]}"#;
+        let parsed: TranslationJson = serde_json::from_str(json).expect("parse json");
+        populate_verse(&tx, "en-test", &parsed).expect("populate_verse");
+
+        let err = assert_canonical_coverage(&tx, "en-test")
+            .expect_err("a 1-of-66 build must be rejected");
+        assert!(
+            err.to_string().contains("truncated"),
+            "unexpected error: {err}"
+        );
     }
 }
