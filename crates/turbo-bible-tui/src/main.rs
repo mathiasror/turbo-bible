@@ -314,9 +314,9 @@ struct LoopState {
     /// and severity, cleared after a short delay by [`LoopState::tick`]
     /// (warnings linger a touch longer and paint the status pill red).
     transient_msg: Option<(String, Instant, TransientKind)>,
-    /// In-flight translation download, if any. Polled each loop turn by
-    /// [`poll_download`]; rendered as an animated `-- Downloading … --`
-    /// mode tag. Only one runs at a time.
+    /// In-flight background download (a translation, or the shared xrefs DB),
+    /// if any. Polled each loop turn by [`poll_download`]; rendered as an
+    /// animated `-- Downloading … --` mode tag. Only one runs at a time.
     download: Option<DownloadJob>,
     /// In-flight startup update check, if one was spawned. Polled each loop
     /// turn by [`poll_update_check`]; on a newer-version result it seeds the
@@ -333,22 +333,51 @@ struct LoopState {
     mouse_drag: Option<MouseDrag>,
 }
 
-/// A translation download running on a worker thread. The worker does
-/// only the filesystem-bound fetch (`curl` + sha256 + zstd-decompress +
-/// atomic rename); it never touches the [`Db`], so the connection set
-/// stays single-threaded. The main loop registers the new connection and
-/// applies the pick when the result lands — see [`poll_download`].
+/// What a background download is fetching, and how to apply it once the
+/// bytes are on disk. Both variants share the single in-flight slot and the
+/// same animated indicator; only the apply step differs (see [`poll_download`]).
+enum DownloadKind {
+    /// A translation `<code>.db`. On success the new connection is registered
+    /// with the [`Db`] and the picker's pick is applied per `intent`.
+    Translation {
+        /// Translation code being fetched (e.g. `nb-1930`).
+        code: String,
+        /// Whether the originating picker meant to switch the focused pane
+        /// (`t`) or open a new compare pane (`Ctrl-W v`), captured so reopening
+        /// the picker with a different intent mid-fetch doesn't redirect this
+        /// apply. Only the *intent* is captured, not the originating pane: a
+        /// `SwitchFocused` apply still resolves against the live `state.focus`,
+        /// so moving focus while the fetch runs lands the switch on whatever
+        /// pane is focused when the result arrives (no crash — just a
+        /// different target).
+        intent: PickerIntent,
+    },
+    /// The shared `xrefs.db`, triggered from the K-popup affordance when the
+    /// cross-references dataset isn't installed yet. On success it's
+    /// re-ATTACHed onto every connection and the visible passages are reloaded
+    /// so markers, the sidebar, and the popup reflect the new data.
+    Xrefs,
+}
+
+impl DownloadKind {
+    /// Display name for the animated indicator and the outcome copy
+    /// (`nb-1930` / `cross-references`).
+    fn display_name(&self) -> &str {
+        match self {
+            DownloadKind::Translation { code, .. } => code,
+            DownloadKind::Xrefs => "cross-references",
+        }
+    }
+}
+
+/// A background download running on a worker thread. The worker does only
+/// the filesystem-bound fetch (`curl` + sha256 + zstd-decompress + atomic
+/// rename); it never touches the [`Db`], so the connection set stays
+/// single-threaded. The main loop applies the result — registering a
+/// connection or re-attaching xrefs — when it lands (see [`poll_download`]).
 struct DownloadJob {
-    /// Translation code being fetched (e.g. `nb-1930`).
-    code: String,
-    /// Whether the originating picker meant to switch the focused pane (`t`)
-    /// or open a new compare pane (`Ctrl-W v`), captured so reopening the
-    /// picker with a different intent mid-fetch doesn't redirect this apply.
-    /// Only the *intent* is captured, not the originating pane: a
-    /// `SwitchFocused` apply still resolves against the live `state.focus`, so
-    /// moving focus while the fetch runs lands the switch on whatever pane is
-    /// focused when the result arrives (no crash — just a different target).
-    intent: PickerIntent,
+    /// What's being fetched and how to apply it.
+    kind: DownloadKind,
     /// When the worker was spawned — drives the indicator's animation.
     started: Instant,
     /// Yields exactly one value: `Ok(())` when the `.db` is installed, or
@@ -750,7 +779,8 @@ enum DownloadResult {
     Ready,
     /// The worker's `curl` + sha256 + zstd-decompress step failed.
     FetchFailed(anyhow::Error),
-    /// The fetch succeeded but registering the new connection did not.
+    /// The fetch succeeded but applying it did not — registering the new
+    /// translation connection, or re-ATTACHing the freshly-fetched xrefs DB.
     RegisterFailed(anyhow::Error),
     /// The worker dropped the sender without sending a value — it panicked.
     WorkerExited,
@@ -769,23 +799,23 @@ struct DownloadMessages {
 /// Map a finished download to its warning + transient copy. Success gets a
 /// brief "ready" transient (and no warning); each failure mode gets a message
 /// that names what actually broke — fetch vs. registration vs. a dead worker.
-fn download_outcome(code: &str, result: &DownloadResult) -> DownloadMessages {
+fn download_outcome(name: &str, result: &DownloadResult) -> DownloadMessages {
     match result {
         DownloadResult::Ready => DownloadMessages {
-            warning: format!("{code} ready"),
-            transient: format!("{code} ready"),
+            warning: format!("{name} ready"),
+            transient: format!("{name} ready"),
         },
         DownloadResult::FetchFailed(e) => DownloadMessages {
-            warning: format!("download {code} failed: {e}"),
-            transient: format!("Download of {code} failed"),
+            warning: format!("download {name} failed: {e}"),
+            transient: format!("Download of {name} failed"),
         },
         DownloadResult::RegisterFailed(e) => DownloadMessages {
-            warning: format!("registering {code} failed: {e}"),
-            transient: format!("Could not open {code}"),
+            warning: format!("registering {name} failed: {e}"),
+            transient: format!("Could not open {name}"),
         },
         DownloadResult::WorkerExited => DownloadMessages {
-            warning: format!("download {code} failed: worker exited"),
-            transient: format!("Download of {code} failed"),
+            warning: format!("download {name} failed: worker exited"),
+            transient: format!("Download of {name} failed"),
         },
     }
 }
@@ -816,17 +846,31 @@ fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>)
         "guarded by the as_ref() above — `state.download` cannot have transitioned to None \
          between the peek and the take on a single-threaded event loop",
     );
+    // The "apply" step differs by kind: a translation registers a new
+    // connection; xrefs re-ATTACHes the freshly-downloaded file onto every
+    // open connection (the ATTACH is bound at connection-open, so the swap
+    // isn't visible until then). Both can fail post-fetch → RegisterFailed.
     let result = match recv {
-        Ok(Ok(())) => match db.add_translation(&job.code) {
-            Ok(()) => DownloadResult::Ready,
-            Err(e) => DownloadResult::RegisterFailed(e),
+        Ok(Ok(())) => match &job.kind {
+            DownloadKind::Translation { code, .. } => match db.add_translation(code) {
+                Ok(()) => DownloadResult::Ready,
+                Err(e) => DownloadResult::RegisterFailed(e),
+            },
+            DownloadKind::Xrefs => {
+                let path = db.translations_dir().join("xrefs.db");
+                match db.attach_xrefs(&path) {
+                    Ok(()) => DownloadResult::Ready,
+                    Err(e) => DownloadResult::RegisterFailed(e),
+                }
+            }
         },
         Ok(Err(e)) => DownloadResult::FetchFailed(e),
         // Worker dropped the sender without a value — it panicked.
         Err(TryRecvError::Disconnected) => DownloadResult::WorkerExited,
         Err(TryRecvError::Empty) => unreachable!("returned early above"),
     };
-    let DownloadMessages { warning, transient } = download_outcome(&job.code, &result);
+    let DownloadMessages { warning, transient } =
+        download_outcome(job.kind.display_name(), &result);
     // Keep the stderr trail (warnings) and give immediate in-TUI feedback
     // (transient) — the async fetch removed the old synchronous freeze that
     // used to signal "something happened".
@@ -834,9 +878,29 @@ fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>)
     state.set_transient(transient);
 
     if matches!(result, DownloadResult::Ready) {
-        state.picker_intent = job.intent;
-        let mut ctx = AppCtx { db, warnings };
-        apply_translation_pick(state, &mut ctx, &job.code)?;
+        match job.kind {
+            DownloadKind::Translation { code, intent } => {
+                state.picker_intent = intent;
+                let mut ctx = AppCtx { db, warnings };
+                apply_translation_pick(state, &mut ctx, &code)?;
+            }
+            // xrefs are now attached: reload every pane so the just-fetched
+            // refs show up (markers, sidebar, and a re-opened K-popup).
+            DownloadKind::Xrefs => reload_panes_after_xrefs(state, db)?,
+        }
+    }
+    Ok(())
+}
+
+/// Re-load every pane's current chapter after the cross-references DB was
+/// swapped in, so xref markers, the References sidebar, and the K-popup all
+/// reflect the freshly-attached data (the passages loaded before the swap
+/// carry the empty stand-in's zero refs). Each pane reloads in its *own*
+/// translation; cursor and scroll are untouched — only the passage payload
+/// refreshes.
+fn reload_panes_after_xrefs(state: &mut LoopState, db: &Db) -> Result<()> {
+    for pane in &mut state.panes {
+        pane.passage = db.load_passage_for(&pane.translation, &pane.pos.book, pane.pos.chapter)?;
     }
     Ok(())
 }
@@ -922,13 +986,13 @@ fn poll_update_check(state: &mut LoopState, warnings: &mut Vec<String>) {
 /// The animated mode-tag text for an in-flight download — a trailing
 /// ellipsis that grows 0→3 dots roughly every 300 ms so the user sees the
 /// UI is alive, not frozen. Pure (time in, text out) so it's unit-testable.
-fn download_label(code: &str, elapsed: Duration) -> String {
+fn download_label(name: &str, elapsed: Duration) -> String {
     let dots = (elapsed.as_millis() / 300) % 4;
     // `dots` is `% 4`, so always 0..=3; the `try_from` (over a plain `as`)
     // dodges `clippy::cast_possible_truncation` and the `unwrap_or` is
     // unreachable — the value always fits a `usize`.
     format!(
-        "-- Downloading {code}{} --",
+        "-- Downloading {name}{} --",
         ".".repeat(usize::try_from(dots).unwrap_or(0))
     )
 }
@@ -1172,7 +1236,10 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
     // the pill red (a download keeps the neutral pill).
     let (mode_tag, status_warn) = if let Some(job) = &state.download {
         (
-            Cow::Owned(download_label(&job.code, job.started.elapsed())),
+            Cow::Owned(download_label(
+                job.kind.display_name(),
+                job.started.elapsed(),
+            )),
             false,
         )
     } else {
@@ -1436,6 +1503,33 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 state.dialog = Dialog::None;
                 Ok(DispatchStep::Continue)
             }
+            FootnoteOutcome::FetchXrefs => {
+                // `d` on the affordance: download xrefs.db off the event loop,
+                // exactly like the translation picker (curl + sha256 +
+                // zstd-decompress on a worker thread, drained by
+                // `poll_download`), sharing the single in-flight slot. On
+                // success poll_download re-ATTACHes the file and reloads the
+                // panes so refs appear; close the popup now — the animated
+                // "-- Downloading cross-references… --" pill takes the status
+                // slot, and the user re-opens `K` to read the landed refs.
+                if state.download.is_some() {
+                    state.set_transient("A download is already in progress");
+                } else {
+                    let dir = ctx.db.translations_dir().to_path_buf();
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        // Receiver gone (app quit) just drops the result.
+                        let _ = tx.send(fetch::xrefs(&dir));
+                    });
+                    state.download = Some(DownloadJob {
+                        kind: DownloadKind::Xrefs,
+                        started: Instant::now(),
+                        rx,
+                    });
+                }
+                state.dialog = Dialog::None;
+                Ok(DispatchStep::Continue)
+            }
         },
         Dialog::Help(d) => {
             if matches!(d.handle(key), HelpOutcome::Cancel) {
@@ -1489,8 +1583,10 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                             let _ = tx.send(fetch::translation(&dir, &code_for_worker));
                         });
                         state.download = Some(DownloadJob {
-                            code,
-                            intent: state.picker_intent,
+                            kind: DownloadKind::Translation {
+                                code,
+                                intent: state.picker_intent,
+                            },
                             started: Instant::now(),
                             rx,
                         });
@@ -1704,7 +1800,11 @@ enum HistoryDir {
 }
 
 impl LoopState {
-    fn open_footnote_dialog(&mut self) {
+    /// Open the `K` notes/cross-reference popup for the cursor verse.
+    /// `can_fetch_xrefs` (the caller's `Db::has_xrefs()` negated) turns the
+    /// popup into a one-key download affordance when the cross-references
+    /// dataset isn't installed yet — see [`FootnoteDialog`].
+    fn open_footnote_dialog(&mut self, can_fetch_xrefs: bool) {
         let pane = &self.panes[self.focus];
         let target = format!(
             "{}.{}.{}",
@@ -1728,7 +1828,7 @@ impl LoopState {
             "{} {}:{}",
             pane.passage.book_abbrev, pane.pos.chapter, pane.cursor_verse
         );
-        self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes, xrefs));
+        self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes, xrefs, can_fetch_xrefs));
     }
 
     fn history_step(&mut self, ctx: &mut AppCtx, dir: HistoryDir) -> Result<()> {
@@ -1950,7 +2050,9 @@ fn dispatch_reading(
         }
         Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation())),
         Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
-        Action::OpenFootnote => state.open_footnote_dialog(),
+        // Offer the fetch affordance only when the xrefs dataset isn't on disk
+        // (the empty stand-in, not the real openbible.info data).
+        Action::OpenFootnote => state.open_footnote_dialog(!ctx.db.has_xrefs()),
         Action::JumpBack => state.history_step(ctx, HistoryDir::Back)?,
         Action::JumpForward => state.history_step(ctx, HistoryDir::Forward)?,
         Action::CopyVerse => state.copy_verse(ctx),
@@ -2994,5 +3096,25 @@ mod tests {
         let m = download_outcome("nb-1930", &DownloadResult::WorkerExited);
         assert_eq!(m.warning, "download nb-1930 failed: worker exited");
         assert_eq!(m.transient, "Download of nb-1930 failed");
+    }
+
+    /// The xrefs job borrows the same label/outcome machinery as translations;
+    /// lock its user-facing copy so a careless edit can't ship "Downloading
+    ///  --" or "Download of xrefs failed" instead of the friendly name.
+    #[test]
+    fn xrefs_download_kind_copy_is_friendly() {
+        let kind = DownloadKind::Xrefs;
+        assert_eq!(kind.display_name(), "cross-references");
+        assert_eq!(
+            download_label(kind.display_name(), Duration::from_millis(0)),
+            "-- Downloading cross-references --"
+        );
+        let ready = download_outcome(kind.display_name(), &DownloadResult::Ready);
+        assert_eq!(ready.transient, "cross-references ready");
+        let failed = download_outcome(
+            kind.display_name(),
+            &DownloadResult::FetchFailed(anyhow::anyhow!("no network")),
+        );
+        assert_eq!(failed.transient, "Download of cross-references failed");
     }
 }

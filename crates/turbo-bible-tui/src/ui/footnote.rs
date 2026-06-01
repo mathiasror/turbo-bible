@@ -1,5 +1,7 @@
 //! Footnote popup (K). Shows every footnote attached to a given verse, lets
 //! the user navigate cross-references with ↑/↓ and follow them with Enter.
+//! When the cross-references dataset hasn't been downloaded yet, the popup
+//! instead offers a one-key (`d`) fetch affordance — see `can_fetch_xrefs`.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
@@ -28,6 +30,13 @@ pub struct FootnoteDialog {
     xrefs: Vec<XrefItem>,
     selected: usize,
     nav: ListNav,
+    /// `true` when the cross-references dataset isn't on disk yet (the
+    /// install-time empty stand-in, not the real openbible.info data — see
+    /// `Db::has_xrefs`). Turns the popup into a one-key fetch affordance:
+    /// pressing `d` emits [`FootnoteOutcome::FetchXrefs`]. When the real data
+    /// is present this is always `false`, even on a verse that happens to have
+    /// no cross-references (that's the ordinary empty state, not a missing DB).
+    can_fetch_xrefs: bool,
 }
 
 #[non_exhaustive]
@@ -38,10 +47,18 @@ pub enum FootnoteOutcome {
     Jump(Position),
     /// Open the selected cross-reference in a new compare pane (`s`).
     OpenSplit(Position),
+    /// Download the cross-references DB on demand (`d`, only offered when
+    /// [`FootnoteDialog::can_fetch_xrefs`] — i.e. the data isn't installed yet).
+    FetchXrefs,
 }
 
 impl FootnoteDialog {
-    pub fn new(verse_label: String, footnotes: Vec<Footnote>, xrefs: Vec<Xref>) -> Self {
+    pub fn new(
+        verse_label: String,
+        footnotes: Vec<Footnote>,
+        xrefs: Vec<Xref>,
+        can_fetch_xrefs: bool,
+    ) -> Self {
         let xrefs: Vec<XrefItem> = xrefs
             .into_iter()
             .map(|x| XrefItem {
@@ -59,6 +76,7 @@ impl FootnoteDialog {
             xrefs,
             selected: 0,
             nav: ListNav::default(),
+            can_fetch_xrefs,
         }
     }
 
@@ -103,6 +121,14 @@ impl FootnoteDialog {
                 .map_or(FootnoteOutcome::Continue, |item| {
                     FootnoteOutcome::OpenSplit(item.target.clone())
                 }),
+            // `d` fetches the cross-references DB — only when it isn't on disk
+            // yet (the affordance the render half advertises). A no-op key
+            // otherwise, so a stray `d` on a populated popup does nothing.
+            // Require an unmodified `d`: `Ctrl-D` (a reading-view half-page
+            // motion elsewhere) must not kick off a multi-MB download here.
+            KeyCode::Char('d') if self.can_fetch_xrefs && key.modifiers.is_empty() => {
+                FootnoteOutcome::FetchXrefs
+            }
             _ => FootnoteOutcome::Continue,
         }
     }
@@ -110,19 +136,26 @@ impl FootnoteDialog {
     #[allow(
         clippy::too_many_lines,
         reason = "two sections (footnotes, xrefs) + adaptive sizing + footer + \
-                  empty-state branch — all inline so the dialog stays a single \
-                  call site."
+                  empty-state and fetch-affordance branches — all inline so the \
+                  dialog stays a single call site."
     )]
     pub fn render(&self, outer: Rect, buf: &mut Buffer) {
-        let empty = self.footnotes.is_empty() && self.xrefs.is_empty();
-        let w: u16 = if empty {
+        // The fetch affordance takes over the body when the dataset is missing.
+        let show_fetch = self.can_fetch_xrefs;
+        // "Quiet" empty state: the verse genuinely has nothing to show *and*
+        // the dataset is installed — otherwise the fetch affordance shows.
+        let empty = self.footnotes.is_empty() && self.xrefs.is_empty() && !show_fetch;
+        let w: u16 = if empty || show_fetch {
             outer.width.saturating_sub(6).min(50)
         } else {
             outer.width.saturating_sub(6).min(80)
         };
         // Empty-state dialog shrinks to ~5 rows so it doesn't read as a render
-        // failure. Populated dialog gets the full 22-row max.
-        let h: u16 = if empty {
+        // failure; the fetch affordance needs a couple more for its two-line
+        // prompt; a populated dialog gets the full 22-row max.
+        let h: u16 = if show_fetch {
+            outer.height.saturating_sub(4).min(7)
+        } else if empty {
             outer.height.saturating_sub(4).min(5)
         } else {
             outer.height.saturating_sub(4).min(22)
@@ -149,6 +182,13 @@ impl FootnoteDialog {
         // Cross-reference entries — dim cyan (teal), no underline; the `→`
         // arrow already signals navigability. Mirrors sidebar.rs::xref_style.
         let xref_color = Style::new().fg(theme::teal()).bg(theme::blue());
+        // Footer hotkey + hint styles: the keycap reads bright (it's the thing
+        // to press), the surrounding prose stays calm grey.
+        let key_style = Style::new()
+            .fg(theme::bright_white())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
 
         let blank = || Line::from(Span::styled(" ".repeat(inner.width as usize), bg));
 
@@ -195,7 +235,22 @@ impl FootnoteDialog {
             lines.push(blank());
         }
 
-        if empty {
+        if show_fetch {
+            // Dataset not installed yet (cargo/brew copies start with the empty
+            // stand-in). Offer the one-key download in place of the (always
+            // empty) cross-reference list. The body poses the offer; the footer
+            // (below) owns the `d` keycap, so the key isn't echoed twice. `d` is
+            // handled in `handle`.
+            lines.push(Line::from(vec![
+                Span::styled("  ", bg),
+                Span::styled("Cross-references aren't downloaded yet.", body_style),
+            ]));
+            lines.push(blank());
+            lines.push(Line::from(vec![
+                Span::styled("  ", bg),
+                Span::styled("Fetch them? (~6 MB)", body_style),
+            ]));
+        } else if empty {
             lines.push(Line::from(vec![
                 Span::styled("  ", bg),
                 Span::styled(
@@ -230,15 +285,18 @@ impl FootnoteDialog {
         }
         scroll = scroll.min(max_scroll);
 
-        let key_style = Style::new()
-            .fg(theme::bright_white())
-            .bg(theme::blue())
-            .add_modifier(Modifier::BOLD);
-        let dim = Style::new().fg(theme::light_grey()).bg(theme::blue());
-        // Footer — only advertise navigation/Enter when there's something to
-        // navigate; otherwise just Esc close so the footer doesn't promise
-        // actions the empty body can't deliver.
-        let footer = if empty {
+        // Footer — advertise the fetch key when the dataset is missing, the
+        // navigation verbs when there's a list to walk, and just Esc otherwise,
+        // so the footer never promises an action the body can't deliver.
+        let footer = if show_fetch {
+            vec![
+                Span::styled("  ", bg),
+                Span::styled("d ", key_style),
+                Span::styled("fetch   ", dim),
+                Span::styled("Esc ", key_style),
+                Span::styled("cancel", dim),
+            ]
+        } else if empty {
             vec![
                 Span::styled("  ", bg),
                 Span::styled("Esc ", key_style),
@@ -313,7 +371,7 @@ mod tests {
                 to_verse_end: v,
             })
             .collect();
-        FootnoteDialog::new("John 3:16".to_string(), Vec::new(), xrefs)
+        FootnoteDialog::new("John 3:16".to_string(), Vec::new(), xrefs, false)
     }
 
     /// Collect every glyph in a single buffer row into a string, so a test can
@@ -424,7 +482,7 @@ mod tests {
     /// cancel`) and draws no scrollbar — there's nothing to scroll.
     #[test]
     fn empty_state_has_no_thumb_and_a_cancel_footer() {
-        let dlg = FootnoteDialog::new("John 3:16".to_string(), Vec::new(), Vec::new());
+        let dlg = FootnoteDialog::new("John 3:16".to_string(), Vec::new(), Vec::new(), false);
         let area = Rect::new(0, 0, 130, 34);
         let mut buf = Buffer::empty(area);
         dlg.render(area, &mut buf);
@@ -444,5 +502,50 @@ mod tests {
         }
         assert!(cancel, "empty-state footer must still show Esc cancel");
         assert!(!thumb, "empty state must not draw a scroll thumb");
+    }
+
+    /// When the dataset isn't installed (`can_fetch_xrefs = true`) the popup
+    /// advertises the one-key download: the two-line prompt renders and the
+    /// footer offers `d fetch`, distinct from the quiet "(no notes…)" state.
+    #[test]
+    fn fetch_affordance_renders_prompt_and_footer() {
+        let dlg = FootnoteDialog::new("John 3:16".to_string(), Vec::new(), Vec::new(), true);
+        let area = Rect::new(0, 0, 130, 34);
+        let mut buf = Buffer::empty(area);
+        dlg.render(area, &mut buf);
+
+        let mut prompt = false;
+        let mut fetch_footer = false;
+        for y in area.top()..area.bottom() {
+            let row = row_text(&buf, y, area);
+            if row.contains("aren't downloaded") {
+                prompt = true;
+            }
+            if row.contains("fetch") && row.contains("cancel") {
+                fetch_footer = true;
+            }
+        }
+        assert!(prompt, "missing the 'not downloaded yet' prompt");
+        assert!(fetch_footer, "footer must offer 'd fetch' alongside cancel");
+    }
+
+    /// Pressing `d` on the affordance emits `FetchXrefs`; on a populated popup
+    /// (`can_fetch_xrefs = false`) the same key is an inert no-op.
+    #[test]
+    fn d_key_fetches_only_when_dataset_missing() {
+        let mut offered =
+            FootnoteDialog::new("John 3:16".to_string(), Vec::new(), Vec::new(), true);
+        assert!(matches!(
+            offered.handle(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty())),
+            FootnoteOutcome::FetchXrefs
+        ));
+
+        // Populated dataset, but this verse has no xrefs: `d` does nothing.
+        let mut installed =
+            FootnoteDialog::new("John 3:16".to_string(), Vec::new(), Vec::new(), false);
+        assert!(matches!(
+            installed.handle(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty())),
+            FootnoteOutcome::Continue
+        ));
     }
 }

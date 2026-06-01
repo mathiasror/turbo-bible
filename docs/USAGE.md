@@ -29,8 +29,10 @@ nothing to install before reading. Launch with `cargo run -p turbo-bible
 --release`. Search works immediately — the FTS5 index (a
 diacritic-folding tokenizer and a prefix index) ships prebuilt in each
 translation database, so there is no runtime rebuild. (The other ten
-translations and the shared cross-references DB download from GitHub
-Releases the first time you open them.)
+translations download from GitHub Releases the first time you select
+them; the shared cross-references DB downloads the first time you ask for
+cross-references — see [Footnotes and
+cross-references](#footnotes-and-cross-references).)
 
 You land on the splash screen. If you'd rather skip it and jump straight
 into a passage, pass `--book` and `--chapter`:
@@ -240,6 +242,17 @@ the popup.
 
 If the cursor verse has no footnotes the popup says so and closes
 politely.
+
+**Downloading cross-references.** The ~430k-entry cross-references
+dataset ships as a separate ~6 MB asset. A curl-installed copy has it
+pre-staged, but `cargo` / `brew` installs fetch it on demand: the first
+time you open the `K` popup before it's present, the popup offers a
+one-key download — press `d` and it closes, fetching `xrefs.db` in the
+background (sha256-verified against the embedded manifest) while you keep
+reading. When it lands, the cross-reference markers and the sidebar fill
+in; re-open `K` to see the references for the verse. It's a one-time
+download; offline or on failure the app carries on without
+cross-references.
 
 ## Visual selection and yank
 

@@ -4,6 +4,20 @@ All notable changes to this project will be documented here. Format
 roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions roughly follow [SemVer](https://semver.org/) until 1.0.
 
+## [Unreleased]
+
+### Fixed
+
+- **Cross-references now actually download on demand.** `cargo` / `brew`
+  installs started with an empty `xrefs.db` stand-in and never fetched the real
+  ~430k-entry dataset, so cross-references silently never appeared (only the
+  curl installer pre-staged them). The `K` notes popup now offers a one-key
+  (`d`) download when the data is missing: it fetches `xrefs.db` from GitHub
+  Releases on a background thread (sha256-verified against the embedded
+  manifest, like every other asset), then re-attaches it and refreshes the open
+  passages so markers, the sidebar, and the popup populate. Offline or on
+  failure it degrades quietly, matching the translation-download UX.
+
 ## [0.2.0] - 2026-05-31
 
 ### Added
@@ -155,5 +169,6 @@ Initial release.
 - A RAII terminal guard that restores the terminal even if a draw
   panics, and atomic translation switching that rolls back on failure.
 
+[Unreleased]: https://github.com/mathiasror/turbo-bible/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/mathiasror/turbo-bible/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mathiasror/turbo-bible/releases/tag/v0.1.0

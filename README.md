@@ -61,10 +61,11 @@ all eleven up front. See [Setup](#setup) for the offline details.
 Nothing to install — the King James Version is embedded in the binary
 and extracted into `$XDG_DATA_HOME/turbo-bible/translations/` (typically
 `~/.local/share/turbo-bible/translations/`) on first launch, so reading
-works offline straight away. The other ten translations and the shared
-cross-references DB are downloaded from GitHub Releases the first time
-you open them, each verified against a SHA-256 in the embedded manifest.
-For a prebuilt binary, the curl-installer hosted at
+works offline straight away. The other ten translations download from
+GitHub Releases the first time you select them, and the shared
+cross-references DB downloads the first time you ask for cross-references
+(press `d` in the `K` popup) — each verified against a SHA-256 in the
+embedded manifest. For a prebuilt binary, the curl-installer hosted at
 [turbo.bible](https://turbo.bible) pre-stages all eleven translations, so a
 curl-installed copy is fully offline from the first launch:
 
@@ -171,7 +172,7 @@ terminals, `Shift`-**drag** bypasses the app for native text selection.
 | `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `Génesis 1`) |
 | `F3` / `/` | Find dialog (FTS5; BM25-ranked) |
 | `n` / `N` | repeat last search forward / backward |
-| `K` | Footnote / cross-reference popup (`s` opens the xref in a split) |
+| `K` | Footnote / cross-reference popup (`s` opens the xref in a split; `d` downloads the cross-references if not yet present) |
 | `t` / `F5` | Translations picker |
 | `M` / `F4` | Bookmarks (reading view only — not on the splash) |
 | `b` | toggle bookmark on cursor verse (or visual selection) |
