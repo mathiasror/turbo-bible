@@ -246,7 +246,10 @@ impl<'de> Deserialize<'de> for HexColor {
 
 /// Extra triggers per action. The hardcoded vim-style defaults always work;
 /// these are additive. Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the
-/// count prefix stay hardcoded.
+/// count prefix stay hardcoded — but the actions those chords (and `n`/`N`)
+/// reach can be given additive single-key aliases here (issue #66, finding
+/// #16), so a user whose terminal grabs `Ctrl-W` (e.g. tmux) can still bind
+/// them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct KeysConfig {
@@ -274,6 +277,17 @@ pub struct KeysConfig {
     pub page_up: Vec<KeyBind>,
     pub goto_top: Vec<KeyBind>,
     pub goto_bottom: Vec<KeyBind>,
+    // Additive aliases for actions whose only hardcoded triggers are the
+    // `n`/`N` repeat keys or the `Ctrl-W` window-command chords (issue #66,
+    // finding #16). The defaults always remain functional.
+    pub search_next: Vec<KeyBind>,
+    pub search_prev: Vec<KeyBind>,
+    pub compare_open: Vec<KeyBind>,
+    pub focus_next: Vec<KeyBind>,
+    pub focus_left: Vec<KeyBind>,
+    pub focus_right: Vec<KeyBind>,
+    pub compare_close: Vec<KeyBind>,
+    pub toggle_word_diff: Vec<KeyBind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

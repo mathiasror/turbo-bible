@@ -11,16 +11,20 @@ use ratatui::widgets::{
     Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
 };
 
+use crate::config::Keymap;
 use crate::theme;
 use crate::ui::dialog;
 
 /// The keymap cheat sheet scrolls when the terminal is too short to show every
 /// row. `scroll` is the top content row; `max_scroll` is recorded by `render`
 /// (which alone knows the viewport height) so `handle` can clamp `G`/paging
-/// without re-deriving the layout.
+/// without re-deriving the layout. `keymap` selects the profile-honest sheet
+/// (issue #66, finding #17): the vim cheat sheet, or the turbo one that flags
+/// the vim-only actions as inactive instead of listing dead letter keys.
 pub struct HelpDialog {
     scroll: usize,
     max_scroll: Cell<usize>,
+    keymap: Keymap,
 }
 
 #[non_exhaustive]
@@ -41,10 +45,10 @@ enum Row {
 }
 use Row::{Entry, Note, Section};
 
-/// Canonical, source-of-truth help table. Lifted to module scope so a
-/// unit test can walk it and assert removed keys (e.g. `T`) don't sneak
-/// back in.
-const ROWS: &[Row] = &[
+/// Canonical, source-of-truth help table for the **vim** profile (the
+/// default). Lifted to module scope so a unit test can walk it and assert
+/// removed keys (e.g. `T`) don't sneak back in.
+const VIM_ROWS: &[Row] = &[
     Section("Movement"),
     Entry("j  k  ↓ ↑", "next / previous verse"),
     Entry("h  l  ← →", "previous / next chapter"),
@@ -79,6 +83,45 @@ const ROWS: &[Row] = &[
     Entry("q  Esc  ZZ  ZQ  :q", "quit"),
 ];
 
+/// Turbo-profile cheat sheet (issue #66, finding #17). Turbo drops the vim
+/// letter keys, chords, and counts, so this sheet lists only what actually
+/// works — and a leading note + a closing "Inactive in Turbo" section make
+/// plain that the vim-only actions (visual, bookmark toggle, copy, K notes,
+/// n/N, prev/next book, jump history, compare panes) are off here, bindable
+/// under `[keys]` in config.toml — instead of advertising bare vim letters as
+/// if they fire.
+const TURBO_ROWS: &[Row] = &[
+    Note("Turbo keymap \u{2014} vim letter-keys are off."),
+    Note("Use the keys shown, or bind actions under [keys] in config.toml."),
+    Section("Movement"),
+    Entry("\u{2193} \u{2191}", "next / previous verse"),
+    Entry("\u{2190} \u{2192}", "previous / next chapter"),
+    Entry("PgDn  PgUp  Space", "page down / up"),
+    Entry("Home  End", "first / last verse"),
+    Section("Reading view"),
+    Entry("Tab", "toggle sidebar"),
+    Section("Dialogs"),
+    Entry("F1", "this help"),
+    Entry("F2", "Goto reference (e.g. John 3:16)"),
+    Entry("F3  /", "Find (FTS5 search)"),
+    Entry("F4", "Bookmarks"),
+    Entry("F5", "Translations"),
+    Section("Quit"),
+    Entry("q  Esc", "quit / back"),
+    Section("Inactive in Turbo (bind under [keys])"),
+    Note("visual select, bookmark toggle, copy verse, K notes,"),
+    Note("repeat find (n/N), prev/next book, jump history,"),
+    Note("compare panes \u{2014} all off unless bound in config.toml."),
+];
+
+/// The cheat-sheet rows for the active profile.
+const fn rows(keymap: Keymap) -> &'static [Row] {
+    match keymap {
+        Keymap::Vim => VIM_ROWS,
+        Keymap::Turbo => TURBO_ROWS,
+    }
+}
+
 /// Rows scrolled per half-page / Space, used by `handle` (which can't see the
 /// real viewport height — `render` clamps the final value via `max_scroll`).
 const PAGE_STEP: usize = 8;
@@ -102,10 +145,11 @@ fn keep_with_next(requested: usize, body_h: usize, len: usize, is_section: &[boo
 }
 
 impl HelpDialog {
-    pub const fn new() -> Self {
+    pub const fn new(keymap: Keymap) -> Self {
         Self {
             scroll: 0,
             max_scroll: Cell::new(0),
+            keymap,
         }
     }
 
@@ -191,7 +235,7 @@ impl HelpDialog {
         // bright_white description column.
         let note = Style::new().fg(theme::light_grey()).bg(theme::blue());
         let mut seen_section = false;
-        for row in ROWS {
+        for row in rows(self.keymap) {
             match row {
                 Section(name) => {
                     if seen_section {
@@ -331,7 +375,7 @@ mod tests {
     /// (which would silently shove that one row's description to the right).
     #[test]
     fn entry_descriptions_share_one_column() {
-        let dlg = HelpDialog::new();
+        let dlg = HelpDialog::new(Keymap::Vim);
         let area = Rect::new(0, 0, 80, 40);
         let mut buf = Buffer::empty(area);
         dlg.render(area, &mut buf);
@@ -368,39 +412,42 @@ mod tests {
 
     #[test]
     fn keep_with_next_never_orphans_a_section_header() {
-        // Build `is_section` exactly as `render` does: a blank row before
-        // each *non-first* section heading (tagged false so the orphan-guard
-        // protects the heading, not the gap), then one flag per ROW.
-        let mut is_section = Vec::new();
-        let mut seen_section = false;
-        for row in ROWS {
-            if matches!(row, Section(_)) {
-                if seen_section {
-                    is_section.push(false);
+        // Both profiles' sheets must survive the orphan-guard.
+        for keymap in [Keymap::Vim, Keymap::Turbo] {
+            // Build `is_section` exactly as `render` does: a blank row before
+            // each *non-first* section heading (tagged false so the orphan-guard
+            // protects the heading, not the gap), then one flag per row.
+            let mut is_section = Vec::new();
+            let mut seen_section = false;
+            for row in rows(keymap) {
+                if matches!(row, Section(_)) {
+                    if seen_section {
+                        is_section.push(false);
+                    }
+                    seen_section = true;
                 }
-                seen_section = true;
+                is_section.push(matches!(row, Section(_)));
             }
-            is_section.push(matches!(row, Section(_)));
-        }
-        let len = is_section.len();
-        // Across every short viewport and every reachable scroll position, the
-        // bottom visible row must never be a section header that still has
-        // content beneath it — that's the "empty Quit section" artifact.
-        for body_h in 2..=len {
-            let max_scroll = len.saturating_sub(body_h);
-            for requested in 0..=max_scroll {
-                let scroll = keep_with_next(requested, body_h, len, &is_section);
-                assert!(
-                    scroll <= max_scroll,
-                    "scroll {scroll} exceeds max {max_scroll}"
-                );
-                let bottom = scroll + body_h - 1;
-                if bottom + 1 < len {
+            let len = is_section.len();
+            // Across every short viewport and every reachable scroll position,
+            // the bottom visible row must never be a section header that still
+            // has content beneath it — that's the "empty Quit section" artifact.
+            for body_h in 2..=len {
+                let max_scroll = len.saturating_sub(body_h);
+                for requested in 0..=max_scroll {
+                    let scroll = keep_with_next(requested, body_h, len, &is_section);
                     assert!(
-                        !is_section[bottom],
-                        "orphaned section header at row {bottom} \
-                         (body_h={body_h}, requested={requested})"
+                        scroll <= max_scroll,
+                        "scroll {scroll} exceeds max {max_scroll}"
                     );
+                    let bottom = scroll + body_h - 1;
+                    if bottom + 1 < len {
+                        assert!(
+                            !is_section[bottom],
+                            "orphaned section header at row {bottom} \
+                             ({keymap:?}, body_h={body_h}, requested={requested})"
+                        );
+                    }
                 }
             }
         }
@@ -408,20 +455,88 @@ mod tests {
 
     #[test]
     fn help_table_does_not_list_removed_keys() {
-        for row in ROWS {
-            if let Entry(keys, desc) = row {
-                for token in keys.split(|c: char| c.is_whitespace() || c == ',') {
-                    let token = token.trim();
-                    if token.is_empty() {
-                        continue;
+        for keymap in [Keymap::Vim, Keymap::Turbo] {
+            for row in rows(keymap) {
+                if let Entry(keys, desc) = row {
+                    for token in keys.split(|c: char| c.is_whitespace() || c == ',') {
+                        let token = token.trim();
+                        if token.is_empty() {
+                            continue;
+                        }
+                        assert!(
+                            !REMOVED_KEYS.contains(&token),
+                            "help row `{keys}` (= {desc}) still references removed key `{token}`",
+                        );
                     }
+                }
+            }
+        }
+    }
+
+    /// Tokens (as whole key-field entries) that the vim layer binds but the
+    /// turbo profile leaves inert. The turbo cheat sheet must never list these
+    /// in an `Entry` key field as if they fire (issue #66, finding #17) — a
+    /// turbo user pressing `j` or `K` gets nothing, so advertising them is a
+    /// lie. They may still appear inside descriptive `Note` prose (e.g.
+    /// "repeat find (n/N)") which is explicitly framed as inactive.
+    #[test]
+    fn turbo_sheet_lists_no_vim_only_letter_keys_as_active() {
+        let vim_only = [
+            "j", "k", "h", "l", "v", "V", "b", "y", "K", "n", "N", "M", "t", "G",
+        ];
+        for row in rows(Keymap::Turbo) {
+            if let Entry(keys, desc) = row {
+                for token in keys.split(|c: char| c.is_whitespace()) {
+                    let token = token.trim();
                     assert!(
-                        !REMOVED_KEYS.contains(&token),
-                        "help row `{keys}` (= {desc}) still references removed key `{token}`",
+                        !vim_only.contains(&token),
+                        "turbo help Entry `{keys}` (= {desc}) advertises vim-only key `{token}`",
+                    );
+                    assert!(
+                        !token.contains("Ctrl-"),
+                        "turbo help Entry `{keys}` (= {desc}) advertises a Ctrl chord `{token}`",
                     );
                 }
             }
         }
+    }
+
+    /// The turbo sheet leads with a note that the vim letter-keys are off and
+    /// points at `[keys]` config — so the user isn't left wondering why `j`
+    /// does nothing (issue #66, finding #17).
+    #[test]
+    fn turbo_sheet_explains_inactive_keys() {
+        let notes: Vec<&str> = rows(Keymap::Turbo)
+            .iter()
+            .filter_map(|r| if let Note(t) = r { Some(*t) } else { None })
+            .collect();
+        assert!(
+            notes.iter().any(|n| n.contains("Turbo keymap")),
+            "turbo sheet must lead with a 'Turbo keymap' note"
+        );
+        assert!(
+            notes.iter().any(|n| n.contains("[keys]")),
+            "turbo sheet must point at [keys] config for bindable actions"
+        );
+        // The vim sheet carries no such turbo disclaimer.
+        let vim_notes: Vec<&str> = rows(Keymap::Vim)
+            .iter()
+            .filter_map(|r| if let Note(t) = r { Some(*t) } else { None })
+            .collect();
+        assert!(
+            !vim_notes.iter().any(|n| n.contains("Turbo keymap")),
+            "vim sheet must not carry the turbo disclaimer"
+        );
+    }
+
+    /// The vim sheet still advertises the vim letter keys (regression guard so
+    /// the profile split didn't accidentally strip them).
+    #[test]
+    fn vim_sheet_still_lists_letter_keys() {
+        let has_visual = rows(Keymap::Vim)
+            .iter()
+            .any(|r| matches!(r, Entry(k, _) if k.contains('v') && k.contains('V')));
+        assert!(has_visual, "vim sheet should still list v / V");
     }
 
     /// The `Note(text)` row variant — currently the "Refs sidebar hides while
@@ -431,7 +546,7 @@ mod tests {
     /// the help chrome).
     #[test]
     fn note_row_renders_in_light_grey_and_carries_no_yellow() {
-        let dlg = HelpDialog::new();
+        let dlg = HelpDialog::new(Keymap::Vim);
         let area = Rect::new(0, 0, 80, 40);
         let mut buf = Buffer::empty(area);
         dlg.render(area, &mut buf);
@@ -469,7 +584,7 @@ mod tests {
         // A short terminal forces the cheat sheet to overflow; the right border
         // should then carry a ░ track and a ▓ thumb (distinct from the ▒
         // backdrop dither).
-        let dlg = HelpDialog::new();
+        let dlg = HelpDialog::new(Keymap::Vim);
         let area = Rect::new(0, 0, 70, 14);
         let mut buf = Buffer::empty(area);
         dlg.render(area, &mut buf);

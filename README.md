@@ -147,7 +147,9 @@ selected translation becomes the default for the next launch.
 | `gg` / `G` | first / last verse |
 | `Ctrl-O` / `Ctrl-I` | jump back / forward in history |
 
-Count prefixes work: `5j` moves the cursor down 5 verses.
+Count prefixes work on every motion — cursor (`5j`), chapter (`3l` / `3→`),
+book (`2]b`), and page (`2Ctrl-D`, `2Space`). So `5l` advances five chapters
+and `3]b` jumps three books forward.
 
 ### Mouse
 
@@ -215,7 +217,12 @@ diff. On by default (`[reading] compare_word_diff`); `Ctrl-W d` toggles it for
 the session.
 
 The `Ctrl-W` chords and the `K`-popup `s` shortcut are part of the vim keymap
-(the default); they aren't remappable via `[keys]`.
+(the default). The chords themselves stay hardcoded, but the actions behind
+them — and `n`/`N` — accept additive single-key aliases under `[keys]`
+(`compare_open`, `focus_next`, `focus_left`, `focus_right`, `compare_close`,
+`toggle_word_diff`, `search_next`, `search_prev`), so a user whose terminal
+grabs `Ctrl-W` (e.g. tmux) can bind a key of their own. The defaults always
+keep working.
 
 ### Splash screen
 
@@ -312,10 +319,19 @@ black        = "#000000"
 #             "Home"/"End", "PageUp"/"PageDown", "Backspace"/"Delete".
 open_translations = ["F5"]    # example: adds F5 as an alias for `t`
 quit              = ["Ctrl-q"]
+# Single-key aliases for actions whose only defaults are the Ctrl-W window
+# chords or n/N — handy when the terminal grabs Ctrl-W (e.g. tmux):
+compare_open      = ["Alt-s"]   # alias for Ctrl-W v
+focus_next        = ["Alt-w"]   # alias for Ctrl-W w
+search_next       = ["F8"]      # alias for n
+search_prev       = ["F9"]      # alias for N
+# (also: focus_left, focus_right, compare_close, toggle_word_diff)
 ```
 
-Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
-remappable.
+The multi-key chords themselves (`gg`, `[b`, `]b`, `ZZ`, the `Ctrl-W` window
+commands) and the count prefix stay hardcoded — but the actions the `Ctrl-W`
+chords and `n`/`N` reach take additive single-key aliases (above), so they're
+reachable even where the chord can't be typed.
 
 The `[input]` `keymap` selects the reading-view key profile. `"vim"` (the
 default) is the full vim layer documented in the keymap above. `"turbo"` is a

@@ -26,16 +26,20 @@ pub enum Action {
     Quit,
     CursorUp(u16),
     CursorDown(u16),
-    HalfPageUp,
-    HalfPageDown,
-    PageUp,
-    PageDown,
+    // Page / chapter / book motions carry a count so a prefix repeats them
+    // (`2Ctrl-D`, `5l`, `3]b`) — making the README's "count prefixes work"
+    // claim true across the motion family, not just j/k (issue #66, finding
+    // #15). User-bound keys still step by 1 (see `with_user_bindings`).
+    HalfPageUp(u16),
+    HalfPageDown(u16),
+    PageUp(u16),
+    PageDown(u16),
     GotoTop,
     GotoBottom,
-    PrevChapter,
-    NextChapter,
-    PrevBook,
-    NextBook,
+    PrevChapter(u16),
+    NextChapter(u16),
+    PrevBook(u16),
+    NextBook(u16),
     OpenGoto,
     OpenFind,
     OpenFootnote,
@@ -123,18 +127,30 @@ impl KeyState {
         push(&keys.add_bookmark, Action::AddBookmark);
         push(&keys.jump_back, Action::JumpBack);
         push(&keys.jump_forward, Action::JumpForward);
-        push(&keys.prev_chapter, Action::PrevChapter);
-        push(&keys.next_chapter, Action::NextChapter);
-        push(&keys.half_page_down, Action::HalfPageDown);
-        push(&keys.half_page_up, Action::HalfPageUp);
-        push(&keys.page_down, Action::PageDown);
-        push(&keys.page_up, Action::PageUp);
         push(&keys.goto_top, Action::GotoTop);
         push(&keys.goto_bottom, Action::GotoBottom);
-        // CursorDown/Up always step by 1 from user-bound keys; counts only
-        // apply to the hardcoded j/k/Up/Down to keep semantics predictable.
+        // Count-bearing motions: a user-bound key always steps by 1 (the count
+        // prefix is a vim-layer feature that rides the hardcoded keys only), so
+        // these extras push the count-less form (issue #66, finding #15).
+        push(&keys.prev_chapter, Action::PrevChapter(1));
+        push(&keys.next_chapter, Action::NextChapter(1));
+        push(&keys.half_page_down, Action::HalfPageDown(1));
+        push(&keys.half_page_up, Action::HalfPageUp(1));
+        push(&keys.page_down, Action::PageDown(1));
+        push(&keys.page_up, Action::PageUp(1));
         push(&keys.cursor_down, Action::CursorDown(1));
         push(&keys.cursor_up, Action::CursorUp(1));
+        // Additive single-key aliases for actions whose only defaults are
+        // multi-key chords or letter keys, so a user whose terminal grabs
+        // Ctrl-W (e.g. tmux) can still reach them (issue #66, finding #16).
+        push(&keys.search_next, Action::SearchNext);
+        push(&keys.search_prev, Action::SearchPrev);
+        push(&keys.compare_open, Action::CompareOpen);
+        push(&keys.focus_next, Action::FocusNext);
+        push(&keys.focus_left, Action::FocusLeft);
+        push(&keys.focus_right, Action::FocusRight);
+        push(&keys.compare_close, Action::CompareClose);
+        push(&keys.toggle_word_diff, Action::ToggleWordDiff);
         s
     }
 
@@ -197,6 +213,13 @@ impl KeyState {
 
     const fn count_or(&self, default: u16) -> u16 {
         if self.count == 0 { default } else { self.count }
+    }
+
+    /// The active keymap profile, so callers outside this module (the status
+    /// bar, the Help dialog) can render a profile-honest cheat sheet
+    /// (issue #66, findings #12 / #17).
+    pub const fn keymap(&self) -> Keymap {
+        self.keymap
     }
 
     /// The in-progress count/chord, for a vim-style `showcmd` indicator —
@@ -264,8 +287,14 @@ impl KeyState {
             }
             return match (a, b) {
                 (KeyCode::Char('g'), KeyCode::Char('g')) => Resolve::Action(Action::GotoTop),
-                (KeyCode::Char('['), KeyCode::Char('b')) => Resolve::Action(Action::PrevBook),
-                (KeyCode::Char(']'), KeyCode::Char('b')) => Resolve::Action(Action::NextBook),
+                // `3]b` jumps three books forward; the count rides the chord too
+                // (issue #66, finding #15).
+                (KeyCode::Char('['), KeyCode::Char('b')) => {
+                    Resolve::Action(Action::PrevBook(self.count_or(1)))
+                }
+                (KeyCode::Char(']'), KeyCode::Char('b')) => {
+                    Resolve::Action(Action::NextBook(self.count_or(1)))
+                }
                 (KeyCode::Char('Z'), KeyCode::Char('Z' | 'Q')) => Resolve::Action(Action::Quit),
                 _ => Resolve::Unknown,
             };
@@ -286,19 +315,19 @@ impl KeyState {
             KeyCode::Esc => Resolve::Action(Action::Back),
             KeyCode::Down => Resolve::Action(Action::CursorDown(self.count_or(1))),
             KeyCode::Up => Resolve::Action(Action::CursorUp(self.count_or(1))),
-            KeyCode::Left => Resolve::Action(Action::PrevChapter),
-            KeyCode::Right => Resolve::Action(Action::NextChapter),
+            KeyCode::Left => Resolve::Action(Action::PrevChapter(self.count_or(1))),
+            KeyCode::Right => Resolve::Action(Action::NextChapter(self.count_or(1))),
             KeyCode::Home => Resolve::Action(Action::GotoTop),
             KeyCode::End => Resolve::Action(Action::GotoBottom),
-            KeyCode::PageDown => Resolve::Action(Action::PageDown),
-            KeyCode::PageUp => Resolve::Action(Action::PageUp),
+            KeyCode::PageDown => Resolve::Action(Action::PageDown(self.count_or(1))),
+            KeyCode::PageUp => Resolve::Action(Action::PageUp(self.count_or(1))),
             KeyCode::Tab => Resolve::Action(Action::ToggleSidebar),
             KeyCode::F(1) => Resolve::Action(Action::OpenHelp),
             KeyCode::F(2) => Resolve::Action(Action::OpenGoto),
             KeyCode::F(3) => Resolve::Action(Action::OpenFind),
             KeyCode::F(4) => Resolve::Action(Action::OpenBookmarks),
             KeyCode::F(5) => Resolve::Action(Action::OpenTranslations),
-            KeyCode::Char(' ') if plain => Resolve::Action(Action::PageDown),
+            KeyCode::Char(' ') if plain => Resolve::Action(Action::PageDown(self.count_or(1))),
             KeyCode::Char('q') if plain => Resolve::Action(Action::Quit),
             KeyCode::Char('/') if plain => Resolve::Action(Action::OpenFind),
             _ => return None,
@@ -326,13 +355,19 @@ impl KeyState {
             (KeyCode::Char('k'), false, true) => {
                 Resolve::Action(Action::CursorUp(self.count_or(1)))
             }
-            (KeyCode::Char('h' | 'H'), false, true) => Resolve::Action(Action::PrevChapter),
-            (KeyCode::Char('l' | 'L'), false, true) => Resolve::Action(Action::NextChapter),
+            (KeyCode::Char('h' | 'H'), false, true) => {
+                Resolve::Action(Action::PrevChapter(self.count_or(1)))
+            }
+            (KeyCode::Char('l' | 'L'), false, true) => {
+                Resolve::Action(Action::NextChapter(self.count_or(1)))
+            }
 
-            (KeyCode::Char('d'), true, _) => Resolve::Action(Action::HalfPageDown),
-            (KeyCode::Char('u'), true, _) => Resolve::Action(Action::HalfPageUp),
-            (KeyCode::Char('f'), true, _) => Resolve::Action(Action::PageDown),
-            (KeyCode::Char('b'), true, _) => Resolve::Action(Action::PageUp),
+            (KeyCode::Char('d'), true, _) => {
+                Resolve::Action(Action::HalfPageDown(self.count_or(1)))
+            }
+            (KeyCode::Char('u'), true, _) => Resolve::Action(Action::HalfPageUp(self.count_or(1))),
+            (KeyCode::Char('f'), true, _) => Resolve::Action(Action::PageDown(self.count_or(1))),
+            (KeyCode::Char('b'), true, _) => Resolve::Action(Action::PageUp(self.count_or(1))),
 
             (KeyCode::Char('G'), false, true) => Resolve::Action(Action::GotoBottom),
             (KeyCode::Char('K'), false, true) => Resolve::Action(Action::OpenFootnote),
@@ -501,9 +536,9 @@ mod tests {
         assert_eq!(ks.handle(ev(KeyCode::Char('g'))), None);
         // Base layer survives.
         assert_eq!(ks.handle(ev(KeyCode::Down)), Some(Action::CursorDown(1)));
-        assert_eq!(ks.handle(ev(KeyCode::Left)), Some(Action::PrevChapter));
+        assert_eq!(ks.handle(ev(KeyCode::Left)), Some(Action::PrevChapter(1)));
         assert_eq!(ks.handle(ev(KeyCode::Home)), Some(Action::GotoTop));
-        assert_eq!(ks.handle(ev(KeyCode::PageDown)), Some(Action::PageDown));
+        assert_eq!(ks.handle(ev(KeyCode::PageDown)), Some(Action::PageDown(1)));
         assert_eq!(ks.handle(ev(KeyCode::F(3))), Some(Action::OpenFind));
         assert_eq!(ks.handle(ev(KeyCode::Char('q'))), Some(Action::Quit));
         assert_eq!(ks.handle(ev(KeyCode::Char('/'))), Some(Action::OpenFind));
@@ -580,5 +615,176 @@ mod tests {
             ks.handle(ev(KeyCode::Char('x'))),
             Some(Action::OpenTranslations)
         );
+    }
+
+    #[test]
+    fn keymap_accessor_reports_active_profile() {
+        let cfg = KeysConfig::default();
+        assert_eq!(
+            KeyState::with_user_bindings(&cfg, Keymap::Vim).keymap(),
+            Keymap::Vim
+        );
+        assert_eq!(
+            KeyState::with_user_bindings(&cfg, Keymap::Turbo).keymap(),
+            Keymap::Turbo
+        );
+    }
+
+    /// Build a count then a single key, asserting the resolved action.
+    fn count_then(ks: &mut KeyState, count: &str, key: KeyEvent) -> Option<Action> {
+        for c in count.chars() {
+            assert_eq!(ks.handle(ev(KeyCode::Char(c))), None, "digit is inert");
+        }
+        ks.handle(key)
+    }
+
+    #[test]
+    fn count_prefix_rides_chapter_and_page_motions() {
+        let cfg = KeysConfig::default();
+        // `5l` → NextChapter(5), `3h` → PrevChapter(3).
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        assert_eq!(
+            count_then(&mut ks, "5", ev(KeyCode::Char('l'))),
+            Some(Action::NextChapter(5))
+        );
+        assert_eq!(
+            count_then(&mut ks, "3", ev(KeyCode::Char('h'))),
+            Some(Action::PrevChapter(3))
+        );
+        // Arrows take the count too.
+        assert_eq!(
+            count_then(&mut ks, "4", ev(KeyCode::Right)),
+            Some(Action::NextChapter(4))
+        );
+        // `2Ctrl-D` → HalfPageDown(2); `2Ctrl-F` → PageDown(2).
+        assert_eq!(
+            count_then(&mut ks, "2", evm(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+            Some(Action::HalfPageDown(2))
+        );
+        assert_eq!(
+            count_then(&mut ks, "2", evm(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+            Some(Action::PageDown(2))
+        );
+        // Space (base layer) carries the count as a page-down too.
+        assert_eq!(
+            count_then(&mut ks, "3", ev(KeyCode::Char(' '))),
+            Some(Action::PageDown(3))
+        );
+    }
+
+    #[test]
+    fn count_prefix_rides_book_chord() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        // `3]b` → NextBook(3).
+        assert_eq!(ks.handle(ev(KeyCode::Char('3'))), None);
+        assert_eq!(ks.handle(ev(KeyCode::Char(']'))), None, "chord starter");
+        assert_eq!(ks.handle(ev(KeyCode::Char('b'))), Some(Action::NextBook(3)));
+        // `2[b` → PrevBook(2).
+        assert_eq!(ks.handle(ev(KeyCode::Char('2'))), None);
+        assert_eq!(ks.handle(ev(KeyCode::Char('['))), None, "chord starter");
+        assert_eq!(ks.handle(ev(KeyCode::Char('b'))), Some(Action::PrevBook(2)));
+    }
+
+    #[test]
+    fn bare_motion_keys_default_to_count_one() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('l'))),
+            Some(Action::NextChapter(1))
+        );
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('h'))),
+            Some(Action::PrevChapter(1))
+        );
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+            Some(Action::HalfPageDown(1))
+        );
+    }
+
+    #[test]
+    fn user_bound_motion_keys_step_by_one() {
+        // The count prefix is a vim-layer feature that rides only the hardcoded
+        // keys — a user-bound motion alias always steps by 1.
+        let cfg = KeysConfig {
+            next_chapter: vec![KeyBind {
+                code: KeyCode::Char('x'),
+                modifiers: KeyModifiers::empty(),
+            }],
+            page_down: vec![KeyBind {
+                code: KeyCode::Char('z'),
+                modifiers: KeyModifiers::empty(),
+            }],
+            ..KeysConfig::default()
+        };
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        assert_eq!(
+            count_then(&mut ks, "5", ev(KeyCode::Char('x'))),
+            Some(Action::NextChapter(1)),
+            "user-bound key ignores the count"
+        );
+        assert_eq!(ks.handle(ev(KeyCode::Char('z'))), Some(Action::PageDown(1)));
+    }
+
+    #[test]
+    fn configured_aliases_reach_chord_and_search_actions() {
+        // The Ctrl-W chords and n/N stay hardcoded, but a user whose terminal
+        // grabs Ctrl-W can add single-key aliases (issue #66, finding #16).
+        let cfg = KeysConfig {
+            compare_open: vec![KeyBind {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::ALT,
+            }],
+            compare_close: vec![KeyBind {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::ALT,
+            }],
+            focus_next: vec![KeyBind {
+                code: KeyCode::Char('w'),
+                modifiers: KeyModifiers::ALT,
+            }],
+            toggle_word_diff: vec![KeyBind {
+                code: KeyCode::Char('='),
+                modifiers: KeyModifiers::empty(),
+            }],
+            search_next: vec![KeyBind {
+                code: KeyCode::F(8),
+                modifiers: KeyModifiers::empty(),
+            }],
+            search_prev: vec![KeyBind {
+                code: KeyCode::F(9),
+                modifiers: KeyModifiers::empty(),
+            }],
+            ..KeysConfig::default()
+        };
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('s'), KeyModifiers::ALT)),
+            Some(Action::CompareOpen)
+        );
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('c'), KeyModifiers::ALT)),
+            Some(Action::CompareClose)
+        );
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('w'), KeyModifiers::ALT)),
+            Some(Action::FocusNext)
+        );
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('='))),
+            Some(Action::ToggleWordDiff)
+        );
+        assert_eq!(ks.handle(ev(KeyCode::F(8))), Some(Action::SearchNext));
+        assert_eq!(ks.handle(ev(KeyCode::F(9))), Some(Action::SearchPrev));
+        // The hardcoded defaults still resolve alongside the aliases.
+        assert_eq!(ks.handle(ev(KeyCode::Char('n'))), Some(Action::SearchNext));
+        assert_eq!(
+            ks.handle(evm(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            None,
+            "Ctrl-W still starts the window chord"
+        );
+        assert_eq!(ks.handle(ev(KeyCode::Char('v'))), Some(Action::CompareOpen));
     }
 }

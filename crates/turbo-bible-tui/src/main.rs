@@ -1477,7 +1477,7 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
             }
             GotoOutcome::Command(GotoCommand::Quit) => Ok(DispatchStep::Quit),
             GotoOutcome::Command(GotoCommand::Help) => {
-                state.dialog = Dialog::Help(HelpDialog::new());
+                state.dialog = Dialog::Help(HelpDialog::new(state.keys.keymap()));
                 Ok(DispatchStep::Continue)
             }
         },
@@ -1800,7 +1800,7 @@ fn apply_splash_outcome(
             Ok(DispatchStep::Continue)
         }
         SplashOutcome::OpenHelp => {
-            state.dialog = Dialog::Help(HelpDialog::new());
+            state.dialog = Dialog::Help(HelpDialog::new(state.keys.keymap()));
             Ok(DispatchStep::Continue)
         }
     }
@@ -2116,7 +2116,7 @@ fn dispatch_reading(
             ));
         }
         Action::OpenFind => state.dialog = Dialog::Find(FindDialog::new(ctx.db.translation())),
-        Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new()),
+        Action::OpenHelp => state.dialog = Dialog::Help(HelpDialog::new(state.keys.keymap())),
         // Offer the fetch affordance only when the xrefs dataset isn't on disk
         // (the empty stand-in, not the real openbible.info data).
         Action::OpenFootnote => state.open_footnote_dialog(!ctx.db.has_xrefs()),
@@ -2293,8 +2293,17 @@ const STATUS_SPLASH: &[Shortcut<'static>] = &[
     },
 ];
 
+// Vim reading footer: the vim-letter hints (`K Notes`, `v Select`) are honest
+// here because the vim layer is live.
 const STATUS_READING_HIDE: &[Shortcut<'static>] = &reading_shortcuts("Hide");
 const STATUS_READING_REFS: &[Shortcut<'static>] = &reading_shortcuts("Refs");
+
+// Turbo reading footer: turbo drops the vim letter keys, so `K`/`v` would be
+// dead hints. Surface the F-key/base affordances that actually work instead —
+// F4 Marks and Tab Refs/Hide — keeping F1 Help one keystroke away in both
+// profiles (issue #66, findings #12 / #13 / #17).
+const STATUS_READING_HIDE_TURBO: &[Shortcut<'static>] = &reading_shortcuts_turbo("Hide");
+const STATUS_READING_REFS_TURBO: &[Shortcut<'static>] = &reading_shortcuts_turbo("Refs");
 
 const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
     [
@@ -2317,6 +2326,39 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
         Shortcut {
             key: "v",
             action: "Select",
+        },
+        Shortcut {
+            key: "Tab",
+            action: tab_action,
+        },
+        Shortcut {
+            key: "Esc",
+            action: "Home",
+        },
+        Shortcut {
+            key: "Q",
+            action: "Quit",
+        },
+    ]
+}
+
+const fn reading_shortcuts_turbo(tab_action: &'static str) -> [Shortcut<'static>; 7] {
+    [
+        Shortcut {
+            key: "F1",
+            action: "Help",
+        },
+        Shortcut {
+            key: "F2",
+            action: "Goto",
+        },
+        Shortcut {
+            key: "F3",
+            action: "Find",
+        },
+        Shortcut {
+            key: "F4",
+            action: "Marks",
         },
         Shortcut {
             key: "Tab",
@@ -2386,6 +2428,11 @@ const STATUS_READING_COMPARE: &[Shortcut<'static>] = &[
 ];
 
 fn make_status(state: &LoopState) -> &'static [Shortcut<'static>] {
+    // The reading footer is profile-aware: in turbo the vim letter keys are
+    // off, so we never advertise `K`/`v` there (issue #66, findings #12 / #17).
+    // VISUAL and the compare-split footer are vim-only states (turbo can't
+    // enter visual or open a pane without a binding), so they stay as-is.
+    let turbo = state.keys.keymap() == crate::config::Keymap::Turbo;
     match &state.bg {
         Bg::Splash(_) => STATUS_SPLASH,
         // In a visual selection the relevant actions are copy / bookmark /
@@ -2396,8 +2443,20 @@ fn make_status(state: &LoopState) -> &'static [Shortcut<'static>] {
         // Drive the Tab label off the *actual* layout: "Hide" only when the
         // sidebar is really on screen, "Refs" otherwise (toggled off or
         // width-suppressed) so pressing Tab matches the verb shown.
-        Bg::Reading if state.sidebar_visible() => STATUS_READING_HIDE,
-        Bg::Reading => STATUS_READING_REFS,
+        Bg::Reading if state.sidebar_visible() => {
+            if turbo {
+                STATUS_READING_HIDE_TURBO
+            } else {
+                STATUS_READING_HIDE
+            }
+        }
+        Bg::Reading => {
+            if turbo {
+                STATUS_READING_REFS_TURBO
+            } else {
+                STATUS_READING_REFS
+            }
+        }
     }
 }
 
@@ -2494,6 +2553,9 @@ fn apply_action(
         i64::from(viewport_height)
     };
     let half_lines = (page_lines / 2).max(1);
+    // A page-motion count multiplies the line step (`2Ctrl-F` = two screenfuls);
+    // 0 is treated as 1 so a stray count never freezes the motion.
+    let count = |n: u16| i64::from(n.max(1));
     match action {
         Action::Quit => Ok(true),
         Action::CursorDown(n) => {
@@ -2504,22 +2566,34 @@ fn apply_action(
             *cursor_verse = (*cursor_verse - i64::from(n)).max(1);
             Ok(false)
         }
-        Action::HalfPageDown => {
-            *cursor_verse = render::verse_after_paging(passage, *cursor_verse, wrap_width, half_lines);
-            Ok(false)
-        }
-        Action::HalfPageUp => {
+        // Page motions scale the line step by the count (`2Ctrl-D` scrolls two
+        // half-pages) rather than re-paging N times (issue #66, finding #15).
+        Action::HalfPageDown(n) => {
             *cursor_verse =
-                render::verse_after_paging(passage, *cursor_verse, wrap_width, -half_lines);
+                render::verse_after_paging(passage, *cursor_verse, wrap_width, half_lines * count(n));
             Ok(false)
         }
-        Action::PageDown => {
-            *cursor_verse = render::verse_after_paging(passage, *cursor_verse, wrap_width, page_lines);
+        Action::HalfPageUp(n) => {
+            *cursor_verse = render::verse_after_paging(
+                passage,
+                *cursor_verse,
+                wrap_width,
+                -half_lines * count(n),
+            );
             Ok(false)
         }
-        Action::PageUp => {
+        Action::PageDown(n) => {
             *cursor_verse =
-                render::verse_after_paging(passage, *cursor_verse, wrap_width, -page_lines);
+                render::verse_after_paging(passage, *cursor_verse, wrap_width, page_lines * count(n));
+            Ok(false)
+        }
+        Action::PageUp(n) => {
+            *cursor_verse = render::verse_after_paging(
+                passage,
+                *cursor_verse,
+                wrap_width,
+                -page_lines * count(n),
+            );
             Ok(false)
         }
         Action::GotoTop => {
@@ -2530,24 +2604,35 @@ fn apply_action(
             *cursor_verse = last;
             Ok(false)
         }
-        Action::PrevChapter => {
-            let new_pos = nav_.prev_chapter(db, pos)?;
-            jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+        // Chapter / book motions step N times; each helper no-ops at the canon
+        // edge, so a count past the end simply lands on the first/last
+        // (issue #66, finding #15).
+        Action::PrevChapter(n) => {
+            for _ in 0..n.max(1) {
+                let new_pos = nav_.prev_chapter(db, pos)?;
+                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+            }
             Ok(false)
         }
-        Action::NextChapter => {
-            let new_pos = nav_.next_chapter(db, pos)?;
-            jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+        Action::NextChapter(n) => {
+            for _ in 0..n.max(1) {
+                let new_pos = nav_.next_chapter(db, pos)?;
+                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+            }
             Ok(false)
         }
-        Action::PrevBook => {
-            let new_pos = nav_.prev_book(pos)?;
-            jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+        Action::PrevBook(n) => {
+            for _ in 0..n.max(1) {
+                let new_pos = nav_.prev_book(pos)?;
+                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+            }
             Ok(false)
         }
-        Action::NextBook => {
-            let new_pos = nav_.next_book(pos)?;
-            jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+        Action::NextBook(n) => {
+            for _ in 0..n.max(1) {
+                let new_pos = nav_.next_book(pos)?;
+                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+            }
             Ok(false)
         }
         Action::CopyVerse
