@@ -406,6 +406,22 @@ present:
   - Transients ride the existing status-pill slot (the word-diff toggle's
     model), red for warnings (`set_transient_warn`), neutral for info.
 
+### `32-status-turbo.png` — issue-66 Tier 3 keymap-aware status bar
+
+- **Surface:** the reading footer in the **turbo** keymap. **Standalone** —
+  `demo/ux66-tier3.tape` via `just ux66-screenshots` (writes a turbo
+  `config.toml` into a fresh `XDG_CONFIG_HOME`).
+- **State:** the turbo footer shows only keys that work in turbo — `Help`
+  `Goto` `Find` `Marks` (F1–F4) — instead of the vim-only `K Notes` /
+  `v Select` it used to advertise blindly (finding #12). The companion
+  `32-status-turbo-before.png` is the pinned pre-fix footer (wrongly listing
+  `Notes`/`Select`). The matching turbo-aware **help** sheet isn't captured
+  here — VHS has no function-key support and turbo opens Help only via F1 —
+  but it's covered by the `help.rs` unit tests.
+- **Note:** the muted menubar title (finding #14) is visible across the
+  whole tour now (every shot's top strip went from `black + bold` to a quiet
+  `dark_grey`, so it no longer reads as a clickable File/Edit menu).
+
 ---
 
 ## Maintenance
