@@ -2175,20 +2175,32 @@ fn dispatch_reading(
         }
         _ => {
             let f = state.focus;
-            let pane = &mut state.panes[f];
-            let (wrap_width, viewport_height) = (pane.wrap_width, pane.viewport_height);
-            if apply_action(
-                action,
-                ctx.db,
-                &state.books,
-                &mut pane.pos,
-                &mut pane.passage,
-                &mut pane.cursor_verse,
-                &mut pane.history,
-                wrap_width,
-                viewport_height,
-            )? {
-                return Ok(DispatchStep::Quit);
+            let result = {
+                let pane = &mut state.panes[f];
+                let (wrap_width, viewport_height) = (pane.wrap_width, pane.viewport_height);
+                apply_action(
+                    action,
+                    ctx.db,
+                    &state.books,
+                    &mut pane.pos,
+                    &mut pane.passage,
+                    &mut pane.cursor_verse,
+                    &mut pane.history,
+                    wrap_width,
+                    viewport_height,
+                )?
+            };
+            match result {
+                ActionResult::Quit => return Ok(DispatchStep::Quit),
+                // A chapter/book motion that moved nothing because the cursor
+                // was already at the very first/last passage in the canon: name
+                // the edge so the key doesn't feel broken (issue #66, finding
+                // #21). Per-verse j/k clamping stays silent (vim convention).
+                ActionResult::Boundary(edge) => state.set_transient(match edge {
+                    CanonEdge::Start => "Start of the Bible",
+                    CanonEdge::End => "End of the Bible",
+                }),
+                ActionResult::Continue => {}
             }
         }
     }
@@ -2511,7 +2523,34 @@ fn max_verse(passage: &Passage) -> i64 {
     passage.verses.last().map_or(1, |v| v.number)
 }
 
-/// Returns true if the loop should exit.
+/// Which absolute edge of the canon a no-op chapter/book motion ran into, so
+/// the caller can name it ("Start of the Bible" / "End of the Bible") (issue
+/// #66, finding #21). Per-verse cursor clamping stays silent (vim convention);
+/// only chapter/book motions that move *nothing* at the very edge surface this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonEdge {
+    Start,
+    End,
+}
+
+/// Outcome of an [`apply_action`] call. Replaces the old bare `bool` (quit) so
+/// a chapter/book motion that no-ops at the absolute canon edge can report it
+/// (issue #66, finding #21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionResult {
+    /// Keep running; the action moved (or was a non-motion).
+    Continue,
+    /// `Action::Quit` — end the loop.
+    Quit,
+    /// A chapter/book motion that made *zero* moves because the cursor was
+    /// already at the named canon edge.
+    Boundary(CanonEdge),
+}
+
+/// Apply a reading-view motion/action to the focused pane's reading context.
+/// Returns [`ActionResult::Quit`] to end the loop, [`ActionResult::Boundary`]
+/// when a chapter/book motion no-ops at the very first/last passage in the
+/// canon, or [`ActionResult::Continue`] otherwise.
 #[allow(
     clippy::needless_pass_by_ref_mut,
     reason = "pos is mutated through jump_to in the chapter/book arms below; \
@@ -2533,7 +2572,7 @@ fn apply_action(
     history: &mut History,
     wrap_width: u16,
     viewport_height: u16,
-) -> Result<bool> {
+) -> Result<ActionResult> {
     let nav_ = Navigator::new(books);
     let last = max_verse(passage);
     // Half-/full-page motion scrolls by the visible row count, so a screenful
@@ -2550,21 +2589,21 @@ fn apply_action(
     // 0 is treated as 1 so a stray count never freezes the motion.
     let count = |n: u16| i64::from(n.max(1));
     match action {
-        Action::Quit => Ok(true),
+        Action::Quit => Ok(ActionResult::Quit),
         Action::CursorDown(n) => {
             *cursor_verse = (*cursor_verse + i64::from(n)).min(last);
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::CursorUp(n) => {
             *cursor_verse = (*cursor_verse - i64::from(n)).max(1);
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         // Page motions scale the line step by the count (`2Ctrl-D` scrolls two
         // half-pages) rather than re-paging N times (issue #66, finding #15).
         Action::HalfPageDown(n) => {
             *cursor_verse =
                 render::verse_after_paging(passage, *cursor_verse, wrap_width, half_lines * count(n));
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::HalfPageUp(n) => {
             *cursor_verse = render::verse_after_paging(
@@ -2573,12 +2612,12 @@ fn apply_action(
                 wrap_width,
                 -half_lines * count(n),
             );
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::PageDown(n) => {
             *cursor_verse =
                 render::verse_after_paging(passage, *cursor_verse, wrap_width, page_lines * count(n));
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::PageUp(n) => {
             *cursor_verse = render::verse_after_paging(
@@ -2587,60 +2626,39 @@ fn apply_action(
                 wrap_width,
                 -page_lines * count(n),
             );
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::GotoTop => {
             *cursor_verse = 1;
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::GotoBottom => {
             *cursor_verse = last;
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         // Chapter / book motions step N times. Each helper returns an
         // unchanged position at the canon edge, so we break once movement
         // stops — capping real work at the canon size regardless of the count
         // (a stray `999l` doesn't grind through thousands of redundant loads)
-        // (issue #66, finding #15).
-        Action::PrevChapter(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.prev_chapter(db, pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
-        }
-        Action::NextChapter(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.next_chapter(db, pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
-        }
+        // (issue #66, finding #15). When the FIRST step is already at the edge
+        // (zero moves), report the boundary so the caller can show "Start/End of
+        // the Bible" — but a partial count that moved some then hit the edge is
+        // a normal move, not a dead-end (issue #66, finding #21).
+        Action::PrevChapter(n) => Ok(step_chapter_or_book(n, CanonEdge::Start, |pos| {
+            nav_.prev_chapter(db, pos)
+        })
+        .run(db, pos, passage, cursor_verse, history)?),
+        Action::NextChapter(n) => Ok(step_chapter_or_book(n, CanonEdge::End, |pos| {
+            nav_.next_chapter(db, pos)
+        })
+        .run(db, pos, passage, cursor_verse, history)?),
         Action::PrevBook(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.prev_book(pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
+            Ok(step_chapter_or_book(n, CanonEdge::Start, |pos| nav_.prev_book(pos))
+                .run(db, pos, passage, cursor_verse, history)?)
         }
         Action::NextBook(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.next_book(pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
+            Ok(step_chapter_or_book(n, CanonEdge::End, |pos| nav_.next_book(pos))
+                .run(db, pos, passage, cursor_verse, history)?)
         }
         Action::CopyVerse
         | Action::OpenGoto
@@ -2664,7 +2682,58 @@ fn apply_action(
         | Action::FocusLeft
         | Action::FocusRight
         | Action::CompareClose
-        | Action::ToggleWordDiff => Ok(false),
+        | Action::ToggleWordDiff => Ok(ActionResult::Continue),
+    }
+}
+
+/// A configured chapter/book step: how many times to advance, which edge a
+/// zero-move no-op corresponds to, and the per-step navigator call. Bundled so
+/// the four motion arms share one loop (and one boundary check) instead of
+/// repeating it (issue #66, finding #21).
+struct ChapterBookStep<F> {
+    count: u16,
+    edge: CanonEdge,
+    next: F,
+}
+
+const fn step_chapter_or_book<F>(count: u16, edge: CanonEdge, next: F) -> ChapterBookStep<F>
+where
+    F: Fn(&Position) -> Result<Position>,
+{
+    ChapterBookStep { count, edge, next }
+}
+
+impl<F> ChapterBookStep<F>
+where
+    F: Fn(&Position) -> Result<Position>,
+{
+    /// Walk up to `count` steps, jumping the reading context each time the
+    /// position actually changes. Returns [`ActionResult::Boundary`] iff the
+    /// very first step was already at the canon edge (zero moves); otherwise
+    /// [`ActionResult::Continue`] (including a partial count that moved some
+    /// then stopped).
+    fn run(
+        &self,
+        db: &Db,
+        pos: &mut Position,
+        passage: &mut Passage,
+        cursor_verse: &mut i64,
+        history: &mut History,
+    ) -> Result<ActionResult> {
+        let mut moved = false;
+        for _ in 0..self.count.max(1) {
+            let new_pos = (self.next)(pos)?;
+            if new_pos.same_chapter(pos) {
+                break;
+            }
+            jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+            moved = true;
+        }
+        if moved {
+            Ok(ActionResult::Continue)
+        } else {
+            Ok(ActionResult::Boundary(self.edge))
+        }
     }
 }
 
@@ -3403,5 +3472,101 @@ mod tests {
         assert!(back_flag, "backward off the start must set the wrap flag");
         assert_eq!(wrapped_back.book, last.book);
         assert_eq!(wrapped_back.verse, Some(last.verse));
+    }
+
+    /// Build a reading context (pos / passage / cursor / history) for a chapter,
+    /// so `apply_action`'s chapter/book arms can be driven directly.
+    fn reading_ctx(db: &Db, book: &str, chapter: i64) -> (Position, Passage, i64, History) {
+        let passage = db.load_passage(book, chapter).expect("load passage");
+        let pos = Position {
+            book: book.into(),
+            chapter,
+            verse: None,
+        };
+        let history = History::new(pos.clone());
+        (pos, passage, 1, history)
+    }
+
+    /// Drive one motion `action` through `apply_action` and return its result.
+    fn run_motion(
+        db: &Db,
+        action: Action,
+        ctx: &mut (Position, Passage, i64, History),
+    ) -> ActionResult {
+        apply_action(
+            action,
+            db,
+            &db.list_books().unwrap(),
+            &mut ctx.0,
+            &mut ctx.1,
+            &mut ctx.2,
+            &mut ctx.3,
+            70,
+            20,
+        )
+        .expect("apply_action")
+    }
+
+    /// Prev-chapter / prev-book at Genesis 1 and next-chapter / next-book at the
+    /// last passage in the canon are dead-ends: when the motion moves nothing,
+    /// `apply_action` reports the canon edge so the caller can cue it (issue #66,
+    /// finding #21).
+    #[test]
+    fn chapter_book_motions_report_the_canon_edges() {
+        let (_tmp, db) = kjv_db();
+        let books = db.list_books().expect("books");
+        let last_book = books.last().expect("nonempty canon").code.clone();
+        let last_chapter = db.chapter_count(&last_book).expect("chapter count").max(1);
+
+        // Genesis 1: backward is a Start dead-end; forward moves normally.
+        let mut at_gen1 = reading_ctx(&db, "GEN", 1);
+        assert_eq!(
+            run_motion(&db, Action::PrevChapter(1), &mut at_gen1),
+            ActionResult::Boundary(CanonEdge::Start),
+        );
+        let mut at_gen1 = reading_ctx(&db, "GEN", 1);
+        assert_eq!(
+            run_motion(&db, Action::PrevBook(1), &mut at_gen1),
+            ActionResult::Boundary(CanonEdge::Start),
+        );
+        let mut at_gen1 = reading_ctx(&db, "GEN", 1);
+        assert_eq!(
+            run_motion(&db, Action::NextChapter(1), &mut at_gen1),
+            ActionResult::Continue,
+        );
+
+        // Revelation's last chapter: forward is an End dead-end; backward moves.
+        let mut at_end = reading_ctx(&db, &last_book, last_chapter);
+        assert_eq!(
+            run_motion(&db, Action::NextChapter(1), &mut at_end),
+            ActionResult::Boundary(CanonEdge::End),
+        );
+        let mut at_end = reading_ctx(&db, &last_book, last_chapter);
+        assert_eq!(
+            run_motion(&db, Action::NextBook(1), &mut at_end),
+            ActionResult::Boundary(CanonEdge::End),
+        );
+        let mut at_end = reading_ctx(&db, &last_book, last_chapter);
+        assert_eq!(
+            run_motion(&db, Action::PrevChapter(1), &mut at_end),
+            ActionResult::Continue,
+        );
+    }
+
+    /// A count motion that moves *some* before hitting the edge is a normal move,
+    /// not a dead-end — only zero movement fires the boundary cue (issue #66,
+    /// finding #21).
+    #[test]
+    fn partial_count_motion_is_not_a_boundary() {
+        let (_tmp, db) = kjv_db();
+        // From Genesis 2, `5[prev-chapter]` can only step once (to Genesis 1)
+        // then stops at the canon edge — but it did move, so: Continue.
+        let mut at_gen2 = reading_ctx(&db, "GEN", 2);
+        assert_eq!(
+            run_motion(&db, Action::PrevChapter(5), &mut at_gen2),
+            ActionResult::Continue,
+        );
+        assert_eq!(at_gen2.0.book, "GEN");
+        assert_eq!(at_gen2.0.chapter, 1, "landed on the first chapter");
     }
 }
