@@ -15,7 +15,7 @@ pub struct Shortcut<'a> {
 
 /// Render shortcuts left-aligned. If `mode_tag` is non-empty, draw it
 /// right-aligned in an inverted block — vim-style mode pill.
-pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &str) {
+pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &str, warn: bool) {
     // Clip to the backing buffer first — see the note in `menubar::render`: a
     // 0-row frame would otherwise panic in the raw `buf[(x, area.y)]` loop.
     let area = area.intersection(buf.area);
@@ -27,16 +27,20 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
         .fg(theme::bright_white())
         .bg(theme::menubar_style().bg.unwrap_or_else(theme::light_grey))
         .add_modifier(Modifier::BOLD);
-    // VISUAL gets a high-contrast yellow pill so the eye doesn't have to read
-    // the four letters — the colour shift alone signals mode change. Other
-    // modes share the standard cyan pill.
-    let pill_bg = if mode_tag.contains("VISUAL") {
-        theme::yellow()
+    // A `warn` transient (e.g. "Too narrow") overrides the mode-pill colours —
+    // a refusal has to read over whatever mode we're in, so it claims the
+    // high-attention red pill. Otherwise VISUAL gets the high-contrast yellow
+    // (the colour shift alone signals the mode change) and every other mode
+    // shares the standard cyan pill.
+    let (pill_fg, pill_bg) = if warn {
+        (theme::bright_white(), theme::hotkey_red())
+    } else if mode_tag.contains("VISUAL") {
+        (theme::black(), theme::yellow())
     } else {
-        theme::mode_pill_bg()
+        (theme::black(), theme::mode_pill_bg())
     };
     let mode_style = Style::new()
-        .fg(theme::black())
+        .fg(pill_fg)
         .bg(pill_bg)
         .add_modifier(Modifier::BOLD);
     // Bevel cells: ▌ fills the left half of its cell with a bright_white
@@ -123,7 +127,24 @@ mod tests {
                 Rect::new(0, 0, w.max(1), 1),
                 &mut buf,
                 "-- NORMAL --",
+                false,
             );
         }
+    }
+
+    // A warning transient claims the high-attention red pill so a refusal
+    // (e.g. "Too narrow") can't be mistaken for the neutral mode tag.
+    #[test]
+    fn warn_paints_the_pill_red() {
+        let items = [Shortcut {
+            key: "F1",
+            action: "Help",
+        }];
+        let area = Rect::new(0, 0, 60, 1);
+        let mut buf = Buffer::empty(area);
+        render(&items, area, &mut buf, "-- Too narrow --", true);
+        let painted_red =
+            (0..area.width).any(|x| buf[(x, 0)].style().bg == Some(crate::theme::hotkey_red()));
+        assert!(painted_red, "a warn transient must paint the pill red");
     }
 }
