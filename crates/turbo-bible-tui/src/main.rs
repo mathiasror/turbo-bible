@@ -1519,6 +1519,13 @@ fn switch_focused_translation(state: &mut LoopState, ctx: &mut AppCtx, code: &st
             &mut pane.cursor_verse,
         )?;
         pane.translation = code.to_string();
+        // The jump history still holds positions from the *previous*
+        // translation; a book/chapter valid there may be absent here, and
+        // `history_step` loads without clamping — so a stale entry could blank
+        // the pane or (for an imported partial translation) error out of the
+        // run loop on Ctrl-O. Reseed history on the landed position, exactly as
+        // `Pane::new` does for a fresh pane.
+        pane.history = History::new(pane.pos.clone());
     }
     save_or_warn(
         ctx.warnings,
@@ -2196,13 +2203,19 @@ fn update_splash_label(
 }
 
 fn jump_to(
-    p: Position,
+    mut p: Position,
     db: &Db,
     pos: &mut Position,
     passage: &mut Passage,
     cursor_verse: &mut i64,
     history: &mut History,
 ) -> Result<()> {
+    // Clamp the requested chapter into the book's range before loading, so a
+    // Goto like `:John 999`, a short-book overshoot, or a stale bookmark from a
+    // differently-versified translation lands on the last chapter instead of an
+    // empty passage with a cursor on a nonexistent verse 1. Mirrors the
+    // `--chapter` startup path, which already routes through `clamp_chapter`.
+    p.chapter = clamp_chapter(db, &p.book, p.chapter)?;
     history.push(p.clone());
     let target_verse = p.verse;
     *pos = p;
