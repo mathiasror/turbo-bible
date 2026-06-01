@@ -148,12 +148,18 @@ impl BookmarkStore {
         Ok(())
     }
 
-    pub fn add(&mut self, bm: Bookmark) {
-        // De-dupe: if an identical range already exists, leave it alone.
-        if self.bookmarks.iter().any(|b| b.same_range(&bm)) {
-            return;
+    /// Toggle a bookmark for `bm`'s range: remove it if an identical range is
+    /// already bookmarked, otherwise add it. Returns `true` when a bookmark
+    /// was added, `false` when one was removed — so `b` can confirm which
+    /// happened and offer an in-view un-bookmark (issue #66, finding #8).
+    pub fn toggle(&mut self, bm: Bookmark) -> bool {
+        if let Some(i) = self.bookmarks.iter().position(|b| b.same_range(&bm)) {
+            self.bookmarks.remove(i);
+            false
+        } else {
+            self.bookmarks.push(bm);
+            true
         }
-        self.bookmarks.push(bm);
     }
 
     fn rewrite_legacy_translation(&mut self) {
@@ -214,12 +220,21 @@ mod tests {
     }
 
     #[test]
-    fn add_dedupes_via_same_range() {
+    fn toggle_adds_then_removes_the_same_range() {
         let mut store = BookmarkStore::default();
-        store.add(bm(1, 1));
-        store.add(bm(1, 1)); // identical
-        store.add(bm(2, 2)); // different
+        assert!(store.toggle(bm(1, 1)), "first toggle adds");
+        assert_eq!(store.bookmarks.len(), 1);
+        assert!(
+            !store.toggle(bm(1, 1)),
+            "second toggle on same range removes"
+        );
+        assert!(store.bookmarks.is_empty());
+        // A different range is independent.
+        assert!(store.toggle(bm(2, 2)));
+        assert!(store.toggle(bm(3, 4)));
         assert_eq!(store.bookmarks.len(), 2);
+        assert!(!store.toggle(bm(2, 2)));
+        assert_eq!(store.bookmarks.len(), 1);
     }
 
     #[test]
