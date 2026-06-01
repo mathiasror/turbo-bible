@@ -147,13 +147,26 @@ const SIDEBAR_GAP: u16 = 2;
 const SIDEBAR_COLS: u16 = 34;
 const SIDEBAR_SLACK: u16 = 4;
 
+/// Hard cap on the effective reading-pane width, in columns. Equals the default
+/// `[reading] max_width`, so the default layout is unchanged; a larger
+/// `max_width` is clamped to this (issue #66, finding #20). Verse text already
+/// wraps at `render::MAX_BODY_WIDTH` (~70) for readability, so widening the pane
+/// past ~80 only stretched the chrome and — worse — pushed the references
+/// sidebar threshold out of reach (a `max_width = 200` would have demanded a
+/// ~240-col terminal before the sidebar appeared). Capping here keeps both the
+/// pane and the sidebar trigger sane regardless of the configured knob.
+pub(crate) const READING_WIDTH_CAP: u16 = 80;
+
 /// Minimum terminal width to show the references sidebar beside a
 /// `max_reading_w`-wide reading pane. Saturating throughout: a pathological
 /// `max_reading_w` (e.g. a malformed config) saturates high rather than
 /// overflowing, so the sidebar simply never fits.
 #[must_use]
 pub fn sidebar_min_width(max_reading_w: u16) -> u16 {
+    // Cap the effective width so a large `max_width` can't push the sidebar
+    // threshold out of reach (issue #66, finding #20).
     max_reading_w
+        .min(READING_WIDTH_CAP)
         .saturating_add(SIDEBAR_GAP)
         .saturating_add(SIDEBAR_COLS)
         .saturating_add(SIDEBAR_SLACK)
@@ -172,6 +185,11 @@ pub fn sidebar_fits(total_width: u16, max_reading_w: u16) -> bool {
 /// Returns (`reading_rect`, `sidebar_rect`). The sidebar is only shown if there's
 /// enough horizontal room AND the caller asked for it.
 fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Option<Rect>) {
+    // Cap the effective reading width: a large `max_width` neither balloons the
+    // pane nor pushes the sidebar threshold (issue #66, finding #20). At the
+    // default (80) this is a no-op — min(80, 80) == 80 — so the default layout
+    // is byte-identical.
+    let max_reading_w = max_reading_w.min(READING_WIDTH_CAP);
     let h = body.height.saturating_sub(2);
     let y = body.y + 1;
 
@@ -344,8 +362,8 @@ pub(crate) fn body_area(area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::{
-        MIN_PANE_W, body_layout, min_pane_interior, min_total_width, pane_content_rects,
-        pane_viewports, panes_layout, sidebar_fits, sidebar_min_width,
+        MIN_PANE_W, READING_WIDTH_CAP, body_layout, min_pane_interior, min_total_width,
+        pane_content_rects, pane_viewports, panes_layout, sidebar_fits, sidebar_min_width,
     };
     use ratatui::layout::Rect;
 
@@ -368,12 +386,18 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_min_width_saturates_on_absurd_reading_width() {
-        // A malformed max_reading_width must saturate high (so a realistic
-        // terminal never fits a sidebar) rather than wrap around and spuriously
-        // report room.
-        assert_eq!(sidebar_min_width(u16::MAX), u16::MAX);
-        assert!(!sidebar_fits(300, u16::MAX));
+    fn sidebar_min_width_caps_the_reading_width() {
+        // The effective reading width is capped at READING_WIDTH_CAP (issue #66,
+        // finding #20), so a large `max_width` knob can't push the sidebar
+        // threshold out of reach: any value at or above the cap yields the same
+        // threshold as the cap itself (= 80 + 2 + 34 + 4 = 120).
+        assert_eq!(sidebar_min_width(80), 120);
+        assert_eq!(sidebar_min_width(200), sidebar_min_width(80));
+        assert_eq!(sidebar_min_width(u16::MAX), sidebar_min_width(80));
+        // The sidebar therefore appears at the same ~120-col terminal whether
+        // max_width is 80 or 200 — not 240.
+        assert!(sidebar_fits(120, 200));
+        assert!(!sidebar_fits(119, 200));
     }
 
     #[test]
@@ -397,14 +421,22 @@ mod tests {
     }
 
     #[test]
-    fn body_layout_survives_absurd_max_width() {
-        // A pathological max_reading_width (e.g. a malformed config that slipped
-        // past clamping) must not overflow the layout arithmetic; it falls back
-        // to the centered single pane.
+    fn body_layout_caps_absurd_max_width() {
+        // A pathological max_reading_width (e.g. a malformed config) is clamped
+        // to READING_WIDTH_CAP rather than overflowing or ballooning the layout
+        // (issue #66, finding #20). At a 120-col body the capped (80) pane fits
+        // the sidebar, and the reading width never exceeds the cap.
         let body = Rect::new(0, 0, 120, 40);
-        let (reading, sidebar) = body_layout(body, true, u16::MAX);
-        assert!(sidebar.is_none(), "absurd width must force single-pane");
-        assert!(reading.width <= body.width);
+        let (reading_capped, sidebar) = body_layout(body, true, u16::MAX);
+        assert!(
+            sidebar.is_some(),
+            "capped width fits the sidebar at 120 cols"
+        );
+        assert!(reading_capped.width <= READING_WIDTH_CAP);
+        // An absurd width lays out identically to the cap itself.
+        let (reading_at_cap, sidebar_at_cap) = body_layout(body, true, READING_WIDTH_CAP);
+        assert_eq!(reading_capped, reading_at_cap);
+        assert_eq!(sidebar, sidebar_at_cap);
     }
 
     #[test]

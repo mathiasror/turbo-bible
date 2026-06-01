@@ -286,7 +286,7 @@ keymap = "vim"   # "vim" (default) or "turbo" (arrows/F-keys/PgUp-PgDn only)
 [reading]
 show_sidebar      = true   # initial (Tab to toggle)
 show_daily_quote  = true   # splash "verse of the day" on/off
-max_width         = 80     # reading pane max width in cols
+max_width         = 80     # reading pane max width in cols (text wraps at ~70; effectively capped at ~80)
 compare_word_diff = true   # highlight diverging words across compare panes (Ctrl-W d)
 
 [updates]
@@ -404,6 +404,10 @@ Inside `crates/turbo-bible-tui/src/`:
   *differ* between same-language translations (`Ctrl-W d`), but the model is
   vocabulary-level: a word that merely moved, or a repeated word where only one
   occurrence changes, is flagged at the word level rather than per-position.
+- Reading width is capped for legibility. Verse text wraps at ~70 columns and
+  the reading pane is effectively capped at ~80, so a larger `[reading]
+  max_width` is a no-op (it no longer stretches the pane or delays the
+  references sidebar).
 
 ## Contributing
 
