@@ -14,11 +14,12 @@ const MATCH_START: char = '\u{0001}';
 const MATCH_END: char = '\u{0002}';
 
 /// Hit cap for `n`/`N` repeat-search in the reading view. Common-word
-/// queries (e.g. `the`) match tens of thousands of verses; we sort the
-/// hits canonically and walk them, so the cap exists purely to bound
-/// memory + sort cost in the corner case. Keep this comfortably larger
-/// than the 50-row cap the Find dialog shows interactively — the repeat
-/// path runs against the whole corpus, not a screenful.
+/// queries (e.g. `the`) match tens of thousands of verses; `n`/`N` walk the
+/// hits in the **same BM25 relevance order the Find list shows** (issue #66,
+/// finding #18), so the cap exists purely to bound memory + query cost in the
+/// corner case. Keep this comfortably larger than the 50-row cap the Find
+/// dialog shows interactively — the repeat path runs against the whole corpus,
+/// not a screenful.
 pub const REPEAT_LIMIT: usize = 1000;
 
 #[derive(Debug, Clone)]

@@ -2047,14 +2047,7 @@ impl LoopState {
         let f = self.focus;
         let outcome = {
             let pane = &self.panes[f];
-            repeat_search(
-                ctx.db,
-                &self.books,
-                &q,
-                &pane.pos,
-                pane.cursor_verse,
-                forward,
-            )
+            repeat_search(ctx.db, &q, &pane.pos, pane.cursor_verse, forward)
         };
         let Some((p, wrapped)) = outcome else {
             self.set_transient_warn("Pattern not found");
@@ -2675,57 +2668,56 @@ fn apply_action(
     }
 }
 
-/// Repeat the last `/`-search. Runs the query, sorts hits canonically
-/// (book canon, chapter, verse), and returns the next or previous hit
-/// relative to `(pos, cursor_verse)`. Wraps around when the end is reached,
-/// matching vim's default `wrapscan` behavior. `None` when the query yields
-/// no hits at all (or only the hit at the current verse).
-/// Find the next/previous match for `query` relative to the cursor, in
-/// canonical book/chapter/verse order. Returns the target position and whether
-/// the search **wrapped** past the last/first match (so the caller can show a
-/// vim-style "search hit BOTTOM, continuing at TOP" cue). `None` when the query
-/// has no matches at all (issue #66, finding #10).
+/// Step `n`/`N` through the last `/`-search in the **same BM25 relevance
+/// order the Find list showed** — not a canonical re-sort — so repeating the
+/// search continues the list the user just scrolled (issue #66, finding #18).
+///
+/// `search::search` already returns hits ordered by `bm25(verse_fts)`; we keep
+/// that order and locate the cursor's current `(book, chapter, verse)` in it.
+/// `n` steps to the next index, `N` to the previous, wrapping at either end
+/// (the `wrapped` bool drives the vim-style "search hit BOTTOM…" cue, issue
+/// #66, finding #10). When the cursor isn't sitting on any hit (the user
+/// navigated away after the Find), there's no position in the list to advance
+/// from, so we start at the first hit going forward / the last going backward,
+/// with `wrapped = false`. Returns the target position and the wrap flag;
+/// `None` only when the query has no matches at all.
 fn repeat_search(
     db: &Db,
-    books: &[Book],
     query: &str,
     pos: &Position,
     cursor_verse: i64,
     forward: bool,
 ) -> Option<(Position, bool)> {
-    let mut hits = search::search(db, query, search::REPEAT_LIMIT).ok()?;
+    // Keep BM25 order (do NOT re-sort): this is the order the Find dialog laid
+    // out, and `n`/`N` continue exactly that list.
+    let hits = search::search(db, query, search::REPEAT_LIMIT).ok()?;
     if hits.is_empty() {
         return None;
     }
-    let canon: std::collections::HashMap<&str, usize> = books
-        .iter()
-        .enumerate()
-        .map(|(i, b)| (b.code.as_str(), i))
-        .collect();
-    let key = |book: &str, ch: i64, v: i64| -> (usize, i64, i64) {
-        (canon.get(book).copied().unwrap_or(usize::MAX), ch, v)
+    let on = |h: &search::SearchHit| {
+        h.book == pos.book && h.chapter == pos.chapter && h.verse == cursor_verse
     };
-    hits.sort_by_key(|h| key(&h.book, h.chapter, h.verse));
-    let here = key(&pos.book, pos.chapter, cursor_verse);
-    // `wrapped` is true when the directional search found nothing beyond the
-    // cursor and fell back to the first/last hit.
-    let (pick, wrapped) = if forward {
-        match hits
-            .iter()
-            .find(|h| key(&h.book, h.chapter, h.verse) > here)
-        {
-            Some(h) => (Some(h), false),
-            None => (hits.first(), true),
+    let here = hits.iter().position(on);
+    let (pick, wrapped) = match here {
+        // Cursor is on a hit: step within the BM25 list, wrapping at the edge.
+        Some(i) if forward => {
+            if i + 1 < hits.len() {
+                (hits.get(i + 1), false)
+            } else {
+                (hits.first(), true)
+            }
         }
-    } else {
-        match hits
-            .iter()
-            .rev()
-            .find(|h| key(&h.book, h.chapter, h.verse) < here)
-        {
-            Some(h) => (Some(h), false),
-            None => (hits.last(), true),
+        Some(i) => {
+            if i > 0 {
+                (hits.get(i - 1), false)
+            } else {
+                (hits.last(), true)
+            }
         }
+        // Cursor isn't on any hit (navigated away): re-enter the list at its
+        // start (forward) or end (backward); no wrap.
+        None if forward => (hits.first(), false),
+        None => (hits.last(), false),
     };
     pick.map(|h| {
         (
@@ -2738,7 +2730,6 @@ fn repeat_search(
         )
     })
 }
-
 fn picker_entries(db: &Db) -> Vec<PickerEntry> {
     merge_picker_entries(db.translations())
 }
@@ -3305,5 +3296,112 @@ mod tests {
             &DownloadResult::FetchFailed(anyhow::anyhow!("no network")),
         );
         assert_eq!(failed.transient, "Download of cross-references failed");
+    }
+
+    /// Build a real read-only KJV `Db` from a fresh install dir — the same
+    /// pattern `db.rs` tests use. The bundled KJV is embedded, so this needs no
+    /// developer-DB precondition.
+    fn kjv_db() -> (tempfile::TempDir, Db) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        crate::install::ensure_installed(tmp.path()).expect("install bundled kjv");
+        let db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        (tmp, db)
+    }
+
+    fn at(book: &str, chapter: i64, verse: i64) -> Position {
+        Position {
+            book: book.into(),
+            chapter,
+            verse: Some(verse),
+        }
+    }
+
+    /// `n`/`N` must walk the Find list's BM25 relevance order, not a canonical
+    /// re-sort — with the cursor sitting on a hit, the next step lands on the
+    /// immediately-following hit in `search::search`'s own order (issue #66,
+    /// finding #18).
+    #[test]
+    fn repeat_search_steps_in_bm25_order_when_cursor_on_a_hit() {
+        let (_tmp, db) = kjv_db();
+        let query = "shepherd";
+        let hits = search::search(&db, query, search::REPEAT_LIMIT).expect("search");
+        assert!(hits.len() >= 3, "need several hits to test stepping");
+
+        // Cursor on hits[0] → forward lands on hits[1] (the BM25 successor).
+        let cursor = at(&hits[0].book, hits[0].chapter, hits[0].verse);
+        let (next, wrapped) =
+            repeat_search(&db, query, &cursor, hits[0].verse, true).expect("a next hit");
+        assert!(!wrapped, "stepping mid-list does not wrap");
+        assert_eq!(next.book, hits[1].book);
+        assert_eq!(next.chapter, hits[1].chapter);
+        assert_eq!(next.verse, Some(hits[1].verse));
+
+        // Backward from hits[1] returns to hits[0].
+        let mid = at(&hits[1].book, hits[1].chapter, hits[1].verse);
+        let (prev, wrapped) =
+            repeat_search(&db, query, &mid, hits[1].verse, false).expect("a prev hit");
+        assert!(!wrapped);
+        assert_eq!(prev.book, hits[0].book);
+        assert_eq!(prev.chapter, hits[0].chapter);
+        assert_eq!(prev.verse, Some(hits[0].verse));
+    }
+
+    /// Off any hit (the user navigated away after the Find): forward re-enters
+    /// the BM25 list at its first hit, backward at its last — with no wrap cue
+    /// (issue #66, finding #18).
+    #[test]
+    fn repeat_search_off_hit_starts_at_first_or_last() {
+        let (_tmp, db) = kjv_db();
+        let query = "shepherd";
+        let hits = search::search(&db, query, search::REPEAT_LIMIT).expect("search");
+        assert!(hits.len() >= 2);
+
+        // Genesis 1:2 is not a "shepherd" hit (Genesis 1 has no shepherds).
+        let off = at("GEN", 1, 2);
+        assert!(
+            !hits
+                .iter()
+                .any(|h| h.book == "GEN" && h.chapter == 1 && h.verse == 2),
+            "test precondition: cursor must be off every hit",
+        );
+
+        let (fwd, wrapped) = repeat_search(&db, query, &off, 2, true).expect("first hit");
+        assert!(!wrapped, "re-entering the list off-hit is not a wrap");
+        assert_eq!(fwd.book, hits[0].book);
+        assert_eq!(fwd.verse, Some(hits[0].verse));
+
+        let last = hits.last().expect("nonempty");
+        let (back, wrapped) = repeat_search(&db, query, &off, 2, false).expect("last hit");
+        assert!(!wrapped);
+        assert_eq!(back.book, last.book);
+        assert_eq!(back.verse, Some(last.verse));
+    }
+
+    /// Stepping off the end of the BM25 list wraps to the other end and sets the
+    /// wrap flag, so the caller can surface vim's "search hit BOTTOM…" cue
+    /// (issue #66, findings #18 + #10).
+    #[test]
+    fn repeat_search_wraps_at_the_ends() {
+        let (_tmp, db) = kjv_db();
+        let query = "shepherd";
+        let hits = search::search(&db, query, search::REPEAT_LIMIT).expect("search");
+        assert!(hits.len() >= 2);
+
+        // Forward from the last hit wraps to the first.
+        let last = hits.last().expect("nonempty");
+        let on_last = at(&last.book, last.chapter, last.verse);
+        let (wrapped_fwd, fwd_flag) =
+            repeat_search(&db, query, &on_last, last.verse, true).expect("wrap to first");
+        assert!(fwd_flag, "forward off the end must set the wrap flag");
+        assert_eq!(wrapped_fwd.book, hits[0].book);
+        assert_eq!(wrapped_fwd.verse, Some(hits[0].verse));
+
+        // Backward from the first hit wraps to the last.
+        let on_first = at(&hits[0].book, hits[0].chapter, hits[0].verse);
+        let (wrapped_back, back_flag) =
+            repeat_search(&db, query, &on_first, hits[0].verse, false).expect("wrap to last");
+        assert!(back_flag, "backward off the start must set the wrap flag");
+        assert_eq!(wrapped_back.book, last.book);
+        assert_eq!(wrapped_back.verse, Some(last.verse));
     }
 }
