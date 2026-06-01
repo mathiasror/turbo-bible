@@ -8,6 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
+use crate::text::display_width;
 use crate::theme;
 
 /// Paint a modal dialog over a dimmed-dither backdrop. Use this for any
@@ -81,12 +82,12 @@ pub fn input_field(text: &str, placeholder: &str, width: u16) -> Vec<Span<'stati
 
     let interior = (width as usize).saturating_sub(2).max(1);
     let mut spans = vec![Span::styled("\u{258F}", edge_left)];
-    let mut content_w = 1 + text.chars().count() + 1; // leading space + text + cursor
+    let mut content_w = 1 + display_width(text) + 1; // leading space + text + cursor
     spans.push(Span::styled(format!(" {text}"), body));
     spans.push(Span::styled("\u{2588}", cursor));
     if text.is_empty() && !placeholder.is_empty() {
         spans.push(Span::styled(placeholder.to_string(), ghost));
-        content_w += placeholder.chars().count();
+        content_w += display_width(placeholder);
     }
     if content_w < interior {
         spans.push(Span::styled(" ".repeat(interior - content_w), body));

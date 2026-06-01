@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::db::Passage;
-use crate::text::word_wrap;
+use crate::text::{display_width, word_wrap};
 use crate::theme;
 use crate::worddiff::PaneDiff;
 
@@ -308,8 +308,8 @@ pub fn render_passage_with_diff(
         }
         if !markers.is_empty() {
             let glyph = format!(" {markers}");
-            let last_len = chunks.last().map_or(0, |s| s.chars().count());
-            if last_len + glyph.chars().count() <= body_w {
+            let last_len = chunks.last().map_or(0, |s| display_width(s));
+            if last_len + display_width(&glyph) <= body_w {
                 if let Some(last) = chunks.last_mut() {
                     last.push_str(&glyph);
                 }
@@ -358,7 +358,7 @@ pub fn render_passage_with_diff(
             // edge — otherwise the highlight stops at the last word and
             // the row reads as a ragged tag instead of a clean bar.
             if kind != RowKind::Idle {
-                let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let used: usize = spans.iter().map(|s| display_width(&s.content)).sum();
                 let pad = (wrap_width as usize).saturating_sub(used);
                 if pad > 0 {
                     spans.push(Span::styled(" ".repeat(pad), body_style));
@@ -568,7 +568,7 @@ pub fn pad_to_width(lines: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
                 .line
                 .spans
                 .iter()
-                .map(|s| s.content.chars().count())
+                .map(|s| display_width(&s.content))
                 .sum();
             let mut spans = rl.line.spans.clone();
             let used_u16 = u16::try_from(used).unwrap_or(u16::MAX);
