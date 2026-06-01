@@ -147,7 +147,8 @@ pub fn save(state: &PersistedState) -> Result<()> {
     fs::create_dir_all(&dir)?;
     let path = state_path()?;
     let txt = toml::to_string_pretty(state)?;
-    fs::write(path, txt)?;
+    // Atomic rename so a crash mid-write can't truncate state.toml.
+    paths::atomic_write(&path, txt.as_bytes())?;
     // Drop the legacy JSON file once we've safely written the new TOML.
     if let Ok(legacy) = legacy_state_path() {
         let _ = fs::remove_file(legacy);

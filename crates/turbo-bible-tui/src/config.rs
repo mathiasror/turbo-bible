@@ -497,7 +497,8 @@ pub fn save(cfg: &Config) -> Result<()> {
     fs::create_dir_all(&dir)?;
     let path = config_path()?;
     let txt = toml::to_string_pretty(cfg)?;
-    fs::write(path, txt)?;
+    // Atomic rename so a crash mid-write can't truncate config.toml.
+    paths::atomic_write(&path, txt.as_bytes())?;
     Ok(())
 }
 
