@@ -17,7 +17,7 @@ use ratatui::widgets::{Paragraph, Widget};
 use crate::db::Book;
 use crate::nav::Position;
 use crate::quote::DailyQuote;
-use crate::text::word_wrap;
+use crate::text::{display_width, word_wrap};
 use crate::theme;
 use crate::ui::dialog;
 use crate::ui::listnav::{ListNav, Step};
@@ -1032,10 +1032,9 @@ fn blank_line(inner_w: usize, bg: Style) -> Line<'static> {
 }
 
 fn center_padded(inner_w: usize, bg: Style, row: &str, st: Style) -> Line<'static> {
-    let pad_left = inner_w.saturating_sub(row.chars().count()) / 2;
-    let pad_right = inner_w
-        .saturating_sub(pad_left)
-        .saturating_sub(row.chars().count());
+    let row_w = display_width(row);
+    let pad_left = inner_w.saturating_sub(row_w) / 2;
+    let pad_right = inner_w.saturating_sub(pad_left).saturating_sub(row_w);
     Line::from(vec![
         Span::styled(" ".repeat(pad_left), bg),
         Span::styled(row.to_string(), st),
