@@ -66,25 +66,21 @@ Sleep 400ms
 # === 16 — Splash filter, no matches =====================================
 # Wipe the active "jo" filter, then type a query that resolves to zero
 # books — captures the FILTER mode's empty-state in the picker columns.
-# Restore "jo" before Enter so the subsequent Tab+Enter still lands on
-# John.
 Ctrl+U
 Sleep 200ms
 Type "xyzzy"
 Sleep 600ms
 Screenshot "docs/screenshots/16-splash-filter-empty.png"
 Sleep 400ms
+
+# Open John straight from the filter: narrow to "john" (auto-focuses the NT
+# column, which alone matches) and Enter opens the highlighted book directly —
+# the Tier-3 #19 behaviour, so no Tab/second-Enter dance (and no stray Tab that
+# would toggle the sidebar off in the reading view that follows).
 Ctrl+U
 Sleep 200ms
-Type "jo"
-Sleep 400ms
-
-Enter
-Sleep 200ms
-
-# Hop to NT, open John ---------------------------------------------------
-Tab
-Sleep 200ms
+Type "john"
+Sleep 500ms
 Enter
 Sleep 1500ms
 
