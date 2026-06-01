@@ -182,9 +182,8 @@ impl FootnoteDialog {
         // Cross-reference entries — dim cyan (teal), no underline; the `→`
         // arrow already signals navigability. Mirrors sidebar.rs::xref_style.
         let xref_color = Style::new().fg(theme::teal()).bg(theme::blue());
-        // Hotkey + hint styles, shared by the fetch affordance and the footer:
-        // the key glyph reads bright (it's the one thing to press), the
-        // surrounding prose stays calm grey.
+        // Footer hotkey + hint styles: the keycap reads bright (it's the thing
+        // to press), the surrounding prose stays calm grey.
         let key_style = Style::new()
             .fg(theme::bright_white())
             .bg(theme::blue())
@@ -239,7 +238,9 @@ impl FootnoteDialog {
         if show_fetch {
             // Dataset not installed yet (cargo/brew copies start with the empty
             // stand-in). Offer the one-key download in place of the (always
-            // empty) cross-reference list. `d` is handled in `handle`.
+            // empty) cross-reference list. The body poses the offer; the footer
+            // (below) owns the `d` keycap, so the key isn't echoed twice. `d` is
+            // handled in `handle`.
             lines.push(Line::from(vec![
                 Span::styled("  ", bg),
                 Span::styled("Cross-references aren't downloaded yet.", body_style),
@@ -247,9 +248,7 @@ impl FootnoteDialog {
             lines.push(blank());
             lines.push(Line::from(vec![
                 Span::styled("  ", bg),
-                Span::styled("Press ", body_style),
-                Span::styled("d", key_style),
-                Span::styled(" to fetch them (~6 MB).", body_style),
+                Span::styled("Fetch them? (~6 MB)", body_style),
             ]));
         } else if empty {
             lines.push(Line::from(vec![
