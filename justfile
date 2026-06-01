@@ -98,6 +98,13 @@ word-diff-screenshots:
     cargo build -p turbo-bible --release
     vhs demo/word-diff.tape
 
+# Re-render the xrefs fetch affordance (docs/screenshots/24). Standalone tape;
+# clears XDG_DATA_HOME so the empty-xrefs stand-in triggers the affordance. The
+# 25-*-before.png baseline is a pinned pre-feature capture, not regenerated here.
+xrefs-screenshot:
+    cargo build -p turbo-bible --release
+    vhs demo/xrefs-fetch.tape
+
 # Re-render website/og-image.png (the 1200x630 social card) — a real VHS
 # capture of the splash, same toolchain as `demo` / `screenshots`.
 og-image:
