@@ -99,7 +99,12 @@ pub struct ReadingConfig {
     pub show_sidebar: bool,
     /// Show the "verse of the day" block on the splash screen.
     pub show_daily_quote: bool,
-    /// Maximum width (cols) of the reading pane; centered if terminal is wider.
+    /// Maximum width (cols) of the reading pane; centered if the terminal is
+    /// wider. Verse text wraps at ~70 cols for readability regardless of this,
+    /// and the effective pane width is capped at ~80 (`ui::READING_WIDTH_CAP`):
+    /// raising `max_width` past the cap is a no-op rather than stretching the
+    /// pane or pushing the references-sidebar threshold out of reach (issue #66,
+    /// finding #20).
     pub max_width: u16,
     /// Highlight the words that diverge between same-language compare panes.
     /// The initial state; `Ctrl-W d` toggles it for the session.
