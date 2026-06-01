@@ -34,7 +34,9 @@ pub struct TranslationManifestEntry {
 /// Manifest entry for the shared cross-references DB.
 #[allow(
     dead_code,
-    reason = "fields are consumed by fetch::xrefs once the K-popup wires download-on-demand"
+    reason = "file / sha256 / decompressed_size are consumed by fetch::xrefs; \
+              compressed_size mirrors the JSON 1:1 so the build.rs codegen stays \
+              uniform with TranslationManifestEntry."
 )]
 pub struct XrefsManifestEntry {
     pub file: &'static str,
