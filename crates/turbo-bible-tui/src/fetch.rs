@@ -184,6 +184,11 @@ pub(crate) fn decode_and_verify(
 }
 
 fn run_curl(url: &str, dest: &Path, max_filesize: u64) -> Result<()> {
+    // NB: a byte/percent progress readout is deferred (issue #66, finding #23):
+    // it would mean piping curl's `--progress-bar` stderr (or `-w`) back to the
+    // event loop and threading partial counts through the download job — out of
+    // scope here. We run curl to completion and surface a category-specific
+    // result via `classify_fetch_error` instead.
     let status = Command::new("curl")
         .args([
             "--fail",

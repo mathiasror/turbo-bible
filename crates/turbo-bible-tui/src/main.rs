@@ -796,6 +796,69 @@ struct DownloadMessages {
     transient: String,
 }
 
+/// A best-effort classification of a failed on-demand fetch, derived from the
+/// `.context(...)` frames `fetch.rs` already attaches (issue #66, finding #23).
+/// The wire format is `curl` → sha256 → zstd-decompress, and each stage frames
+/// its error distinctly, so a substring scan of the [`anyhow::Error`] chain is
+/// enough to tell the categories apart without a typed error enum (the repo's
+/// "anyhow-only at boundaries" stance — no `thiserror`). Anything unrecognised
+/// falls back to [`FetchErrorKind::Other`], which keeps the old generic message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FetchErrorKind {
+    /// `curl` isn't installed (the worker couldn't even spawn it).
+    CurlMissing,
+    /// `curl` ran but failed — no network, DNS, TLS, 404, or a timeout.
+    Network,
+    /// The bytes arrived but failed the sha256 / decompressed-size gate —
+    /// corrupt, truncated, or stale against the embedded manifest.
+    Verification,
+    /// Unrecognised — keep the generic copy.
+    Other,
+}
+
+impl FetchErrorKind {
+    /// The category-specific, actionable transient. Names the item so the user
+    /// knows which download broke; the full cause stays in the warnings trail.
+    fn transient(self, name: &str) -> String {
+        match self {
+            Self::CurlMissing => "curl not found \u{2014} install curl".to_string(),
+            Self::Network => {
+                format!("{name}: couldn't reach GitHub \u{2014} check your connection")
+            }
+            Self::Verification => {
+                format!("{name}: verification failed \u{2014} corrupt or stale download")
+            }
+            Self::Other => format!("Download of {name} failed"),
+        }
+    }
+}
+
+/// Walk the [`anyhow::Error`] chain and bucket a failed fetch by category,
+/// matching the `.context(...)` frames `fetch.rs` attaches. Verification is
+/// checked first because a corrupt download is the most actionable signal;
+/// curl-missing before curl-exited because the spawn frame is more specific
+/// than the generic exit frame (issue #66, finding #23).
+fn classify_fetch_error(e: &anyhow::Error) -> FetchErrorKind {
+    let chain: String = e
+        .chain()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let has = |needle: &str| chain.contains(needle);
+    // Note: "decompress " (verb + space) matches the zstd-decode frame
+    // (`fetch.rs::decode_and_verify`'s `.context("decompress {asset}")`) but NOT
+    // the staging "write decompressed {asset}" IO frame, which must stay Other.
+    if has("sha256 mismatch") || has("zip bomb") || has("decompressed to") || has("decompress ") {
+        FetchErrorKind::Verification
+    } else if has("spawn curl") || has("is it installed?") {
+        FetchErrorKind::CurlMissing
+    } else if has("curl exited") {
+        FetchErrorKind::Network
+    } else {
+        FetchErrorKind::Other
+    }
+}
+
 /// Map a finished download to its warning + transient copy. Success gets a
 /// brief "ready" transient (and no warning); each failure mode gets a message
 /// that names what actually broke — fetch vs. registration vs. a dead worker.
@@ -806,8 +869,11 @@ fn download_outcome(name: &str, result: &DownloadResult) -> DownloadMessages {
             transient: format!("{name} ready"),
         },
         DownloadResult::FetchFailed(e) => DownloadMessages {
+            // The warning trail keeps the full cause; the in-TUI transient is
+            // category-specific so the user knows whether to retry, check the
+            // network, or install curl (issue #66, finding #23).
             warning: format!("download {name} failed: {e}"),
-            transient: format!("Download of {name} failed"),
+            transient: classify_fetch_error(e).transient(name),
         },
         DownloadResult::RegisterFailed(e) => DownloadMessages {
             warning: format!("registering {name} failed: {e}"),
@@ -3332,10 +3398,14 @@ mod tests {
             "nb-1930",
             &DownloadResult::FetchFailed(anyhow::anyhow!("sha256 mismatch")),
         );
-        // Detailed warning carries the cause for the stderr trail; the
-        // in-TUI hint stays short.
+        // Detailed warning carries the cause for the stderr trail; the in-TUI
+        // hint is now category-specific (a sha256 mismatch is a verification
+        // failure) and names the download (issue #66, finding #23).
         assert_eq!(m.warning, "download nb-1930 failed: sha256 mismatch");
-        assert_eq!(m.transient, "Download of nb-1930 failed");
+        assert_eq!(
+            m.transient,
+            "nb-1930: verification failed \u{2014} corrupt or stale download"
+        );
     }
 
     #[test]
@@ -3638,5 +3708,79 @@ mod tests {
             matches!(state.dialog, Dialog::Footnote(_)),
             "the fetch-affordance popup must still open when xrefs aren't installed"
         );
+    }
+
+    /// The fetch-error classifier buckets representative `anyhow` chains by the
+    /// `.context(...)` frames `fetch.rs` attaches, so the in-TUI transient is
+    /// actionable per category (issue #66, finding #23).
+    #[test]
+    fn classify_fetch_error_buckets_by_category() {
+        use anyhow::{Context, anyhow};
+
+        // Verification: sha256 mismatch (the exact fetch.rs wording).
+        let sha = anyhow!("sha256 mismatch for nb-1930.db.zst: expected aa, got bb");
+        assert_eq!(classify_fetch_error(&sha), FetchErrorKind::Verification);
+
+        // Verification: oversize / zip-bomb guard.
+        let bomb = anyhow!(
+            "nb-1930.db.zst: decompressed to 9 bytes but the manifest declares 8 (corrupt download or zip bomb)"
+        );
+        assert_eq!(classify_fetch_error(&bomb), FetchErrorKind::Verification);
+
+        // Verification: a zstd decode failure framed by `.context("decompress …")`.
+        let decode: anyhow::Error = Err::<(), _>(anyhow!("unexpected end of input"))
+            .context("decompress nb-1930.db.zst")
+            .unwrap_err();
+        assert_eq!(classify_fetch_error(&decode), FetchErrorKind::Verification);
+
+        // CurlMissing: the spawn frame wraps the OS "not found".
+        let missing: anyhow::Error = Err::<(), _>(anyhow!("No such file or directory"))
+            .context("spawn curl (is it installed?)")
+            .unwrap_err();
+        assert_eq!(classify_fetch_error(&missing), FetchErrorKind::CurlMissing);
+
+        // Network: curl ran and exited non-zero, wrapped by the download frame.
+        let net: anyhow::Error = Err::<(), _>(anyhow!("curl exited with exit status: 6"))
+            .context("download https://example/nb-1930.db.zst")
+            .unwrap_err();
+        assert_eq!(classify_fetch_error(&net), FetchErrorKind::Network);
+
+        // Other: an unrecognised post-fetch IO failure keeps the generic copy.
+        let io = anyhow!("permission denied").context("write decompressed nb-1930.db.zst");
+        assert_eq!(classify_fetch_error(&io), FetchErrorKind::Other);
+    }
+
+    /// Each category renders a distinct, actionable transient that names the
+    /// download (except curl-missing, whose fix is global) (issue #66, #23).
+    #[test]
+    fn fetch_error_transients_are_distinct_and_actionable() {
+        assert_eq!(
+            FetchErrorKind::Verification.transient("nb-1930"),
+            "nb-1930: verification failed \u{2014} corrupt or stale download"
+        );
+        assert_eq!(
+            FetchErrorKind::Network.transient("nb-1930"),
+            "nb-1930: couldn't reach GitHub \u{2014} check your connection"
+        );
+        assert_eq!(
+            FetchErrorKind::CurlMissing.transient("nb-1930"),
+            "curl not found \u{2014} install curl"
+        );
+        assert_eq!(
+            FetchErrorKind::Other.transient("nb-1930"),
+            "Download of nb-1930 failed"
+        );
+        // All four are mutually distinct.
+        let all = [
+            FetchErrorKind::Verification.transient("x"),
+            FetchErrorKind::Network.transient("x"),
+            FetchErrorKind::CurlMissing.transient("x"),
+            FetchErrorKind::Other.transient("x"),
+        ];
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(all[i], all[j], "categories {i} and {j} collided");
+            }
+        }
     }
 }
