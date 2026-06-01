@@ -202,6 +202,24 @@ impl SplashView {
         }
     }
 
+    /// After the filter changes, keep the cursor on a column that actually has
+    /// matches: if the focused column filtered down to nothing but the other
+    /// still has hits, move focus there so the cursor isn't stranded on an empty
+    /// side (and `Enter` isn't a no-op) (issue #66, finding #19).
+    fn refocus_for_filter(&mut self) {
+        if !self.entries(self.focus).is_empty() {
+            return;
+        }
+        let other = match self.focus {
+            SplashColumn::OT => SplashColumn::NT,
+            SplashColumn::NT => SplashColumn::OT,
+        };
+        if !self.entries(other).is_empty() {
+            self.focus = other;
+            self.on_continue = false;
+        }
+    }
+
     fn handle_filter(&mut self, key: KeyEvent) -> SplashOutcome {
         match key.code {
             KeyCode::Esc => {
@@ -211,26 +229,36 @@ impl SplashView {
                 self.mode = SplashMode::Normal;
                 SplashOutcome::Continue
             }
-            KeyCode::Enter => {
-                self.mode = SplashMode::Normal;
-                SplashOutcome::Continue
-            }
+            // Enter opens the highlighted book straight from FILTER mode — no
+            // detour through NORMAL and a second Enter (issue #66, finding #19).
+            // Falls back to leaving FILTER if nothing is highlighted (e.g. the
+            // filter matched nothing at all).
+            KeyCode::Enter => match self.open_current() {
+                Some(p) => SplashOutcome::OpenBook(p),
+                None => {
+                    self.mode = SplashMode::Normal;
+                    SplashOutcome::Continue
+                }
+            },
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.cursor_ot = 0;
                 self.cursor_nt = 0;
+                self.refocus_for_filter();
                 SplashOutcome::Continue
             }
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'u' => {
                 self.filter.clear();
                 self.cursor_ot = 0;
                 self.cursor_nt = 0;
+                self.refocus_for_filter();
                 SplashOutcome::Continue
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.filter.push(c);
                 self.cursor_ot = 0;
                 self.cursor_nt = 0;
+                self.refocus_for_filter();
                 SplashOutcome::Continue
             }
             _ => SplashOutcome::Continue,
@@ -456,6 +484,9 @@ impl SplashView {
                 self.filter.clear();
                 self.cursor_ot = 0;
                 self.cursor_nt = 0;
+                // Leave the Continue row so a FILTER Enter opens the highlighted
+                // book, not the resumed position (issue #66, finding #19).
+                self.on_continue = false;
                 SplashOutcome::Continue
             }
             KeyCode::Enter | KeyCode::Char('o') => self
@@ -1472,5 +1503,68 @@ mod tests {
             text.contains("brew upgrade turbo-bible"),
             "banner should carry the upgrade command"
         );
+    }
+
+    /// Helper: feed a character key to the splash (no modifiers).
+    fn type_char(splash: &mut SplashView, c: char) -> SplashOutcome {
+        splash.handle(KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty()))
+    }
+
+    /// When the filter empties the focused column but the other column still has
+    /// matches, focus follows the matches so the cursor isn't stranded on an
+    /// empty side (issue #66, finding #19).
+    #[test]
+    fn filter_auto_focuses_the_column_with_matches() {
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        // Enter FILTER, then type 'n' — the fake OT books ("OT Book N" / "OT5" /
+        // "O05") contain no 'n', so the OT column empties while every NT book
+        // ("NT Book N" / "n03") still matches.
+        let _ = type_char(&mut splash, '/');
+        assert!(matches!(splash.mode, SplashMode::Filter));
+        let _ = type_char(&mut splash, 'n');
+        assert!(
+            matches!(splash.focus, SplashColumn::NT),
+            "focus must follow the matches to the NT column"
+        );
+        assert!(splash.entries(SplashColumn::OT).is_empty());
+        assert!(!splash.entries(SplashColumn::NT).is_empty());
+    }
+
+    /// `Enter` in FILTER mode opens the highlighted book directly — no detour
+    /// through NORMAL and a second Enter (issue #66, finding #19).
+    #[test]
+    fn filter_enter_opens_the_highlighted_book() {
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let _ = type_char(&mut splash, '/');
+        // "n03" narrows to exactly the NT book with code "N03"; auto-focus has
+        // already moved to NT and the cursor sits at its top (index 0).
+        for c in ['n', '0', '3'] {
+            let _ = type_char(&mut splash, c);
+        }
+        match splash.handle(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())) {
+            SplashOutcome::OpenBook(p) => assert_eq!(p.book, "N03"),
+            _ => panic!("FILTER Enter must open the highlighted book in one press"),
+        }
+    }
+
+    /// A FILTER Enter that matches nothing at all leaves FILTER quietly rather
+    /// than opening a phantom book (issue #66, finding #19).
+    #[test]
+    fn filter_enter_with_no_match_just_exits_filter() {
+        let mut splash =
+            SplashView::new(fake_books(39, 27), None, "t".into(), "en-kjv".into(), None);
+        let _ = type_char(&mut splash, '/');
+        for c in ['z', 'z', 'z', 'q'] {
+            let _ = type_char(&mut splash, c);
+        }
+        assert!(splash.entries(SplashColumn::OT).is_empty());
+        assert!(splash.entries(SplashColumn::NT).is_empty());
+        assert!(matches!(
+            splash.handle(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())),
+            SplashOutcome::Continue
+        ));
+        assert!(matches!(splash.mode, SplashMode::Normal));
     }
 }
