@@ -1,6 +1,6 @@
 //! Goto-reference dialog (F2 / `:`). Free-text book reference parser.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -77,7 +77,15 @@ impl GotoDialog {
                 self.prefilled = false;
                 GotoOutcome::Continue
             }
-            KeyCode::Char(c) => {
+            // Ctrl-U clears the field (matches the splash filter); without this
+            // the `Char(c)` arm below would otherwise insert a literal 'u'.
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.input.clear();
+                self.prefilled = false;
+                GotoOutcome::Continue
+            }
+            // Gate insertion on no-Ctrl so Ctrl-W / Ctrl-<x> don't type a literal.
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.prefilled {
                     self.input.clear();
                     self.prefilled = false;
@@ -340,6 +348,28 @@ mod tests {
             &bs,
         );
         assert_eq!(d.input, "JH");
+    }
+
+    #[test]
+    fn ctrl_u_clears_and_ctrl_chars_are_not_typed() {
+        let mut d = GotoDialog::with_position("Matteus", 5, 3, "en-kjv");
+        let bs = books();
+        // Ctrl-W must not insert a literal 'w' (the bug: control-modified chars
+        // fell through to the insert arm).
+        d.handle(
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+            &bs,
+        );
+        assert_eq!(d.input, "Matteus 5:3", "Ctrl-W should be ignored");
+        // Ctrl-U clears the whole field.
+        d.handle(
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+            &bs,
+        );
+        assert_eq!(d.input, "");
+        // And typing resumes normally afterwards.
+        d.handle(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE), &bs);
+        assert_eq!(d.input, "J");
     }
 
     #[test]
