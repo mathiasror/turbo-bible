@@ -247,10 +247,12 @@ politely.
 dataset ships as a separate ~6 MB asset. A curl-installed copy has it
 pre-staged, but `cargo` / `brew` installs fetch it on demand: the first
 time you open the `K` popup before it's present, the popup offers a
-one-key download — press `d` and it fetches `xrefs.db` in the background
-(sha256-verified against the embedded manifest), then the markers,
-sidebar, and popup fill in. It's a one-time download; offline or on
-failure the app carries on without cross-references.
+one-key download — press `d` and it closes, fetching `xrefs.db` in the
+background (sha256-verified against the embedded manifest) while you keep
+reading. When it lands, the cross-reference markers and the sidebar fill
+in; re-open `K` to see the references for the verse. It's a one-time
+download; offline or on failure the app carries on without
+cross-references.
 
 ## Visual selection and yank
 

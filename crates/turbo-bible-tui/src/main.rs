@@ -3037,4 +3037,24 @@ mod tests {
         assert_eq!(m.warning, "download nb-1930 failed: worker exited");
         assert_eq!(m.transient, "Download of nb-1930 failed");
     }
+
+    /// The xrefs job borrows the same label/outcome machinery as translations;
+    /// lock its user-facing copy so a careless edit can't ship "Downloading
+    ///  --" or "Download of xrefs failed" instead of the friendly name.
+    #[test]
+    fn xrefs_download_kind_copy_is_friendly() {
+        let kind = DownloadKind::Xrefs;
+        assert_eq!(kind.display_name(), "cross-references");
+        assert_eq!(
+            download_label(kind.display_name(), Duration::from_millis(0)),
+            "-- Downloading cross-references --"
+        );
+        let ready = download_outcome(kind.display_name(), &DownloadResult::Ready);
+        assert_eq!(ready.transient, "cross-references ready");
+        let failed = download_outcome(
+            kind.display_name(),
+            &DownloadResult::FetchFailed(anyhow::anyhow!("no network")),
+        );
+        assert_eq!(failed.transient, "Download of cross-references failed");
+    }
 }

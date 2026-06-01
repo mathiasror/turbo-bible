@@ -341,15 +341,27 @@ impl Db {
     /// connection-open time, so the on-disk swap isn't visible until this
     /// re-attaches). Called by `poll_download` once `fetch::xrefs` lands.
     ///
+    /// Pre-flights the path with a single `canonicalize` *before* touching any
+    /// connection: that's the one realistic failure point, so a bad path fails
+    /// before the first DETACH and leaves every connection on its current
+    /// (working) attachment. The per-connection DETACH is best-effort — if a
+    /// prior call failed partway and left a connection with nothing attached,
+    /// DETACH would error on "no such database"; ignoring it lets a retry
+    /// re-attach and recover instead of wedging on the dropped-nothing error.
+    ///
     /// # Errors
-    /// Fails if the file can't be canonicalised or any ATTACH
-    /// statement errors out.
+    /// Fails if the file can't be canonicalised, or if a per-connection ATTACH
+    /// errors out (practically impossible once `canonicalize` has succeeded on
+    /// a local file).
     pub fn attach_xrefs(&mut self, xrefs_path: &Path) -> Result<()> {
+        // Fail before mutating any connection if the path is bad.
+        fs::canonicalize(xrefs_path)
+            .with_context(|| format!("canonicalize {}", xrefs_path.display()))?;
         for conn in self.conns.values() {
-            // Drop the empty stand-in (or a previously attached real
-            // file) before pointing at the new one.
-            conn.execute(&format!("DETACH DATABASE {XREFS_SCHEMA}"), [])
-                .context("DETACH xrefs (old)")?;
+            // Best-effort: drop the empty stand-in (or a previously attached
+            // real file). A retry after a partial failure may find nothing
+            // attached here — that's fine, the ATTACH below restores it.
+            let _ = conn.execute(&format!("DETACH DATABASE {XREFS_SCHEMA}"), []);
             attach_ro(conn, xrefs_path, XREFS_SCHEMA)?;
         }
         self.xrefs_path = xrefs_path.to_path_buf();
