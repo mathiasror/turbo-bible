@@ -1,7 +1,10 @@
-//! Footnote popup (K). Shows every footnote attached to a given verse, lets
-//! the user navigate cross-references with ↑/↓ and follow them with Enter.
-//! When the cross-references dataset hasn't been downloaded yet, the popup
-//! instead offers a one-key (`d`) fetch affordance — see `can_fetch_xrefs`.
+//! Cross-reference popup (K). Lists the cross-references attached to a verse
+//! and lets the user navigate them with ↑/↓ and follow them with Enter. The
+//! footnote table is part of the schema but has no upstream source today, so in
+//! practice the popup only ever shows cross-references — hence the title
+//! "Cross-references for …" (issue #66, finding #22). When the cross-references
+//! dataset hasn't been downloaded yet, the popup instead offers a one-key
+//! (`d`) fetch affordance — see `can_fetch_xrefs`.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
@@ -161,7 +164,10 @@ impl FootnoteDialog {
             outer.height.saturating_sub(4).min(22)
         };
         let area = dialog::center(outer, w, h);
-        let title = format!("Notes for {}", self.verse_label);
+        // Titled "Cross-references" rather than "Notes": the footnote table is
+        // never populated (no upstream source), so the popup only ever shows
+        // cross-references in practice (issue #66, finding #22).
+        let title = format!("Cross-references for {}", self.verse_label);
         let inner = dialog::draw_modal_dialog(outer, area, &title, buf);
 
         let bg = Style::new().bg(theme::blue());

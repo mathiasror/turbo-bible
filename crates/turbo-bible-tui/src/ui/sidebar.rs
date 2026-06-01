@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 use crate::db::{Heading, Passage};
 use crate::theme;
 
-/// Maximum xref rows in the sidebar per cursor verse. The K-popup ("Notes")
+/// Maximum xref rows in the sidebar per cursor verse. The K-popup
 /// is the place to scan a long xref list; the sidebar's job is the top few
 /// by openbible vote so it doesn't push the parallel passage / footnotes
 /// off-screen on a heavily-referenced verse (e.g. JHN 3:16 has ~27).
@@ -143,7 +143,7 @@ fn build_lines(
 
     // 3) Cross-references for this verse. Capped by SIDEBAR_XREF_CAP; the
     // load order is votes-DESC so we keep the highest-ranked xrefs. The
-    // K-popup ("Notes") shows the full list.
+    // K-popup (cross-references) shows the full list.
     let xrefs: Vec<&crate::db::Xref> = p
         .xrefs
         .iter()

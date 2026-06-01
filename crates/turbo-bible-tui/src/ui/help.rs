@@ -64,7 +64,7 @@ const VIM_ROWS: &[Row] = &[
     Entry("y", "copy current verse to clipboard"),
     Section("Reading view"),
     Entry("Tab", "toggle sidebar (focus next pane when comparing)"),
-    Entry("K", "footnote / cross-ref popup (s opens xref in a split)"),
+    Entry("K", "cross-reference popup (s opens xref in a split)"),
     Section("Compare panes"),
     Entry("Ctrl-W v", "open a compare pane (pick a translation)"),
     Entry("Ctrl-W w", "cycle focus between panes"),
@@ -86,7 +86,7 @@ const VIM_ROWS: &[Row] = &[
 /// Turbo-profile cheat sheet (issue #66, finding #17). Turbo drops the vim
 /// letter keys, chords, and counts, so this sheet lists only what actually
 /// works — and a leading note + a closing "Inactive in Turbo" section make
-/// plain that the vim-only actions (visual, bookmark toggle, copy, K notes,
+/// plain that the vim-only actions (visual, bookmark toggle, copy, K cross-refs,
 /// n/N, prev/next book, jump history, compare panes) are off here, bindable
 /// under `[keys]` in config.toml — instead of advertising bare vim letters as
 /// if they fire.
@@ -109,7 +109,7 @@ const TURBO_ROWS: &[Row] = &[
     Section("Quit"),
     Entry("q  Esc", "quit / back"),
     Section("Inactive in Turbo (bind under [keys])"),
-    Note("visual select, bookmark toggle, copy verse, K notes,"),
+    Note("visual select, bookmark toggle, copy verse, K cross-refs,"),
     Note("repeat find (n/N), prev/next book, jump history,"),
     Note("compare panes \u{2014} all off unless bound in config.toml."),
 ];

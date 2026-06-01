@@ -174,7 +174,7 @@ terminals, `Shift`-**drag** bypasses the app for native text selection.
 | `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `Génesis 1`) |
 | `F3` / `/` | Find dialog (FTS5; BM25-ranked) |
 | `n` / `N` | repeat last search forward / backward (walks the Find list's relevance order) |
-| `K` | Footnote / cross-reference popup (`s` opens the xref in a split; `d` downloads the cross-references if not yet present) |
+| `K` | Cross-reference popup (`s` opens the xref in a split; `d` downloads the cross-references if not yet present) |
 | `t` / `F5` | Translations picker |
 | `M` / `F4` | Bookmarks (reading view only — not on the splash) |
 | `b` | toggle bookmark on cursor verse (or visual selection) |
@@ -257,8 +257,8 @@ terminal is at least ~120 columns wide.
 `Enter` confirms, `Esc` cancels. In Find, `↑`/`↓` navigate results and
 `Enter` jumps the cursor to the matched verse (not just the chapter).
 Goto with a verse component — `John 3:16`, `Sal 23,4` — likewise lands
-the cursor on the verse. In the Footnote popup, `↑`/`↓` selects a
-cross-reference and `Enter` follows it.
+the cursor on the verse. In the cross-reference popup (`K`), `↑`/`↓`
+selects a cross-reference and `Enter` follows it.
 
 ## State and configuration
 
@@ -399,7 +399,11 @@ Inside `crates/turbo-bible-tui/src/`:
   and Job's dialogue — are set apart with a whole-verse left indent, but
   the source data carries no `\q` line breaks, so each verse is indented
   as one block rather than laid out line by line.
-- Inline (mid-verse) footnote markers — markers sit at end of verse
+- Footnotes. The schema is in place, but no upstream source populates the
+  footnote table today, so `K` shows only cross-references (the popup is titled
+  accordingly) and no `*` footnote marker appears. Footnotes return if a source
+  is added. When they do, inline (mid-verse) markers will still sit at the end
+  of the verse rather than at the exact word.
 - Positional / word-order diff. Compare panes highlight the words that
   *differ* between same-language translations (`Ctrl-W d`), but the model is
   vocabulary-level: a word that merely moved, or a repeated word where only one
