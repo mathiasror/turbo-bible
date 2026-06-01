@@ -40,7 +40,6 @@ pub enum Action {
     OpenFind,
     OpenFootnote,
     OpenHelp,
-    OpenMenu,
     JumpBack,
     JumpForward,
     CopyVerse,
@@ -116,7 +115,6 @@ impl KeyState {
         push(&keys.open_find, Action::OpenFind);
         push(&keys.open_help, Action::OpenHelp);
         push(&keys.open_footnote, Action::OpenFootnote);
-        push(&keys.open_menu, Action::OpenMenu);
         push(&keys.open_bookmarks, Action::OpenBookmarks);
         push(&keys.open_translations, Action::OpenTranslations);
         push(&keys.copy_verse, Action::CopyVerse);
@@ -274,7 +272,6 @@ impl KeyState {
             KeyCode::F(3) => Resolve::Action(Action::OpenFind),
             KeyCode::F(4) => Resolve::Action(Action::OpenBookmarks),
             KeyCode::F(5) => Resolve::Action(Action::OpenTranslations),
-            KeyCode::F(10) => Resolve::Action(Action::OpenMenu),
             KeyCode::Char(' ') if plain => Resolve::Action(Action::PageDown),
             KeyCode::Char('q') if plain => Resolve::Action(Action::Quit),
             KeyCode::Char('/') if plain => Resolve::Action(Action::OpenFind),

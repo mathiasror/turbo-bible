@@ -173,7 +173,7 @@ terminals, `Shift`-**drag** bypasses the app for native text selection.
 | `n` / `N` | repeat last search forward / backward |
 | `K` | Footnote / cross-reference popup (`s` opens the xref in a split) |
 | `t` / `F5` | Translations picker |
-| `M` / `F4` | Bookmarks |
+| `M` / `F4` | Bookmarks (reading view only — not on the splash) |
 | `b` | toggle bookmark on cursor verse (or visual selection) |
 | `v` / `V` | enter / exit visual selection mode |
 | `Tab` | toggle References sidebar (focus next pane when comparing) |
