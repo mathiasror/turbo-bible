@@ -25,7 +25,7 @@
 //!   a different book/chapter (or opened on a cross-reference). Panes that
 //!   aren't on the same passage fall into singleton groups and never diff.
 //!
-//! Known limitation (see README "What's not in v1"): because the model is
+//! Known limitation (see README "Known limitations"): because the model is
 //! positionless, a word that appears more than once in a verse where only one
 //! occurrence differs, or a pure word-order change, is reported at the
 //! vocabulary level rather than per-position.

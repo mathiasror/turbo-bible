@@ -134,8 +134,8 @@ Initial release.
 ### Search & navigation
 
 - FTS5 full-text search with BM25 ranking, a diacritic-folding
-  tokenizer, and a prefix index (rebuilt and cached on first launch,
-  ~1 s).
+  tokenizer, and a prefix index (shipped prebuilt in each translation
+  database — no runtime rebuild).
 - Goto dialog with multi-language book-name parsing
   (`Mark 1:1`, `MRK 1`, `Génesis 1`, `Sal 23,4`).
 

@@ -198,7 +198,8 @@ first if you want to search a different one.
 ![Bookmarks dialog — saved entries sorted in canonical book/chapter/verse order](screenshots/06-bookmarks.png)
 
 Two-key workflow: `b` toggles a bookmark on the cursor verse;
-`M` (or `F4`) opens the bookmarks list. In the list, `↑`/`↓` or `j`/`k`
+`M` (or `F4`) opens the bookmarks list. Both are reading-view bindings —
+the bookmarks list isn't reachable from the splash. In the list, `↑`/`↓` or `j`/`k`
 navigate, `Enter` jumps to the bookmark, `d` deletes the highlighted
 entry, `Esc` closes.
 
@@ -228,7 +229,7 @@ The References sidebar follows the cursor verse and shows:
    source.
 
 Footnote markers in the passage sit at end-of-verse, not mid-verse (a
-known v1 limitation — see "What's not in v1" in the README).
+known limitation — see "Known limitations" in the README).
 
 For an interactive view, press `K` to open the **footnote popup**. It
 shows every footnote on the verse, with `↑`/`↓` to walk through linked
@@ -412,6 +413,17 @@ open_help         = ["?"]
 Key syntax: `"q"`, `"Ctrl-d"`, `"Shift-Tab"`, `"Alt-x"`, `"F5"`, `"Esc"`,
 `"Enter"`, `"Space"`, `"Tab"`, `"Up"`/`"Down"`/`"Left"`/`"Right"`,
 `"Home"`/`"End"`, `"PageUp"`/`"PageDown"`, `"Backspace"`/`"Delete"`.
+
+The full set of bindable action names (each takes a list of `KeyBind`
+strings):
+
+- **Dialogs:** `open_goto`, `open_find`, `open_help`, `open_footnote`,
+  `open_bookmarks`, `open_translations`
+- **Navigation:** `prev_chapter`, `next_chapter`, `cursor_up`,
+  `cursor_down`, `half_page_up`, `half_page_down`, `page_up`,
+  `page_down`, `goto_top`, `goto_bottom`, `jump_back`, `jump_forward`
+- **Editing & view:** `copy_verse`, `add_bookmark`, `toggle_sidebar`,
+  `toggle_visual`, `back`, `quit`
 
 Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
 remappable.
