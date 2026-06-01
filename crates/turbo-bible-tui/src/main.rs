@@ -2604,12 +2604,17 @@ fn apply_action(
             *cursor_verse = last;
             Ok(false)
         }
-        // Chapter / book motions step N times; each helper no-ops at the canon
-        // edge, so a count past the end simply lands on the first/last
+        // Chapter / book motions step N times. Each helper returns an
+        // unchanged position at the canon edge, so we break once movement
+        // stops — capping real work at the canon size regardless of the count
+        // (a stray `999l` doesn't grind through thousands of redundant loads)
         // (issue #66, finding #15).
         Action::PrevChapter(n) => {
             for _ in 0..n.max(1) {
                 let new_pos = nav_.prev_chapter(db, pos)?;
+                if new_pos.same_chapter(pos) {
+                    break;
+                }
                 jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
             }
             Ok(false)
@@ -2617,6 +2622,9 @@ fn apply_action(
         Action::NextChapter(n) => {
             for _ in 0..n.max(1) {
                 let new_pos = nav_.next_chapter(db, pos)?;
+                if new_pos.same_chapter(pos) {
+                    break;
+                }
                 jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
             }
             Ok(false)
@@ -2624,6 +2632,9 @@ fn apply_action(
         Action::PrevBook(n) => {
             for _ in 0..n.max(1) {
                 let new_pos = nav_.prev_book(pos)?;
+                if new_pos.same_chapter(pos) {
+                    break;
+                }
                 jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
             }
             Ok(false)
@@ -2631,6 +2642,9 @@ fn apply_action(
         Action::NextBook(n) => {
             for _ in 0..n.max(1) {
                 let new_pos = nav_.next_book(pos)?;
+                if new_pos.same_chapter(pos) {
+                    break;
+                }
                 jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
             }
             Ok(false)
