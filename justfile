@@ -114,6 +114,7 @@ ux66-screenshots:
     vhs demo/ux66-wide.tape
     vhs demo/ux66-narrow.tape
     vhs demo/ux66-tier2.tape
+    vhs demo/ux66-tier3.tape
 
 # Re-render website/og-image.png (the 1200x630 social card) — a real VHS
 # capture of the splash, same toolchain as `demo` / `screenshots`.
