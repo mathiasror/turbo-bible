@@ -95,6 +95,11 @@
     color: var(--white);
     font-weight: 700;
     letter-spacing: .02em;
+    /* Some panel titles are <h2> (so the heading outline doesn't skip from the
+       page <h1> straight to the feature/FAQ <h3>s); reset the UA heading
+       font-size/margin so a title renders identically whether div or h2. */
+    font-size: inherit;
+    margin: 0;
   }
   .panel > .title::before { content: "┌─ "; color: var(--white); }
   .panel > .title::after  { content: " ─"; color: var(--white); }
