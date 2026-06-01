@@ -337,16 +337,13 @@ impl Db {
     }
 
     /// ATTACH `xrefs.db` onto every translation connection. Used after
-    /// the xrefs DB has been downloaded post-startup.
+    /// the xrefs DB has been downloaded post-startup (the ATTACH is bound at
+    /// connection-open time, so the on-disk swap isn't visible until this
+    /// re-attaches). Called by `poll_download` once `fetch::xrefs` lands.
     ///
     /// # Errors
     /// Fails if the file can't be canonicalised or any ATTACH
     /// statement errors out.
-    #[allow(
-        dead_code,
-        reason = "wired in once the K-popup learns to fetch xrefs on demand; \
-                  the empty stand-in keeps everything working until then"
-    )]
     pub fn attach_xrefs(&mut self, xrefs_path: &Path) -> Result<()> {
         for conn in self.conns.values() {
             // Drop the empty stand-in (or a previously attached real
@@ -364,10 +361,6 @@ impl Db {
     /// empty stand-in. One short query per call; `SQLite` stops at the
     /// first row so the cost is independent of table size.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "wired in once the K-popup surfaces a 'fetch cross-references' affordance"
-    )]
     pub fn has_xrefs(&self) -> bool {
         self.active_conn()
             .query_row::<i64, _, _>(

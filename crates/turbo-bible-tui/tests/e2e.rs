@@ -644,6 +644,43 @@ fn out_of_range_chapter_clamps_to_last() {
     );
 }
 
+/// The `K` notes/cross-reference popup offers a one-key (`d`) download of the
+/// cross-references dataset when it isn't installed — which is exactly the
+/// state a fresh `$HOME` is in (only the empty `xrefs.db` stand-in is seeded;
+/// the real ~6 MB file fetches on demand). Accepting it with the network
+/// pointed at a dead loopback port (`launch`) must drive the real fetch path
+/// and fail *gracefully*: the loop stays alive, surfaces the failure, and
+/// quits cleanly with `en-kjv` state intact. Mirrors
+/// `picker_download_offline_keeps_default_and_quits_clean`, for xrefs.
+///
+/// The affordance itself is purely visual, and rendered cells aren't reliably
+/// scrapeable over a PTY (see the module header), so the assertion is the
+/// observable side effect — a clean survive + persist — like the other
+/// download / compare-pane tests. It exercises the whole new wiring: `d` →
+/// `FetchXrefs` → background worker → `poll_download` outcome handling.
+#[test]
+fn xrefs_fetch_affordance_offline_survives_and_quits_clean() {
+    let tmp = TempDir::new().unwrap();
+    let mut p = launch(
+        &tmp,
+        &["--translation", "en-kjv", "--book", "JHN", "--chapter", "3"],
+    );
+    sleep(Duration::from_millis(FIRST_LAUNCH_SETUP_MS));
+    key(&mut p, "K"); // open the notes / cross-reference popup
+    key(&mut p, "d"); // accept the fetch affordance → background download (no net → fails)
+    key(&mut p, "j"); // loop still responsive after the failed fetch
+    key(&mut p, "q");
+    p.exp_eof()
+        .expect("app must survive a failed on-demand xrefs fetch");
+
+    let st = read(&state_path(&tmp));
+    assert!(
+        st.contains("translation = \"en-kjv\""),
+        "a failed xrefs fetch must leave en-kjv intact; got:\n{st}"
+    );
+    assert!(st.contains("book = \"JHN\""), "got:\n{st}");
+}
+
 /// Send a raw SGR mouse report (`ESC [ < btn ; col ; row M/m`) and pause for the
 /// event poll, mirroring [`key`]. `final_byte` is `'M'` for press/drag, `'m'`
 /// for release; `btn` is 0 for the left button, 32 for a left-drag.

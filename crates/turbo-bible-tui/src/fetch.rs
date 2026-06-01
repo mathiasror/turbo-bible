@@ -61,6 +61,37 @@ pub fn translation(translations_dir: &Path, code: &str) -> Result<()> {
     .with_context(|| format!("fetch translation {}", entry.code))
 }
 
+/// Download the shared cross-references DB `xrefs.db.zst` and install it
+/// as `<translations_dir>/xrefs.db`, replacing the empty stand-in that
+/// `install::ensure_installed` seeds so `Db::open_ro`'s ATTACH always
+/// succeeds. Unlike [`translation`] there's no `dest.exists()` guard —
+/// the stand-in always exists, so existence can't mean "already
+/// fetched"; the caller gates on `Db::has_xrefs` (which distinguishes
+/// the empty stand-in from the real dataset) and only calls this when
+/// the real data is absent. The atomic rename overwrites the stand-in.
+///
+/// Mirrors [`translation`]: same `curl` → sha256 → zstd-decompress →
+/// atomic-rename pipeline, verified against the embedded manifest. After
+/// it returns `Ok`, the caller must `Db::attach_xrefs` to point the open
+/// connections at the freshly-installed file (the ATTACH is bound at
+/// connection-open time, so the swap isn't visible until then).
+///
+/// # Errors
+/// - `curl` missing or download failed (no network, 404).
+/// - SHA-256 mismatch between the decompressed bytes and the manifest.
+/// - IO failure when writing to `translations_dir`.
+pub fn xrefs(translations_dir: &Path) -> Result<()> {
+    let dest = translations_dir.join("xrefs.db");
+    fetch_and_install(
+        translations_dir,
+        crate::manifest::XREFS.file,
+        crate::manifest::XREFS.sha256,
+        crate::manifest::XREFS.decompressed_size,
+        &dest,
+    )
+    .context("fetch xrefs")
+}
+
 fn fetch_and_install(
     translations_dir: &Path,
     asset_file: &str,
@@ -230,6 +261,33 @@ mod tests {
             .bytes;
         let decoded = zstd::decode_all(io::Cursor::new(raw)).expect("decompress");
         assert_eq!(hex_sha256(&decoded), kjv.sha256);
+    }
+
+    #[test]
+    fn xrefs_manifest_entry_is_well_formed() {
+        // `fetch::xrefs` feeds these build.rs-generated fields straight into
+        // the download + integrity pipeline, so a codegen drift (empty sha,
+        // wrong suffix, zero size) would surface only as a runtime fetch
+        // failure. Guard them here, mirroring `known_kjv_sha_round_trips`.
+        let x = crate::manifest::XREFS;
+        assert!(
+            x.file.ends_with(".db.zst"),
+            "xrefs asset file should be a zstd db: {}",
+            x.file
+        );
+        assert_eq!(x.sha256.len(), 64, "sha256 should be 64 hex chars");
+        assert!(
+            x.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "sha256 should be all hex: {}",
+            x.sha256
+        );
+        assert!(x.compressed_size > 0, "compressed_size should be nonzero");
+        assert!(
+            x.decompressed_size > x.compressed_size,
+            "decompressed ({}) should exceed compressed ({})",
+            x.decompressed_size,
+            x.compressed_size
+        );
     }
 
     #[test]
