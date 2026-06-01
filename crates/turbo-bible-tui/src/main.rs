@@ -268,6 +268,15 @@ enum EdgeScroll {
     Down,
 }
 
+/// Severity of a transient status hint. `Warn` paints the status pill red and
+/// lingers a little longer so a refusal isn't missed; `Info` is the neutral,
+/// quick-fading default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransientKind {
+    Info,
+    Warn,
+}
+
 /// Mutable state owned by the run loop but threaded through the
 /// extracted dispatch helpers. Separating this from the externally-owned
 /// reader state (`AppCtx`) keeps method signatures short and lets the
@@ -301,9 +310,10 @@ struct LoopState {
     /// open-pane action refuse a split that would leave columns unreadable
     /// without reaching for the terminal handle.
     last_term_width: u16,
-    /// Transient one-line status hint (e.g. "Terminal too narrow") with
-    /// its set-time, cleared after a short delay.
-    transient_msg: Option<(String, Instant)>,
+    /// Transient one-line status hint (e.g. "Too narrow…") with its set-time
+    /// and severity, cleared after a short delay by [`LoopState::tick`]
+    /// (warnings linger a touch longer and paint the status pill red).
+    transient_msg: Option<(String, Instant, TransientKind)>,
     /// In-flight translation download, if any. Polled each loop turn by
     /// [`poll_download`]; rendered as an animated `-- Downloading … --`
     /// mode tag. Only one runs at a time.
@@ -1041,18 +1051,32 @@ impl LoopState {
         self.sync_focus_to_db(db)
     }
 
-    /// Set a transient status hint, shown briefly then cleared by [`Self::tick`].
+    /// Set a transient *info* hint, shown briefly then cleared by [`Self::tick`].
     fn set_transient(&mut self, msg: impl Into<String>) {
-        self.transient_msg = Some((msg.into(), Instant::now()));
+        self.transient_msg = Some((msg.into(), Instant::now(), TransientKind::Info));
+    }
+
+    /// Set a transient *warning* hint — painted red in the status pill and held
+    /// a little longer than an info hint so a refusal isn't missed.
+    fn set_transient_warn(&mut self, msg: impl Into<String>) {
+        self.transient_msg = Some((msg.into(), Instant::now(), TransientKind::Warn));
     }
 
     /// Per-poll housekeeping: advance the key-chord timeout and expire any
-    /// transient status hint.
+    /// transient status hint. Warnings linger longer than info hints.
     fn tick(&mut self) {
         self.keys.tick();
-        if let Some((_, set_at)) = &self.transient_msg
-            && set_at.elapsed() > Duration::from_secs(2)
-        {
+        let expired = self
+            .transient_msg
+            .as_ref()
+            .is_some_and(|(_, set_at, kind)| {
+                let ttl = match kind {
+                    TransientKind::Warn => Duration::from_secs(4),
+                    TransientKind::Info => Duration::from_secs(2),
+                };
+                set_at.elapsed() > ttl
+            });
+        if expired {
             self.transient_msg = None;
         }
     }
@@ -1130,14 +1154,22 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
     state.refresh_all_bookmark_caches();
 
     let status = make_status(state);
-    // An in-flight download, then a transient hint (e.g. "Terminal too
-    // narrow"), then the mode pill — first match wins the tag slot.
-    let mode_tag = if let Some(job) = &state.download {
-        Cow::Owned(download_label(&job.code, job.started.elapsed()))
+    // An in-flight download, then a transient hint (e.g. "Too narrow"), then
+    // the mode pill — first match wins the tag slot. `status_warn` rides the
+    // same ladder: only a `Warn` transient that actually won the slot paints
+    // the pill red (a download keeps the neutral pill).
+    let (mode_tag, status_warn) = if let Some(job) = &state.download {
+        (
+            Cow::Owned(download_label(&job.code, job.started.elapsed())),
+            false,
+        )
     } else {
         match &state.transient_msg {
-            Some((msg, _)) => Cow::Owned(format!("-- {msg} --")),
-            None => mode_tag_for(state),
+            Some((msg, _, kind)) => (
+                Cow::Owned(format!("-- {msg} --")),
+                *kind == TransientKind::Warn,
+            ),
+            None => (mode_tag_for(state), false),
         }
     };
     let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
@@ -1254,6 +1286,7 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
                     ),
                     buf,
                     &mode_tag,
+                    status_warn,
                 );
                 let body = ratatui::layout::Rect::new(
                     area.x,
@@ -1268,6 +1301,7 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
                     menu_title: &menu_title,
                     status,
                     status_mode: &mode_tag,
+                    status_warn,
                     panes: &pane_renders,
                     show_sidebar: state.show_sidebar,
                     max_reading_width: state.max_reading_width,
@@ -1512,7 +1546,11 @@ fn open_compare_pane(
     origin: Option<String>,
 ) -> Result<()> {
     if !state.can_add_pane() {
-        state.set_transient("Terminal too narrow for another pane");
+        state.set_transient_warn(format!(
+            "Too narrow — need {}+ cols (have {})",
+            ui::min_total_width(state.panes.len() + 1),
+            state.last_term_width
+        ));
         return Ok(());
     }
     let (seed_pos, cursor) = if let Some(p) = seed {

@@ -57,6 +57,9 @@ pub struct Frame<'a> {
     pub menu_title: &'a str,
     pub status: &'a [statusbar::Shortcut<'a>],
     pub status_mode: &'a str,
+    /// Paint the status pill as a warning (red) instead of the neutral mode
+    /// pill — set when `status_mode` is a warning hint such as "Too narrow".
+    pub status_warn: bool,
     /// One per compare pane, left-to-right. Always at least one.
     pub panes: &'a [PaneRender<'a>],
     pub show_sidebar: bool,
@@ -110,7 +113,13 @@ impl Frame<'_> {
             }
             .render(sb, buf);
         }
-        statusbar::render(self.status, status_area, buf, self.status_mode);
+        statusbar::render(
+            self.status,
+            status_area,
+            buf,
+            self.status_mode,
+            self.status_warn,
+        );
     }
 }
 
@@ -180,19 +189,34 @@ fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Opt
 pub const MIN_PANE_W: u16 = 40;
 /// Columns of blue desktop left between adjacent compare panes.
 const PANE_GAP: u16 = 1;
+/// Interior columns each pane loses to its drop-shadow inset. Named so
+/// [`min_pane_interior`] and [`min_total_width`] share the one figure and
+/// can't drift apart.
+const PANE_SHADOW_INSET: u16 = 2;
 
 /// The interior (text) width the *narrowest* of `n` evenly-split panes would
 /// get across a body `total` cols wide — the figure the open-pane guard
 /// checks against [`MIN_PANE_W`]. Mirrors [`panes_layout`]'s column math
-/// exactly (the inter-column [`PANE_GAP`]s and the 2-col drop-shadow inset
-/// each pane loses), so the guard can't approve a split that the layout then
+/// exactly (the inter-column [`PANE_GAP`]s and the [`PANE_SHADOW_INSET`] each
+/// pane loses), so the guard can't approve a split that the layout then
 /// renders below the readable threshold.
 #[must_use]
 pub fn min_pane_interior(total: u16, n: usize) -> u16 {
     let n_u16 = u16::try_from(n).unwrap_or(u16::MAX).max(1);
     let gaps = PANE_GAP.saturating_mul(n_u16.saturating_sub(1));
     let each = total.saturating_sub(gaps) / n_u16;
-    each.saturating_sub(2)
+    each.saturating_sub(PANE_SHADOW_INSET)
+}
+
+/// The minimum total terminal width that keeps each of `n` evenly-split panes
+/// at or above [`MIN_PANE_W`] interior columns — the inverse of
+/// [`min_pane_interior`]. Used to tell the user how wide to go when a compare
+/// pane is refused ("need 85+ cols").
+#[must_use]
+pub fn min_total_width(n: usize) -> u16 {
+    let n_u16 = u16::try_from(n).unwrap_or(u16::MAX).max(1);
+    let gaps = PANE_GAP.saturating_mul(n_u16.saturating_sub(1));
+    gaps.saturating_add(n_u16.saturating_mul(MIN_PANE_W + PANE_SHADOW_INSET))
 }
 
 /// Lay out `n` reading panes across `body`, returning one rect per pane
@@ -298,8 +322,31 @@ pub(crate) fn body_area(area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_layout, pane_content_rects, pane_viewports, panes_layout};
+    use super::{
+        MIN_PANE_W, body_layout, min_pane_interior, min_total_width, pane_content_rects,
+        pane_viewports, panes_layout,
+    };
     use ratatui::layout::Rect;
+
+    #[test]
+    fn min_total_width_is_the_inverse_of_min_pane_interior() {
+        // Known anchors: a 2nd pane needs 85 cols, a 3rd needs 128.
+        assert_eq!(min_total_width(2), 85);
+        assert_eq!(min_total_width(3), 128);
+        // The reported width is the tight boundary: it keeps every pane at or
+        // above MIN_PANE_W, and one column less drops below it.
+        for n in 1..=4usize {
+            let w = min_total_width(n);
+            assert!(
+                min_pane_interior(w, n) >= MIN_PANE_W,
+                "min_total_width({n}) = {w} must keep every pane readable"
+            );
+            assert!(
+                min_pane_interior(w - 1, n) < MIN_PANE_W,
+                "min_total_width({n}) = {w} must be the tight boundary"
+            );
+        }
+    }
 
     #[test]
     fn body_layout_survives_absurd_max_width() {
