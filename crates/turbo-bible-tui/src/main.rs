@@ -1966,8 +1966,11 @@ fn dispatch_reading(
                 // too narrow to fit it, Tab would otherwise look dead — say why
                 // (issue #66, finding #5).
                 if state.show_sidebar && !state.sidebar_visible() {
+                    // Warn (red, held longer), matching the analogous
+                    // compare-pane "Too narrow" refusal — both are
+                    // "you asked, can't, here's why".
                     let need = ui::sidebar_min_width(state.max_reading_width);
-                    state.set_transient(format!(
+                    state.set_transient_warn(format!(
                         "Too narrow for sidebar \u{2014} need {need}+ cols (have {})",
                         state.last_term_width
                     ));
@@ -2792,6 +2795,26 @@ mod tests {
             name: format!("Name {code}"),
             language: "en".to_string(),
         }
+    }
+
+    /// The history stack must carry the cursor-verse hint through back/forward
+    /// so `history_step` (Ctrl-O / Ctrl-I) can restore it instead of snapping to
+    /// verse 1 — the regression behind issue #66, finding #4.
+    #[test]
+    fn history_round_trip_preserves_the_cursor_verse() {
+        let at = |book: &str, chapter: i64, verse: i64| Position {
+            book: book.into(),
+            chapter,
+            verse: Some(verse),
+        };
+        let mut h = History::new(at("GEN", 1, 1));
+        h.push(at("JHN", 3, 16));
+        h.push(at("ROM", 8, 28));
+        // Back lands on the stored verse, not a forced 1.
+        assert_eq!(h.back().and_then(|p| p.verse), Some(16), "JHN 3:16");
+        assert_eq!(h.back().and_then(|p| p.verse), Some(1), "GEN 1:1");
+        // Forward returns with the verse intact.
+        assert_eq!(h.forward().and_then(|p| p.verse), Some(16), "JHN 3:16");
     }
 
     /// A click in the reading body must resolve to the verse drawn on that row,
