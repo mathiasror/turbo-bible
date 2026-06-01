@@ -35,6 +35,10 @@ const PANEL_PAD: usize = 1;
 /// is wider (≥120 cols with the sidebar on), keeping lines in the comfortable
 /// ~50–70 char range for sustained reading. The row fill still spans the pane.
 const MAX_BODY_WIDTH: usize = 70;
+/// Stand-in for an intentionally-empty verse (critical-text omission). Rendered
+/// italic so the bare verse number reads as an editorial gap, not a broken
+/// render (issue #66, finding #3).
+const OMITTED_PLACEHOLDER: &str = "(omitted)";
 /// Extra left inset applied to the verse body in poetry passages (see
 /// [`crate::poetry`]). A flat, whole-verse indent that sets poetry apart from
 /// prose — we have no intra-verse line data to lay out true poetic lines. The
@@ -302,7 +306,15 @@ pub fn render_passage_with_diff(
         let body_w = (wrap_width as usize)
             .saturating_sub(PANEL_PAD + VERSE_PREFIX + poetry_indent)
             .clamp(20, MAX_BODY_WIDTH);
-        let mut chunks = word_wrap(&text, body_w);
+        // Empty verse text means an intentional omission (e.g. BSB Matt 17:21):
+        // show the placeholder rather than letting word_wrap return nothing and
+        // leaving a lone, broken-looking verse number.
+        let omitted = text.trim().is_empty();
+        let mut chunks = if omitted {
+            vec![OMITTED_PLACEHOLDER.to_string()]
+        } else {
+            word_wrap(&text, body_w)
+        };
         if chunks.is_empty() {
             chunks.push(String::new());
         }
@@ -349,7 +361,14 @@ pub fn render_passage_with_diff(
                 }
                 _ => (chunk, ""),
             };
-            push_body_spans(&mut spans, body, body_style, diff_style, divergent);
+            // An omitted-verse placeholder rides in italic so it reads as an
+            // editorial note rather than scripture text.
+            let chunk_body_style = if omitted {
+                body_style.add_modifier(Modifier::ITALIC)
+            } else {
+                body_style
+            };
+            push_body_spans(&mut spans, body, chunk_body_style, diff_style, divergent);
             if !tail.is_empty() {
                 spans.push(Span::styled(tail.to_string(), marker_style));
             }
@@ -695,6 +714,21 @@ mod render_tests {
         assert_eq!(
             verse_at_screen_row(&rendered, scroll, 0, screen_row),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn empty_verse_renders_omitted_placeholder() {
+        // An intentionally-empty verse (critical-text omission, e.g. BSB
+        // Matt 17:21) must not leave a bare verse number — it shows the
+        // "(omitted)" stand-in instead (issue #66, finding #3).
+        let p = passage_with(vec![v(1, "In the beginning"), v(2, "")], vec![]);
+        let lines = render_passage(&p, 1, None, &BTreeSet::new(), None, 40);
+        let line = line_for_verse(&lines, 2);
+        assert!(
+            line_text(line).contains(OMITTED_PLACEHOLDER),
+            "empty verse should show the placeholder: {:?}",
+            line_text(line)
         );
     }
 

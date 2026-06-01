@@ -140,24 +140,42 @@ const fn split(area: Rect) -> (Rect, Rect, Rect) {
     (menu, body, status)
 }
 
+/// References-sidebar geometry: the gap between the reading pane and the
+/// sidebar (1-col margin + drop shadow), the sidebar's own width, and the extra
+/// slack required before the two-pane layout engages.
+const SIDEBAR_GAP: u16 = 2;
+const SIDEBAR_COLS: u16 = 34;
+const SIDEBAR_SLACK: u16 = 4;
+
+/// Minimum terminal width to show the references sidebar beside a
+/// `max_reading_w`-wide reading pane. Saturating throughout: a pathological
+/// `max_reading_w` (e.g. a malformed config) saturates high rather than
+/// overflowing, so the sidebar simply never fits.
+#[must_use]
+pub fn sidebar_min_width(max_reading_w: u16) -> u16 {
+    max_reading_w
+        .saturating_add(SIDEBAR_GAP)
+        .saturating_add(SIDEBAR_COLS)
+        .saturating_add(SIDEBAR_SLACK)
+}
+
+/// Whether `total_width` columns can fit the references sidebar beside a
+/// `max_reading_w`-wide reading pane. Single source of truth for the width
+/// gate, shared by [`body_layout`] and the status-bar cue so the mode pill and
+/// footer never advertise a sidebar the terminal is too narrow to show (issue
+/// #66, finding #5).
+#[must_use]
+pub fn sidebar_fits(total_width: u16, max_reading_w: u16) -> bool {
+    total_width >= sidebar_min_width(max_reading_w)
+}
+
 /// Returns (`reading_rect`, `sidebar_rect`). The sidebar is only shown if there's
 /// enough horizontal room AND the caller asked for it.
 fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Option<Rect>) {
-    // Geometry per pane: 1 col outer margin + drop shadow (2 cols right).
-    const GAP: u16 = 2;
-    const SIDEBAR_W: u16 = 34;
-    // Saturating: a pathological `max_reading_w` (e.g. a malformed config) must
-    // not overflow — it should just saturate high so this branch falls through
-    // to the centered single pane below.
-    let min_terminal_w_for_sidebar = max_reading_w
-        .saturating_add(GAP)
-        .saturating_add(SIDEBAR_W)
-        .saturating_add(4);
-
     let h = body.height.saturating_sub(2);
     let y = body.y + 1;
 
-    if !show_sidebar || body.width < min_terminal_w_for_sidebar {
+    if !show_sidebar || !sidebar_fits(body.width, max_reading_w) {
         // Centered single pane.
         let w = body.width.min(max_reading_w).saturating_sub(2);
         let x = body.x + (body.width.saturating_sub(w)) / 2;
@@ -166,13 +184,16 @@ fn body_layout(body: Rect, show_sidebar: bool, max_reading_w: u16) -> (Rect, Opt
 
     // Two-pane layout: reading flush-left of the centered group, sidebar to
     // its right.
-    let total = max_reading_w.saturating_add(GAP).saturating_add(SIDEBAR_W);
+    let total = max_reading_w
+        .saturating_add(SIDEBAR_GAP)
+        .saturating_add(SIDEBAR_COLS);
     let left = body.x + (body.width.saturating_sub(total)) / 2;
     let reading = Rect::new(left, y, max_reading_w.saturating_sub(2), h);
     let sidebar = Rect::new(
-        left.saturating_add(max_reading_w).saturating_add(GAP),
+        left.saturating_add(max_reading_w)
+            .saturating_add(SIDEBAR_GAP),
         y,
-        SIDEBAR_W.saturating_sub(2),
+        SIDEBAR_COLS.saturating_sub(2),
         h,
     );
     (reading, Some(sidebar))
@@ -324,9 +345,36 @@ pub(crate) fn body_area(area: Rect) -> Rect {
 mod tests {
     use super::{
         MIN_PANE_W, body_layout, min_pane_interior, min_total_width, pane_content_rects,
-        pane_viewports, panes_layout,
+        pane_viewports, panes_layout, sidebar_fits, sidebar_min_width,
     };
     use ratatui::layout::Rect;
+
+    #[test]
+    fn sidebar_fits_matches_body_layout_threshold() {
+        // The width gate the mode pill / footer consult must agree exactly with
+        // the layout the draw actually performs, at the boundary column.
+        let need = sidebar_min_width(80);
+        assert!(sidebar_fits(need, 80));
+        assert!(!sidebar_fits(need - 1, 80));
+        for w in [need - 1, need, need + 50] {
+            let body = Rect::new(0, 0, w, 40);
+            let (_reading, sidebar) = body_layout(body, true, 80);
+            assert_eq!(
+                sidebar.is_some(),
+                sidebar_fits(w, 80),
+                "sidebar_fits({w}) must predict body_layout's sidebar"
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_min_width_saturates_on_absurd_reading_width() {
+        // A malformed max_reading_width must saturate high (so a realistic
+        // terminal never fits a sidebar) rather than wrap around and spuriously
+        // report room.
+        assert_eq!(sidebar_min_width(u16::MAX), u16::MAX);
+        assert!(!sidebar_fits(300, u16::MAX));
+    }
 
     #[test]
     fn min_total_width_is_the_inverse_of_min_pane_interior() {
