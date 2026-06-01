@@ -195,8 +195,11 @@ Type "Romans 8:28"
 Sleep 400ms
 Enter
 Sleep 1000ms
+# `b` now shows a "Bookmarked …" transient (~2s). Let it fade before opening
+# the dialog so this shot captures the populated list with its own
+# `-- BOOKMARKS --` pill, not the lingering add confirmation.
 Type "b"
-Sleep 500ms
+Sleep 2300ms
 Type "M"
 Sleep 800ms
 Screenshot "docs/screenshots/06-bookmarks.png"
