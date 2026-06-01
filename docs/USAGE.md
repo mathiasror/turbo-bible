@@ -119,8 +119,9 @@ prose margin:
 
 ## Moving around
 
-Vim-style. Counts work everywhere a digit could go; the count prefix is
-not remappable.
+Vim-style. A count prefix repeats every motion — verse (`5j`), chapter
+(`3l`), book (`2]b`), and page (`2Ctrl-D`). The count prefix itself is not
+remappable.
 
 | Scope | Keys |
 | --- | --- |
@@ -437,9 +438,15 @@ strings):
   `page_down`, `goto_top`, `goto_bottom`, `jump_back`, `jump_forward`
 - **Editing & view:** `copy_verse`, `add_bookmark`, `toggle_sidebar`,
   `toggle_visual`, `back`, `quit`
+- **Search & compare** (single-key aliases for actions whose only defaults
+  are `n`/`N` or the `Ctrl-W` window chords — useful when the terminal grabs
+  `Ctrl-W`, e.g. tmux): `search_next`, `search_prev`, `compare_open`,
+  `focus_next`, `focus_left`, `focus_right`, `compare_close`,
+  `toggle_word_diff`
 
-Multi-key chords (`gg`, `[b`, `]b`, `ZZ`) and the count prefix are not
-remappable.
+The multi-key chords themselves (`gg`, `[b`, `]b`, `ZZ`, the `Ctrl-W` window
+commands) and the count prefix stay hardcoded; the actions the `Ctrl-W` chords
+and `n`/`N` reach are alias-able via the `Search & compare` names above.
 
 The reading view ships two key profiles, selected by `[input] keymap`:
 
