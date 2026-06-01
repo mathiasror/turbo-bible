@@ -1844,6 +1844,16 @@ impl LoopState {
             "{} {}:{}",
             pane.passage.book_abbrev, pane.pos.chapter, pane.cursor_verse
         );
+        // When the xrefs dataset is installed (not fetchable) but this verse has
+        // nothing to show, prefer a transient over an empty modal — opening a
+        // popup that just says "(none)" is worse than a one-line cue (issue #66,
+        // finding #22). The fetch-affordance path (can_fetch_xrefs == true)
+        // still opens: that "empty-ish" popup intentionally offers `d` to
+        // download (kept from #67).
+        if !can_fetch_xrefs && notes.is_empty() && xrefs.is_empty() {
+            self.set_transient("No cross-references for this verse");
+            return;
+        }
         self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes, xrefs, can_fetch_xrefs));
     }
 
@@ -2233,7 +2243,7 @@ fn mode_tag_for(state: &LoopState) -> Cow<'static, str> {
     match &state.dialog {
         Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
         Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
-        Dialog::Footnote(_) => Cow::Borrowed("-- NOTES --"),
+        Dialog::Footnote(_) => Cow::Borrowed("-- XREFS --"),
         Dialog::Help(_) => Cow::Borrowed("-- HELP --"),
         Dialog::Bookmarks(_) => Cow::Borrowed("-- BOOKMARKS --"),
         Dialog::Translations(_) => Cow::Borrowed("-- TRANSLATIONS --"),
@@ -2326,7 +2336,7 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
         },
         Shortcut {
             key: "K",
-            action: "Notes",
+            action: "Xrefs",
         },
         Shortcut {
             key: "v",
@@ -2420,7 +2430,7 @@ const STATUS_READING_COMPARE: &[Shortcut<'static>] = &[
     },
     Shortcut {
         key: "K",
-        action: "Notes",
+        action: "Xrefs",
     },
     Shortcut {
         key: "Esc",
@@ -3568,5 +3578,65 @@ mod tests {
         );
         assert_eq!(at_gen2.0.book, "GEN");
         assert_eq!(at_gen2.0.chapter, 1, "landed on the first chapter");
+    }
+
+    /// Build a minimal `LoopState` in the reading view on the given passage, so
+    /// `open_footnote_dialog` can be driven directly.
+    fn reading_loop_state(db: &Db, book: &str, chapter: i64) -> LoopState {
+        let passage = db.load_passage(book, chapter).expect("load passage");
+        let pos = Position {
+            book: book.into(),
+            chapter,
+            verse: None,
+        };
+        let cfg = config::Config::default();
+        let mut warnings = Vec::new();
+        LoopState::new(
+            db.list_books().expect("books"),
+            db.translation_label().unwrap_or_else(|_| "en-kjv".into()),
+            &pos,
+            passage,
+            1,
+            None, // start in the reading view, not the splash
+            "en-kjv",
+            &cfg,
+            &mut warnings,
+        )
+    }
+
+    /// When the cross-references dataset is installed (not fetchable) but the
+    /// verse has zero footnotes and zero cross-references, `K` shows a transient
+    /// instead of opening an empty modal (issue #66, finding #22).
+    #[test]
+    fn open_footnote_dialog_empty_with_dataset_present_uses_a_transient() {
+        let (_tmp, db) = kjv_db();
+        // A fresh install has no xrefs.db, so every KJV passage has empty xrefs
+        // (and the footnote table is never populated). Passing can_fetch=false
+        // simulates "the dataset IS present" — the empty-modal case to avoid.
+        let mut state = reading_loop_state(&db, "GEN", 1);
+        state.open_footnote_dialog(false);
+        assert!(
+            matches!(state.dialog, Dialog::None),
+            "no modal should open for an empty verse with the dataset present"
+        );
+        assert_eq!(
+            state.transient_msg.as_ref().map(|(t, _, _)| t.as_str()),
+            Some("No cross-references for this verse"),
+        );
+    }
+
+    /// The #67 fetch-affordance path is preserved: when the dataset isn't on
+    /// disk (`can_fetch_xrefs = true`), `K` still opens the popup so it can offer
+    /// `d` to download — even on an otherwise-empty verse (issue #66, finding
+    /// #22 keeps #67).
+    #[test]
+    fn open_footnote_dialog_still_opens_the_fetch_affordance() {
+        let (_tmp, db) = kjv_db();
+        let mut state = reading_loop_state(&db, "GEN", 1);
+        state.open_footnote_dialog(true);
+        assert!(
+            matches!(state.dialog, Dialog::Footnote(_)),
+            "the fetch-affordance popup must still open when xrefs aren't installed"
+        );
     }
 }
