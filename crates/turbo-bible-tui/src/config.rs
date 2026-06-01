@@ -256,7 +256,6 @@ pub struct KeysConfig {
     pub open_find: Vec<KeyBind>,
     pub open_help: Vec<KeyBind>,
     pub open_footnote: Vec<KeyBind>,
-    pub open_menu: Vec<KeyBind>,
     pub open_bookmarks: Vec<KeyBind>,
     pub open_translations: Vec<KeyBind>,
     pub copy_verse: Vec<KeyBind>,
@@ -469,7 +468,7 @@ pub fn load_quiet() -> Config {
 /// real TOML rewriter. Our own [`save`] serializes one binding per
 /// inline array, so the common cases fit one line.
 fn migrate_legacy(txt: &str) -> (String, Vec<String>) {
-    const LEGACY_KEYS: &[&str] = &["two_line_verses", "toggle_verse_layout"];
+    const LEGACY_KEYS: &[&str] = &["two_line_verses", "toggle_verse_layout", "open_menu"];
     let mut out = String::with_capacity(txt.len());
     let mut dropped = Vec::new();
     for line in txt.lines() {
@@ -656,12 +655,17 @@ max_width = 100
 
 [keys]
 toggle_verse_layout = ["T"]
+open_menu = ["F10"]
 quit = ["Ctrl-q"]
 "#;
         let (out, dropped) = migrate_legacy(input);
-        assert_eq!(dropped, vec!["two_line_verses", "toggle_verse_layout"]);
+        assert_eq!(
+            dropped,
+            vec!["two_line_verses", "toggle_verse_layout", "open_menu"]
+        );
         assert!(!out.contains("two_line_verses"));
         assert!(!out.contains("toggle_verse_layout"));
+        assert!(!out.contains("open_menu"));
         // Other content survives — including the section headers and
         // sibling keys that share the section.
         assert!(out.contains("default_translation = \"nb-1930\""));

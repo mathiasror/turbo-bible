@@ -2330,7 +2330,6 @@ fn apply_action(
         | Action::OpenFind
         | Action::OpenFootnote
         | Action::OpenHelp
-        | Action::OpenMenu
         | Action::JumpBack
         | Action::JumpForward
         | Action::ToggleSidebar
