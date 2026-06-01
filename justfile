@@ -105,14 +105,15 @@ xrefs-screenshot:
     cargo build -p turbo-bible --release
     vhs demo/xrefs-fetch.tape
 
-# Re-render the issue-66 Tier 1 UX-state captures (docs/screenshots/26-28).
-# Standalone tapes; the wide one needs en-bsb in the data dir (the empty
-# critical-text verse). The *-before.png baselines are pinned pre-fix captures,
-# not regenerated here.
+# Re-render the issue-66 UX-state captures (docs/screenshots/26-31).
+# Standalone tapes; the wide Tier 1 tape needs en-bsb in the data dir (the
+# empty critical-text verse). The *-before.png baselines are pinned pre-fix
+# captures, not regenerated here.
 ux66-screenshots:
     cargo build -p turbo-bible --release
     vhs demo/ux66-wide.tape
     vhs demo/ux66-narrow.tape
+    vhs demo/ux66-tier2.tape
 
 # Re-render website/og-image.png (the 1200x630 social card) — a real VHS
 # capture of the splash, same toolchain as `demo` / `screenshots`.
