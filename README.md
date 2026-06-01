@@ -173,7 +173,7 @@ terminals, `Shift`-**drag** bypasses the app for native text selection.
 | --- | --- |
 | `F2` / `:` | Goto dialog (`Mark 1:1`, `MRK 1`, `Génesis 1`) |
 | `F3` / `/` | Find dialog (FTS5; BM25-ranked) |
-| `n` / `N` | repeat last search forward / backward |
+| `n` / `N` | repeat last search forward / backward (walks the Find list's relevance order) |
 | `K` | Footnote / cross-reference popup (`s` opens the xref in a split; `d` downloads the cross-references if not yet present) |
 | `t` / `F5` | Translations picker |
 | `M` / `F4` | Bookmarks (reading view only — not on the splash) |
