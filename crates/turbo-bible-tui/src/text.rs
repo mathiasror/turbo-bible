@@ -43,9 +43,50 @@ pub fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
     out
 }
 
+/// Lowercase `s` and strip the Latin diacritics present in the corpus, so an
+/// un-accented query resolves the same way FTS5 search does. The Find index is
+/// built `tokenize='unicode61 remove_diacritics 1'`, which folds both case and
+/// diacritics; Goto and the splash book filter call this so typing the plain
+/// ASCII form (`genesis`, `joao`) reaches accented book names (`Génesis`,
+/// `João`) instead of dead-ending where search succeeds.
+///
+/// Dependency-free by deliberate choice — the project keeps a minimal
+/// dependency tree, so this is a hand-rolled `char` map over the Latin-1 /
+/// Latin Extended marks the bundled translations actually carry rather than a
+/// full Unicode normalization pass.
+#[must_use]
+pub fn fold_diacritics(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            other => other,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fold_diacritics_strips_latin_accents() {
+        assert_eq!(fold_diacritics("Génesis"), "genesis");
+        assert_eq!(fold_diacritics("João"), "joao");
+        assert_eq!(fold_diacritics("Éxodo"), "exodo");
+        assert_eq!(fold_diacritics("Números"), "numeros");
+    }
+
+    #[test]
+    fn fold_diacritics_passes_ascii_through() {
+        assert_eq!(fold_diacritics("John"), "john");
+    }
 
     #[test]
     fn wraps_long_paragraph() {
