@@ -30,6 +30,8 @@ allow = [
     # BSL-1.0 is OSI-approved and FSF-Free; arboard's Windows backend
     # (clipboard-win, error-code) uses it. Permissive, no copyleft.
     "BSL-1.0",
+    # ISC: kept as a forward-looking hedge — currently unmatched (no dep uses
+    # it today), but transitive deps occasionally carry it. Harmless to allow.
     "ISC",
     "MIT",
     "Unicode-3.0",
