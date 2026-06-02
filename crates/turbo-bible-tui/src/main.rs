@@ -796,6 +796,69 @@ struct DownloadMessages {
     transient: String,
 }
 
+/// A best-effort classification of a failed on-demand fetch, derived from the
+/// `.context(...)` frames `fetch.rs` already attaches (issue #66, finding #23).
+/// The wire format is `curl` → sha256 → zstd-decompress, and each stage frames
+/// its error distinctly, so a substring scan of the [`anyhow::Error`] chain is
+/// enough to tell the categories apart without a typed error enum (the repo's
+/// "anyhow-only at boundaries" stance — no `thiserror`). Anything unrecognised
+/// falls back to [`FetchErrorKind::Other`], which keeps the old generic message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FetchErrorKind {
+    /// `curl` isn't installed (the worker couldn't even spawn it).
+    CurlMissing,
+    /// `curl` ran but failed — no network, DNS, TLS, 404, or a timeout.
+    Network,
+    /// The bytes arrived but failed the sha256 / decompressed-size gate —
+    /// corrupt, truncated, or stale against the embedded manifest.
+    Verification,
+    /// Unrecognised — keep the generic copy.
+    Other,
+}
+
+impl FetchErrorKind {
+    /// The category-specific, actionable transient. Names the item so the user
+    /// knows which download broke; the full cause stays in the warnings trail.
+    fn transient(self, name: &str) -> String {
+        match self {
+            Self::CurlMissing => "curl not found \u{2014} install curl".to_string(),
+            Self::Network => {
+                format!("{name}: couldn't reach GitHub \u{2014} check your connection")
+            }
+            Self::Verification => {
+                format!("{name}: verification failed \u{2014} corrupt or stale download")
+            }
+            Self::Other => format!("Download of {name} failed"),
+        }
+    }
+}
+
+/// Walk the [`anyhow::Error`] chain and bucket a failed fetch by category,
+/// matching the `.context(...)` frames `fetch.rs` attaches. Verification is
+/// checked first because a corrupt download is the most actionable signal;
+/// curl-missing before curl-exited because the spawn frame is more specific
+/// than the generic exit frame (issue #66, finding #23).
+fn classify_fetch_error(e: &anyhow::Error) -> FetchErrorKind {
+    let chain: String = e
+        .chain()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let has = |needle: &str| chain.contains(needle);
+    // Note: "decompress " (verb + space) matches the zstd-decode frame
+    // (`fetch.rs::decode_and_verify`'s `.context("decompress {asset}")`) but NOT
+    // the staging "write decompressed {asset}" IO frame, which must stay Other.
+    if has("sha256 mismatch") || has("zip bomb") || has("decompressed to") || has("decompress ") {
+        FetchErrorKind::Verification
+    } else if has("spawn curl") || has("is it installed?") {
+        FetchErrorKind::CurlMissing
+    } else if has("curl exited") {
+        FetchErrorKind::Network
+    } else {
+        FetchErrorKind::Other
+    }
+}
+
 /// Map a finished download to its warning + transient copy. Success gets a
 /// brief "ready" transient (and no warning); each failure mode gets a message
 /// that names what actually broke — fetch vs. registration vs. a dead worker.
@@ -806,8 +869,11 @@ fn download_outcome(name: &str, result: &DownloadResult) -> DownloadMessages {
             transient: format!("{name} ready"),
         },
         DownloadResult::FetchFailed(e) => DownloadMessages {
+            // The warning trail keeps the full cause; the in-TUI transient is
+            // category-specific so the user knows whether to retry, check the
+            // network, or install curl (issue #66, finding #23).
             warning: format!("download {name} failed: {e}"),
-            transient: format!("Download of {name} failed"),
+            transient: classify_fetch_error(e).transient(name),
         },
         DownloadResult::RegisterFailed(e) => DownloadMessages {
             warning: format!("registering {name} failed: {e}"),
@@ -1844,6 +1910,16 @@ impl LoopState {
             "{} {}:{}",
             pane.passage.book_abbrev, pane.pos.chapter, pane.cursor_verse
         );
+        // When the xrefs dataset is installed (not fetchable) but this verse has
+        // nothing to show, prefer a transient over an empty modal — opening a
+        // popup that just says "(none)" is worse than a one-line cue (issue #66,
+        // finding #22). The fetch-affordance path (can_fetch_xrefs == true)
+        // still opens: that "empty-ish" popup intentionally offers `d` to
+        // download (kept from #67).
+        if !can_fetch_xrefs && notes.is_empty() && xrefs.is_empty() {
+            self.set_transient("No cross-references for this verse");
+            return;
+        }
         self.dialog = Dialog::Footnote(FootnoteDialog::new(label, notes, xrefs, can_fetch_xrefs));
     }
 
@@ -2047,14 +2123,7 @@ impl LoopState {
         let f = self.focus;
         let outcome = {
             let pane = &self.panes[f];
-            repeat_search(
-                ctx.db,
-                &self.books,
-                &q,
-                &pane.pos,
-                pane.cursor_verse,
-                forward,
-            )
+            repeat_search(ctx.db, &q, &pane.pos, pane.cursor_verse, forward)
         };
         let Some((p, wrapped)) = outcome else {
             self.set_transient_warn("Pattern not found");
@@ -2182,20 +2251,32 @@ fn dispatch_reading(
         }
         _ => {
             let f = state.focus;
-            let pane = &mut state.panes[f];
-            let (wrap_width, viewport_height) = (pane.wrap_width, pane.viewport_height);
-            if apply_action(
-                action,
-                ctx.db,
-                &state.books,
-                &mut pane.pos,
-                &mut pane.passage,
-                &mut pane.cursor_verse,
-                &mut pane.history,
-                wrap_width,
-                viewport_height,
-            )? {
-                return Ok(DispatchStep::Quit);
+            let result = {
+                let pane = &mut state.panes[f];
+                let (wrap_width, viewport_height) = (pane.wrap_width, pane.viewport_height);
+                apply_action(
+                    action,
+                    ctx.db,
+                    &state.books,
+                    &mut pane.pos,
+                    &mut pane.passage,
+                    &mut pane.cursor_verse,
+                    &mut pane.history,
+                    wrap_width,
+                    viewport_height,
+                )?
+            };
+            match result {
+                ActionResult::Quit => return Ok(DispatchStep::Quit),
+                // A chapter/book motion that moved nothing because the cursor
+                // was already at the very first/last passage in the canon: name
+                // the edge so the key doesn't feel broken (issue #66, finding
+                // #21). Per-verse j/k clamping stays silent (vim convention).
+                ActionResult::Boundary(edge) => state.set_transient(match edge {
+                    CanonEdge::Start => "Start of the Bible",
+                    CanonEdge::End => "End of the Bible",
+                }),
+                ActionResult::Continue => {}
             }
         }
     }
@@ -2228,7 +2309,7 @@ fn mode_tag_for(state: &LoopState) -> Cow<'static, str> {
     match &state.dialog {
         Dialog::Goto(_) => Cow::Borrowed("-- GOTO --"),
         Dialog::Find(_) => Cow::Borrowed("-- FIND --"),
-        Dialog::Footnote(_) => Cow::Borrowed("-- NOTES --"),
+        Dialog::Footnote(_) => Cow::Borrowed("-- XREFS --"),
         Dialog::Help(_) => Cow::Borrowed("-- HELP --"),
         Dialog::Bookmarks(_) => Cow::Borrowed("-- BOOKMARKS --"),
         Dialog::Translations(_) => Cow::Borrowed("-- TRANSLATIONS --"),
@@ -2321,7 +2402,7 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
         },
         Shortcut {
             key: "K",
-            action: "Notes",
+            action: "Xrefs",
         },
         Shortcut {
             key: "v",
@@ -2415,7 +2496,7 @@ const STATUS_READING_COMPARE: &[Shortcut<'static>] = &[
     },
     Shortcut {
         key: "K",
-        action: "Notes",
+        action: "Xrefs",
     },
     Shortcut {
         key: "Esc",
@@ -2518,7 +2599,34 @@ fn max_verse(passage: &Passage) -> i64 {
     passage.verses.last().map_or(1, |v| v.number)
 }
 
-/// Returns true if the loop should exit.
+/// Which absolute edge of the canon a no-op chapter/book motion ran into, so
+/// the caller can name it ("Start of the Bible" / "End of the Bible") (issue
+/// #66, finding #21). Per-verse cursor clamping stays silent (vim convention);
+/// only chapter/book motions that move *nothing* at the very edge surface this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonEdge {
+    Start,
+    End,
+}
+
+/// Outcome of an [`apply_action`] call. Replaces the old bare `bool` (quit) so
+/// a chapter/book motion that no-ops at the absolute canon edge can report it
+/// (issue #66, finding #21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionResult {
+    /// Keep running; the action moved (or was a non-motion).
+    Continue,
+    /// `Action::Quit` — end the loop.
+    Quit,
+    /// A chapter/book motion that made *zero* moves because the cursor was
+    /// already at the named canon edge.
+    Boundary(CanonEdge),
+}
+
+/// Apply a reading-view motion/action to the focused pane's reading context.
+/// Returns [`ActionResult::Quit`] to end the loop, [`ActionResult::Boundary`]
+/// when a chapter/book motion no-ops at the very first/last passage in the
+/// canon, or [`ActionResult::Continue`] otherwise.
 #[allow(
     clippy::needless_pass_by_ref_mut,
     reason = "pos is mutated through jump_to in the chapter/book arms below; \
@@ -2540,7 +2648,7 @@ fn apply_action(
     history: &mut History,
     wrap_width: u16,
     viewport_height: u16,
-) -> Result<bool> {
+) -> Result<ActionResult> {
     let nav_ = Navigator::new(books);
     let last = max_verse(passage);
     // Half-/full-page motion scrolls by the visible row count, so a screenful
@@ -2557,21 +2665,21 @@ fn apply_action(
     // 0 is treated as 1 so a stray count never freezes the motion.
     let count = |n: u16| i64::from(n.max(1));
     match action {
-        Action::Quit => Ok(true),
+        Action::Quit => Ok(ActionResult::Quit),
         Action::CursorDown(n) => {
             *cursor_verse = (*cursor_verse + i64::from(n)).min(last);
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::CursorUp(n) => {
             *cursor_verse = (*cursor_verse - i64::from(n)).max(1);
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         // Page motions scale the line step by the count (`2Ctrl-D` scrolls two
         // half-pages) rather than re-paging N times (issue #66, finding #15).
         Action::HalfPageDown(n) => {
             *cursor_verse =
                 render::verse_after_paging(passage, *cursor_verse, wrap_width, half_lines * count(n));
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::HalfPageUp(n) => {
             *cursor_verse = render::verse_after_paging(
@@ -2580,12 +2688,12 @@ fn apply_action(
                 wrap_width,
                 -half_lines * count(n),
             );
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::PageDown(n) => {
             *cursor_verse =
                 render::verse_after_paging(passage, *cursor_verse, wrap_width, page_lines * count(n));
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::PageUp(n) => {
             *cursor_verse = render::verse_after_paging(
@@ -2594,60 +2702,39 @@ fn apply_action(
                 wrap_width,
                 -page_lines * count(n),
             );
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::GotoTop => {
             *cursor_verse = 1;
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         Action::GotoBottom => {
             *cursor_verse = last;
-            Ok(false)
+            Ok(ActionResult::Continue)
         }
         // Chapter / book motions step N times. Each helper returns an
         // unchanged position at the canon edge, so we break once movement
         // stops — capping real work at the canon size regardless of the count
         // (a stray `999l` doesn't grind through thousands of redundant loads)
-        // (issue #66, finding #15).
-        Action::PrevChapter(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.prev_chapter(db, pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
-        }
-        Action::NextChapter(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.next_chapter(db, pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
-        }
+        // (issue #66, finding #15). When the FIRST step is already at the edge
+        // (zero moves), report the boundary so the caller can show "Start/End of
+        // the Bible" — but a partial count that moved some then hit the edge is
+        // a normal move, not a dead-end (issue #66, finding #21).
+        Action::PrevChapter(n) => Ok(step_chapter_or_book(n, CanonEdge::Start, |pos| {
+            nav_.prev_chapter(db, pos)
+        })
+        .run(db, pos, passage, cursor_verse, history)?),
+        Action::NextChapter(n) => Ok(step_chapter_or_book(n, CanonEdge::End, |pos| {
+            nav_.next_chapter(db, pos)
+        })
+        .run(db, pos, passage, cursor_verse, history)?),
         Action::PrevBook(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.prev_book(pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
+            Ok(step_chapter_or_book(n, CanonEdge::Start, |pos| nav_.prev_book(pos))
+                .run(db, pos, passage, cursor_verse, history)?)
         }
         Action::NextBook(n) => {
-            for _ in 0..n.max(1) {
-                let new_pos = nav_.next_book(pos)?;
-                if new_pos.same_chapter(pos) {
-                    break;
-                }
-                jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
-            }
-            Ok(false)
+            Ok(step_chapter_or_book(n, CanonEdge::End, |pos| nav_.next_book(pos))
+                .run(db, pos, passage, cursor_verse, history)?)
         }
         Action::CopyVerse
         | Action::OpenGoto
@@ -2671,61 +2758,111 @@ fn apply_action(
         | Action::FocusLeft
         | Action::FocusRight
         | Action::CompareClose
-        | Action::ToggleWordDiff => Ok(false),
+        | Action::ToggleWordDiff => Ok(ActionResult::Continue),
     }
 }
 
-/// Repeat the last `/`-search. Runs the query, sorts hits canonically
-/// (book canon, chapter, verse), and returns the next or previous hit
-/// relative to `(pos, cursor_verse)`. Wraps around when the end is reached,
-/// matching vim's default `wrapscan` behavior. `None` when the query yields
-/// no hits at all (or only the hit at the current verse).
-/// Find the next/previous match for `query` relative to the cursor, in
-/// canonical book/chapter/verse order. Returns the target position and whether
-/// the search **wrapped** past the last/first match (so the caller can show a
-/// vim-style "search hit BOTTOM, continuing at TOP" cue). `None` when the query
-/// has no matches at all (issue #66, finding #10).
+/// A configured chapter/book step: how many times to advance, which edge a
+/// zero-move no-op corresponds to, and the per-step navigator call. Bundled so
+/// the four motion arms share one loop (and one boundary check) instead of
+/// repeating it (issue #66, finding #21).
+struct ChapterBookStep<F> {
+    count: u16,
+    edge: CanonEdge,
+    next: F,
+}
+
+const fn step_chapter_or_book<F>(count: u16, edge: CanonEdge, next: F) -> ChapterBookStep<F>
+where
+    F: Fn(&Position) -> Result<Position>,
+{
+    ChapterBookStep { count, edge, next }
+}
+
+impl<F> ChapterBookStep<F>
+where
+    F: Fn(&Position) -> Result<Position>,
+{
+    /// Walk up to `count` steps, jumping the reading context each time the
+    /// position actually changes. Returns [`ActionResult::Boundary`] iff the
+    /// very first step was already at the canon edge (zero moves); otherwise
+    /// [`ActionResult::Continue`] (including a partial count that moved some
+    /// then stopped).
+    fn run(
+        &self,
+        db: &Db,
+        pos: &mut Position,
+        passage: &mut Passage,
+        cursor_verse: &mut i64,
+        history: &mut History,
+    ) -> Result<ActionResult> {
+        let mut moved = false;
+        for _ in 0..self.count.max(1) {
+            let new_pos = (self.next)(pos)?;
+            if new_pos.same_chapter(pos) {
+                break;
+            }
+            jump_to(new_pos, db, pos, passage, cursor_verse, history)?;
+            moved = true;
+        }
+        if moved {
+            Ok(ActionResult::Continue)
+        } else {
+            Ok(ActionResult::Boundary(self.edge))
+        }
+    }
+}
+
+/// Step `n`/`N` through the last `/`-search in the **same BM25 relevance
+/// order the Find list showed** — not a canonical re-sort — so repeating the
+/// search continues the list the user just scrolled (issue #66, finding #18).
+///
+/// `search::search` already returns hits ordered by `bm25(verse_fts)`; we keep
+/// that order and locate the cursor's current `(book, chapter, verse)` in it.
+/// `n` steps to the next index, `N` to the previous, wrapping at either end
+/// (the `wrapped` bool drives the vim-style "search hit BOTTOM…" cue, issue
+/// #66, finding #10). When the cursor isn't sitting on any hit (the user
+/// navigated away after the Find), there's no position in the list to advance
+/// from, so we start at the first hit going forward / the last going backward,
+/// with `wrapped = false`. Returns the target position and the wrap flag;
+/// `None` only when the query has no matches at all.
 fn repeat_search(
     db: &Db,
-    books: &[Book],
     query: &str,
     pos: &Position,
     cursor_verse: i64,
     forward: bool,
 ) -> Option<(Position, bool)> {
-    let mut hits = search::search(db, query, search::REPEAT_LIMIT).ok()?;
+    // Keep BM25 order (do NOT re-sort): this is the order the Find dialog laid
+    // out, and `n`/`N` continue exactly that list.
+    let hits = search::search(db, query, search::REPEAT_LIMIT).ok()?;
     if hits.is_empty() {
         return None;
     }
-    let canon: std::collections::HashMap<&str, usize> = books
-        .iter()
-        .enumerate()
-        .map(|(i, b)| (b.code.as_str(), i))
-        .collect();
-    let key = |book: &str, ch: i64, v: i64| -> (usize, i64, i64) {
-        (canon.get(book).copied().unwrap_or(usize::MAX), ch, v)
+    let on = |h: &search::SearchHit| {
+        h.book == pos.book && h.chapter == pos.chapter && h.verse == cursor_verse
     };
-    hits.sort_by_key(|h| key(&h.book, h.chapter, h.verse));
-    let here = key(&pos.book, pos.chapter, cursor_verse);
-    // `wrapped` is true when the directional search found nothing beyond the
-    // cursor and fell back to the first/last hit.
-    let (pick, wrapped) = if forward {
-        match hits
-            .iter()
-            .find(|h| key(&h.book, h.chapter, h.verse) > here)
-        {
-            Some(h) => (Some(h), false),
-            None => (hits.first(), true),
+    let here = hits.iter().position(on);
+    let (pick, wrapped) = match here {
+        // Cursor is on a hit: step within the BM25 list, wrapping at the edge.
+        Some(i) if forward => {
+            if i + 1 < hits.len() {
+                (hits.get(i + 1), false)
+            } else {
+                (hits.first(), true)
+            }
         }
-    } else {
-        match hits
-            .iter()
-            .rev()
-            .find(|h| key(&h.book, h.chapter, h.verse) < here)
-        {
-            Some(h) => (Some(h), false),
-            None => (hits.last(), true),
+        Some(i) => {
+            if i > 0 {
+                (hits.get(i - 1), false)
+            } else {
+                (hits.last(), true)
+            }
         }
+        // Cursor isn't on any hit (navigated away): re-enter the list at its
+        // start (forward) or end (backward); no wrap.
+        None if forward => (hits.first(), false),
+        None => (hits.last(), false),
     };
     pick.map(|h| {
         (
@@ -2738,7 +2875,6 @@ fn repeat_search(
         )
     })
 }
-
 fn picker_entries(db: &Db) -> Vec<PickerEntry> {
     merge_picker_entries(db.translations())
 }
@@ -3262,10 +3398,14 @@ mod tests {
             "nb-1930",
             &DownloadResult::FetchFailed(anyhow::anyhow!("sha256 mismatch")),
         );
-        // Detailed warning carries the cause for the stderr trail; the
-        // in-TUI hint stays short.
+        // Detailed warning carries the cause for the stderr trail; the in-TUI
+        // hint is now category-specific (a sha256 mismatch is a verification
+        // failure) and names the download (issue #66, finding #23).
         assert_eq!(m.warning, "download nb-1930 failed: sha256 mismatch");
-        assert_eq!(m.transient, "Download of nb-1930 failed");
+        assert_eq!(
+            m.transient,
+            "nb-1930: verification failed \u{2014} corrupt or stale download"
+        );
     }
 
     #[test]
@@ -3305,5 +3445,342 @@ mod tests {
             &DownloadResult::FetchFailed(anyhow::anyhow!("no network")),
         );
         assert_eq!(failed.transient, "Download of cross-references failed");
+    }
+
+    /// Build a real read-only KJV `Db` from a fresh install dir — the same
+    /// pattern `db.rs` tests use. The bundled KJV is embedded, so this needs no
+    /// developer-DB precondition.
+    fn kjv_db() -> (tempfile::TempDir, Db) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        crate::install::ensure_installed(tmp.path()).expect("install bundled kjv");
+        let db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
+        (tmp, db)
+    }
+
+    fn at(book: &str, chapter: i64, verse: i64) -> Position {
+        Position {
+            book: book.into(),
+            chapter,
+            verse: Some(verse),
+        }
+    }
+
+    /// `n`/`N` must walk the Find list's BM25 relevance order, not a canonical
+    /// re-sort — with the cursor sitting on a hit, the next step lands on the
+    /// immediately-following hit in `search::search`'s own order (issue #66,
+    /// finding #18).
+    #[test]
+    fn repeat_search_steps_in_bm25_order_when_cursor_on_a_hit() {
+        let (_tmp, db) = kjv_db();
+        let query = "shepherd";
+        let hits = search::search(&db, query, search::REPEAT_LIMIT).expect("search");
+        assert!(hits.len() >= 3, "need several hits to test stepping");
+
+        // Cursor on hits[0] → forward lands on hits[1] (the BM25 successor).
+        let cursor = at(&hits[0].book, hits[0].chapter, hits[0].verse);
+        let (next, wrapped) =
+            repeat_search(&db, query, &cursor, hits[0].verse, true).expect("a next hit");
+        assert!(!wrapped, "stepping mid-list does not wrap");
+        assert_eq!(next.book, hits[1].book);
+        assert_eq!(next.chapter, hits[1].chapter);
+        assert_eq!(next.verse, Some(hits[1].verse));
+
+        // Backward from hits[1] returns to hits[0].
+        let mid = at(&hits[1].book, hits[1].chapter, hits[1].verse);
+        let (prev, wrapped) =
+            repeat_search(&db, query, &mid, hits[1].verse, false).expect("a prev hit");
+        assert!(!wrapped);
+        assert_eq!(prev.book, hits[0].book);
+        assert_eq!(prev.chapter, hits[0].chapter);
+        assert_eq!(prev.verse, Some(hits[0].verse));
+    }
+
+    /// Off any hit (the user navigated away after the Find): forward re-enters
+    /// the BM25 list at its first hit, backward at its last — with no wrap cue
+    /// (issue #66, finding #18).
+    #[test]
+    fn repeat_search_off_hit_starts_at_first_or_last() {
+        let (_tmp, db) = kjv_db();
+        let query = "shepherd";
+        let hits = search::search(&db, query, search::REPEAT_LIMIT).expect("search");
+        assert!(hits.len() >= 2);
+
+        // Genesis 1:2 is not a "shepherd" hit (Genesis 1 has no shepherds).
+        let off = at("GEN", 1, 2);
+        assert!(
+            !hits
+                .iter()
+                .any(|h| h.book == "GEN" && h.chapter == 1 && h.verse == 2),
+            "test precondition: cursor must be off every hit",
+        );
+
+        let (fwd, wrapped) = repeat_search(&db, query, &off, 2, true).expect("first hit");
+        assert!(!wrapped, "re-entering the list off-hit is not a wrap");
+        assert_eq!(fwd.book, hits[0].book);
+        assert_eq!(fwd.verse, Some(hits[0].verse));
+
+        let last = hits.last().expect("nonempty");
+        let (back, wrapped) = repeat_search(&db, query, &off, 2, false).expect("last hit");
+        assert!(!wrapped);
+        assert_eq!(back.book, last.book);
+        assert_eq!(back.verse, Some(last.verse));
+    }
+
+    /// Stepping off the end of the BM25 list wraps to the other end and sets the
+    /// wrap flag, so the caller can surface vim's "search hit BOTTOM…" cue
+    /// (issue #66, findings #18 + #10).
+    #[test]
+    fn repeat_search_wraps_at_the_ends() {
+        let (_tmp, db) = kjv_db();
+        let query = "shepherd";
+        let hits = search::search(&db, query, search::REPEAT_LIMIT).expect("search");
+        assert!(hits.len() >= 2);
+
+        // Forward from the last hit wraps to the first.
+        let last = hits.last().expect("nonempty");
+        let on_last = at(&last.book, last.chapter, last.verse);
+        let (wrapped_fwd, fwd_flag) =
+            repeat_search(&db, query, &on_last, last.verse, true).expect("wrap to first");
+        assert!(fwd_flag, "forward off the end must set the wrap flag");
+        assert_eq!(wrapped_fwd.book, hits[0].book);
+        assert_eq!(wrapped_fwd.verse, Some(hits[0].verse));
+
+        // Backward from the first hit wraps to the last.
+        let on_first = at(&hits[0].book, hits[0].chapter, hits[0].verse);
+        let (wrapped_back, back_flag) =
+            repeat_search(&db, query, &on_first, hits[0].verse, false).expect("wrap to last");
+        assert!(back_flag, "backward off the start must set the wrap flag");
+        assert_eq!(wrapped_back.book, last.book);
+        assert_eq!(wrapped_back.verse, Some(last.verse));
+    }
+
+    /// Build a reading context (pos / passage / cursor / history) for a chapter,
+    /// so `apply_action`'s chapter/book arms can be driven directly.
+    fn reading_ctx(db: &Db, book: &str, chapter: i64) -> (Position, Passage, i64, History) {
+        let passage = db.load_passage(book, chapter).expect("load passage");
+        let pos = Position {
+            book: book.into(),
+            chapter,
+            verse: None,
+        };
+        let history = History::new(pos.clone());
+        (pos, passage, 1, history)
+    }
+
+    /// Drive one motion `action` through `apply_action` and return its result.
+    fn run_motion(
+        db: &Db,
+        action: Action,
+        ctx: &mut (Position, Passage, i64, History),
+    ) -> ActionResult {
+        apply_action(
+            action,
+            db,
+            &db.list_books().unwrap(),
+            &mut ctx.0,
+            &mut ctx.1,
+            &mut ctx.2,
+            &mut ctx.3,
+            70,
+            20,
+        )
+        .expect("apply_action")
+    }
+
+    /// Prev-chapter / prev-book at Genesis 1 and next-chapter / next-book at the
+    /// last passage in the canon are dead-ends: when the motion moves nothing,
+    /// `apply_action` reports the canon edge so the caller can cue it (issue #66,
+    /// finding #21).
+    #[test]
+    fn chapter_book_motions_report_the_canon_edges() {
+        let (_tmp, db) = kjv_db();
+        let books = db.list_books().expect("books");
+        let last_book = books.last().expect("nonempty canon").code.clone();
+        let last_chapter = db.chapter_count(&last_book).expect("chapter count").max(1);
+
+        // Genesis 1: backward is a Start dead-end; forward moves normally.
+        let mut at_gen1 = reading_ctx(&db, "GEN", 1);
+        assert_eq!(
+            run_motion(&db, Action::PrevChapter(1), &mut at_gen1),
+            ActionResult::Boundary(CanonEdge::Start),
+        );
+        let mut at_gen1 = reading_ctx(&db, "GEN", 1);
+        assert_eq!(
+            run_motion(&db, Action::PrevBook(1), &mut at_gen1),
+            ActionResult::Boundary(CanonEdge::Start),
+        );
+        let mut at_gen1 = reading_ctx(&db, "GEN", 1);
+        assert_eq!(
+            run_motion(&db, Action::NextChapter(1), &mut at_gen1),
+            ActionResult::Continue,
+        );
+
+        // Revelation's last chapter: forward is an End dead-end; backward moves.
+        let mut at_end = reading_ctx(&db, &last_book, last_chapter);
+        assert_eq!(
+            run_motion(&db, Action::NextChapter(1), &mut at_end),
+            ActionResult::Boundary(CanonEdge::End),
+        );
+        let mut at_end = reading_ctx(&db, &last_book, last_chapter);
+        assert_eq!(
+            run_motion(&db, Action::NextBook(1), &mut at_end),
+            ActionResult::Boundary(CanonEdge::End),
+        );
+        let mut at_end = reading_ctx(&db, &last_book, last_chapter);
+        assert_eq!(
+            run_motion(&db, Action::PrevChapter(1), &mut at_end),
+            ActionResult::Continue,
+        );
+    }
+
+    /// A count motion that moves *some* before hitting the edge is a normal move,
+    /// not a dead-end — only zero movement fires the boundary cue (issue #66,
+    /// finding #21).
+    #[test]
+    fn partial_count_motion_is_not_a_boundary() {
+        let (_tmp, db) = kjv_db();
+        // From Genesis 2, `5[prev-chapter]` can only step once (to Genesis 1)
+        // then stops at the canon edge — but it did move, so: Continue.
+        let mut at_gen2 = reading_ctx(&db, "GEN", 2);
+        assert_eq!(
+            run_motion(&db, Action::PrevChapter(5), &mut at_gen2),
+            ActionResult::Continue,
+        );
+        assert_eq!(at_gen2.0.book, "GEN");
+        assert_eq!(at_gen2.0.chapter, 1, "landed on the first chapter");
+    }
+
+    /// Build a minimal `LoopState` in the reading view on the given passage, so
+    /// `open_footnote_dialog` can be driven directly.
+    fn reading_loop_state(db: &Db, book: &str, chapter: i64) -> LoopState {
+        let passage = db.load_passage(book, chapter).expect("load passage");
+        let pos = Position {
+            book: book.into(),
+            chapter,
+            verse: None,
+        };
+        let cfg = config::Config::default();
+        let mut warnings = Vec::new();
+        LoopState::new(
+            db.list_books().expect("books"),
+            db.translation_label().unwrap_or_else(|_| "en-kjv".into()),
+            &pos,
+            passage,
+            1,
+            None, // start in the reading view, not the splash
+            "en-kjv",
+            &cfg,
+            &mut warnings,
+        )
+    }
+
+    /// When the cross-references dataset is installed (not fetchable) but the
+    /// verse has zero footnotes and zero cross-references, `K` shows a transient
+    /// instead of opening an empty modal (issue #66, finding #22).
+    #[test]
+    fn open_footnote_dialog_empty_with_dataset_present_uses_a_transient() {
+        let (_tmp, db) = kjv_db();
+        // A fresh install has no xrefs.db, so every KJV passage has empty xrefs
+        // (and the footnote table is never populated). Passing can_fetch=false
+        // simulates "the dataset IS present" — the empty-modal case to avoid.
+        let mut state = reading_loop_state(&db, "GEN", 1);
+        state.open_footnote_dialog(false);
+        assert!(
+            matches!(state.dialog, Dialog::None),
+            "no modal should open for an empty verse with the dataset present"
+        );
+        assert_eq!(
+            state.transient_msg.as_ref().map(|(t, _, _)| t.as_str()),
+            Some("No cross-references for this verse"),
+        );
+    }
+
+    /// The #67 fetch-affordance path is preserved: when the dataset isn't on
+    /// disk (`can_fetch_xrefs = true`), `K` still opens the popup so it can offer
+    /// `d` to download — even on an otherwise-empty verse (issue #66, finding
+    /// #22 keeps #67).
+    #[test]
+    fn open_footnote_dialog_still_opens_the_fetch_affordance() {
+        let (_tmp, db) = kjv_db();
+        let mut state = reading_loop_state(&db, "GEN", 1);
+        state.open_footnote_dialog(true);
+        assert!(
+            matches!(state.dialog, Dialog::Footnote(_)),
+            "the fetch-affordance popup must still open when xrefs aren't installed"
+        );
+    }
+
+    /// The fetch-error classifier buckets representative `anyhow` chains by the
+    /// `.context(...)` frames `fetch.rs` attaches, so the in-TUI transient is
+    /// actionable per category (issue #66, finding #23).
+    #[test]
+    fn classify_fetch_error_buckets_by_category() {
+        use anyhow::{Context, anyhow};
+
+        // Verification: sha256 mismatch (the exact fetch.rs wording).
+        let sha = anyhow!("sha256 mismatch for nb-1930.db.zst: expected aa, got bb");
+        assert_eq!(classify_fetch_error(&sha), FetchErrorKind::Verification);
+
+        // Verification: oversize / zip-bomb guard.
+        let bomb = anyhow!(
+            "nb-1930.db.zst: decompressed to 9 bytes but the manifest declares 8 (corrupt download or zip bomb)"
+        );
+        assert_eq!(classify_fetch_error(&bomb), FetchErrorKind::Verification);
+
+        // Verification: a zstd decode failure framed by `.context("decompress …")`.
+        let decode: anyhow::Error = Err::<(), _>(anyhow!("unexpected end of input"))
+            .context("decompress nb-1930.db.zst")
+            .unwrap_err();
+        assert_eq!(classify_fetch_error(&decode), FetchErrorKind::Verification);
+
+        // CurlMissing: the spawn frame wraps the OS "not found".
+        let missing: anyhow::Error = Err::<(), _>(anyhow!("No such file or directory"))
+            .context("spawn curl (is it installed?)")
+            .unwrap_err();
+        assert_eq!(classify_fetch_error(&missing), FetchErrorKind::CurlMissing);
+
+        // Network: curl ran and exited non-zero, wrapped by the download frame.
+        let net: anyhow::Error = Err::<(), _>(anyhow!("curl exited with exit status: 6"))
+            .context("download https://example/nb-1930.db.zst")
+            .unwrap_err();
+        assert_eq!(classify_fetch_error(&net), FetchErrorKind::Network);
+
+        // Other: an unrecognised post-fetch IO failure keeps the generic copy.
+        let io = anyhow!("permission denied").context("write decompressed nb-1930.db.zst");
+        assert_eq!(classify_fetch_error(&io), FetchErrorKind::Other);
+    }
+
+    /// Each category renders a distinct, actionable transient that names the
+    /// download (except curl-missing, whose fix is global) (issue #66, #23).
+    #[test]
+    fn fetch_error_transients_are_distinct_and_actionable() {
+        assert_eq!(
+            FetchErrorKind::Verification.transient("nb-1930"),
+            "nb-1930: verification failed \u{2014} corrupt or stale download"
+        );
+        assert_eq!(
+            FetchErrorKind::Network.transient("nb-1930"),
+            "nb-1930: couldn't reach GitHub \u{2014} check your connection"
+        );
+        assert_eq!(
+            FetchErrorKind::CurlMissing.transient("nb-1930"),
+            "curl not found \u{2014} install curl"
+        );
+        assert_eq!(
+            FetchErrorKind::Other.transient("nb-1930"),
+            "Download of nb-1930 failed"
+        );
+        // All four are mutually distinct.
+        let all = [
+            FetchErrorKind::Verification.transient("x"),
+            FetchErrorKind::Network.transient("x"),
+            FetchErrorKind::CurlMissing.transient("x"),
+            FetchErrorKind::Other.transient("x"),
+        ];
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(all[i], all[j], "categories {i} and {j} collided");
+            }
+        }
     }
 }

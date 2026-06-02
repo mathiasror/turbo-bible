@@ -37,7 +37,7 @@ narrative).
 14. `09-help.png` — Help overlay
 15. `10-compare.png` — 2 compare panes
 16. `11-compare-three.png` — 3 compare panes
-17. `21-footnote.png` — footnote / cross-reference popup (`K`)
+17. `21-footnote.png` — cross-reference popup (`K`)
 18. `12-xref-split.png` — cross-reference opened in a split (`K` → `s`)
 19. `13-poetry.png` — reading, poetry indent (Psalm 119)
 20. `14-poetry-compare.png` — poetry in a compare pane
@@ -215,15 +215,19 @@ present:
 - **Watch for:** the empty-state line is intentionally muted — flagging
   it for "low contrast" misses that it's *meant* to be quiet.
 
-### `21-footnote.png` — Footnote / cross-reference popup
+### `21-footnote.png` — Cross-reference popup
 
 - **Surface:** `crates/turbo-bible-tui/src/ui/footnote.rs`.
-- **State:** `K` pressed on John 3:16 → popup open with the verse's
-  cross-references listed; nothing pressed yet.
+- **State:** `K` pressed on John 3:16 → popup titled **"Cross-references
+  for John 3:16"** with the verse's cross-references listed; mode pill
+  reads `-- XREFS --`; nothing pressed yet.
 - **Intentional:**
+  - Titled "Cross-references", not "Notes": the footnote table has no
+    upstream source, so the popup only ever shows cross-references (issue
+    #66, finding #22). On a verse with none (dataset present), `K` shows a
+    transient instead of an empty modal.
   - Selectable vertical list of cross-references; ↑/↓ navigates,
     `Enter` follows in place, `s` opens in a split (see shot 12).
-  - Footnote bodies (if any) render above the xref list.
   - Dialog drop shadow over whatever's underneath.
   - **Scrolls when the list overflows.** John 3:16 carries 27
     cross-references — more than fit at once — so the body windows
