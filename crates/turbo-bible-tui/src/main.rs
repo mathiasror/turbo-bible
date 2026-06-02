@@ -364,8 +364,8 @@ impl DownloadKind {
     /// (`nb-1930` / `cross-references`).
     fn display_name(&self) -> &str {
         match self {
-            DownloadKind::Translation { code, .. } => code,
-            DownloadKind::Xrefs => "cross-references",
+            Self::Translation { code, .. } => code,
+            Self::Xrefs => "cross-references",
         }
     }
 }
@@ -841,7 +841,7 @@ impl FetchErrorKind {
 fn classify_fetch_error(e: &anyhow::Error) -> FetchErrorKind {
     let chain: String = e
         .chain()
-        .map(|c| c.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("\n");
     let has = |needle: &str| chain.contains(needle);
@@ -975,9 +975,9 @@ fn reload_panes_after_xrefs(state: &mut LoopState, db: &Db) -> Result<()> {
 /// when the executable path can't be read (the safest fallback — re-running
 /// the installer always works).
 fn current_install_method() -> update::InstallMethod {
-    std::env::current_exe()
-        .map(|p| update::detect_install_method(&p))
-        .unwrap_or(update::InstallMethod::CurlOrManual)
+    std::env::current_exe().map_or(update::InstallMethod::CurlOrManual, |p| {
+        update::detect_install_method(&p)
+    })
 }
 
 /// Seed the splash banner from the cache (offline-graceful) and, if the 24h

@@ -2,7 +2,7 @@
 //! status bar at the bottom already shows every action shortcut and having
 //! two competing rows felt redundant. The strip is now informational only —
 //! mouse clicks on it are ignored — so it's styled to *read* that way: the
-//! title is muted (dark_grey, no bold) rather than the strong black+bold a
+//! title is muted (`dark_grey`, no bold) rather than the strong black+bold a
 //! live File/Edit menu would carry, so it doesn't invite a click (issue #66,
 //! finding #14).
 

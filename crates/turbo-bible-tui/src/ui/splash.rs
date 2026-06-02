@@ -991,7 +991,7 @@ struct RenderStyles {
     subtitle: Style,
     dim: Style,
     label: Style,
-    /// "Update available" banner — mid_cyan + bold. Deliberately NOT yellow:
+    /// "Update available" banner — `mid_cyan` + bold. Deliberately NOT yellow:
     /// yellow is reserved for the title, mode pills, and single operative
     /// tokens, so an informational banner uses a structural cyan tier.
     update: Style,
