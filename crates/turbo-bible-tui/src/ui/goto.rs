@@ -112,11 +112,35 @@ impl GotoDialog {
         // (Goto opened on the current verse) shows a hint instead: echoing the
         // current reference back as "Will jump to: …" reads as a redundant
         // duplicate of the input field directly above it.
-        let preview = if self.prefilled {
-            "(type a reference, or Enter to stay here)".to_string()
+        // Yellow is the operative-token slot — reserved for the *resolved*
+        // reference. The hints and the error state aren't operative tokens, so
+        // a parse error reads in `hotkey_red` rather than masquerading as a
+        // yellow hint (issue #66, finding #11).
+        let yellow = Style::new()
+            .fg(theme::yellow())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
+        let err_style = Style::new()
+            .fg(theme::hotkey_red())
+            .bg(theme::blue())
+            .add_modifier(Modifier::BOLD);
+        let (preview, preview_style) = if self.prefilled {
+            (
+                "(type a reference, or Enter to stay here)".to_string(),
+                yellow,
+            )
+        } else if self.input.trim().is_empty() {
+            ("(type a book and chapter)".to_string(), yellow)
         } else {
             parse_reference(&self.input, books).map_or_else(
-                || "(type a book and chapter)".to_string(),
+                || {
+                    // Non-empty but unparseable — name it so `Enter` doing
+                    // nothing is self-explanatory, instead of a dead key.
+                    (
+                        "Unknown book or reference \u{2014} e.g. John 3:16".to_string(),
+                        err_style,
+                    )
+                },
                 |p| {
                     let name = books
                         .iter()
@@ -126,7 +150,7 @@ impl GotoDialog {
                         Some(v) => crate::reference::format(&name, p.chapter, v, &self.translation),
                         None => format!("{name} {}", p.chapter),
                     };
-                    format!("Will jump to: {target}")
+                    (format!("Will jump to: {target}"), yellow)
                 },
             )
         };
@@ -158,13 +182,7 @@ impl GotoDialog {
             Line::from(input_line),
             Line::from(vec![
                 Span::styled("  ", Style::new().bg(theme::blue())),
-                Span::styled(
-                    preview,
-                    Style::new()
-                        .fg(theme::yellow())
-                        .bg(theme::blue())
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(preview, preview_style),
             ]),
             Line::from(blank.clone()),
             Line::from(vec![

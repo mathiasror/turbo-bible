@@ -1417,6 +1417,9 @@ fn dispatch_key(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Resul
 /// history, refresh the splash "Continue" label, and reset bg+dialog.
 fn close_with_jump(state: &mut LoopState, ctx: &mut AppCtx, p: Position) -> Result<()> {
     let f = state.focus;
+    // Remember what was requested so we can tell if jump_to had to clamp it.
+    let req_chapter = p.chapter;
+    let req_verse = p.verse;
     {
         let pane = &mut state.panes[f];
         jump_to(
@@ -1434,6 +1437,19 @@ fn close_with_jump(state: &mut LoopState, ctx: &mut AppCtx, p: Position) -> Resu
         &state.panes[f].pos,
         state.panes[f].cursor_verse,
     );
+    // If the requested chapter/verse was out of range (e.g. `:John 999`),
+    // jump_to clamps it — say where it actually landed instead of silently
+    // dropping the user somewhere else (issue #66, finding #11).
+    let landed_ch = state.panes[f].pos.chapter;
+    let landed_v = state.panes[f].cursor_verse;
+    if req_chapter != landed_ch || req_verse.is_some_and(|v| v != landed_v) {
+        let name = state
+            .books
+            .iter()
+            .find(|b| b.code == state.panes[f].pos.book)
+            .map_or_else(|| state.panes[f].pos.book.clone(), |b| b.name.clone());
+        state.set_transient(format!("Clamped to {name} {landed_ch}:{landed_v}"));
+    }
     state.bg = Bg::Reading;
     state.dialog = Dialog::None;
     Ok(())
@@ -1850,13 +1866,29 @@ impl LoopState {
         Ok(())
     }
 
-    fn copy_verse(&self, ctx: &mut AppCtx) {
-        let pane = self.focused();
-        save_or_warn(
-            ctx.warnings,
-            "clipboard set",
-            copy_verse_to_clipboard(&pane.passage, &pane.pos, pane.cursor_verse),
-        );
+    fn copy_verse(&mut self, ctx: &mut AppCtx) {
+        let (label, result) = {
+            let pane = self.focused();
+            let label = format!(
+                "{} {}:{}",
+                pane.passage.book_name, pane.pos.chapter, pane.cursor_verse
+            );
+            (
+                label,
+                copy_verse_to_clipboard(&pane.passage, &pane.pos, pane.cursor_verse),
+            )
+        };
+        // Confirm in-app on success and surface a failure right away, instead
+        // of only logging to stderr at exit — on SSH/headless the user would
+        // otherwise press `y`, see nothing, and learn it failed after quitting
+        // (issue #66, finding #9).
+        match result {
+            Ok(()) => self.set_transient(format!("Copied {label}")),
+            Err(e) => {
+                self.set_transient_warn(format!("Copy failed: {e}"));
+                ctx.warnings.push(format!("clipboard set: {e}"));
+            }
+        }
     }
 
     fn toggle_visual(&mut self) {
@@ -1888,7 +1920,22 @@ impl LoopState {
                 e,
             )
         };
-        self.bookmarks.add(bookmark::Bookmark {
+        // Reference label for the confirmation, built before `book` moves into
+        // the Bookmark below.
+        let name = self
+            .books
+            .iter()
+            .find(|b| b.code == book)
+            .map_or(book.as_str(), |b| b.name.as_str());
+        let label = if s == e {
+            format!("{name} {chapter}:{s}")
+        } else {
+            format!("{name} {chapter}:{s}\u{2013}{e}")
+        };
+        // `b` toggles: a second press on an already-bookmarked range removes
+        // it, so the reading view gets an un-bookmark without the `M` dialog —
+        // and either way a transient confirms what happened (issue #66, #8).
+        let added = self.bookmarks.toggle(bookmark::Bookmark {
             translation,
             book,
             chapter,
@@ -1898,8 +1945,17 @@ impl LoopState {
             created_at: bookmark::now_unix(),
         });
         self.bookmarks_cache.clear();
-        save_or_warn(ctx.warnings, "bookmarks save (add)", self.bookmarks.save());
+        save_or_warn(
+            ctx.warnings,
+            "bookmarks save (toggle)",
+            self.bookmarks.save(),
+        );
         self.panes[self.focus].visual_anchor = None;
+        self.set_transient(if added {
+            format!("Bookmarked {label}")
+        } else {
+            format!("Removed bookmark {label}")
+        });
     }
 
     /// Ensure a bookmarked-verse set is cached for `(translation, book,
@@ -1983,22 +2039,25 @@ impl LoopState {
     /// Re-run the most recent `/`-search in `forward` or backward order
     /// relative to the focused pane's cursor, jumping to the next hit (wrap).
     fn repeat_search_action(&mut self, ctx: &mut AppCtx, forward: bool) -> Result<()> {
-        let Some(q) = self.last_query.as_deref() else {
+        let Some(q) = self.last_query.clone() else {
+            // No `/`-search has run yet — vim's E35 (issue #66, finding #10).
+            self.set_transient_warn("No previous search");
             return Ok(());
         };
         let f = self.focus;
-        let target = {
+        let outcome = {
             let pane = &self.panes[f];
             repeat_search(
                 ctx.db,
                 &self.books,
-                q,
+                &q,
                 &pane.pos,
                 pane.cursor_verse,
                 forward,
             )
         };
-        let Some(p) = target else {
+        let Some((p, wrapped)) = outcome else {
+            self.set_transient_warn("Pattern not found");
             return Ok(());
         };
         {
@@ -2018,6 +2077,14 @@ impl LoopState {
             &self.panes[f].pos,
             self.panes[f].cursor_verse,
         );
+        // Mirror vim's wrap message so the user knows `n`/`N` looped around.
+        if wrapped {
+            self.set_transient(if forward {
+                "search hit BOTTOM, continuing at TOP"
+            } else {
+                "search hit TOP, continuing at BOTTOM"
+            });
+        }
         Ok(())
     }
 }
@@ -2179,22 +2246,25 @@ fn mode_tag_for(state: &LoopState) -> Cow<'static, str> {
                 } else {
                     "NORMAL"
                 };
-                // In a compare split, show which pane is focused (e.g. "2/3")
-                // instead of the sidebar cue.
-                if state.panes.len() >= 2 {
-                    Cow::Owned(format!(
-                        "-- {base} | {}/{} --",
-                        state.focus + 1,
-                        state.panes.len()
-                    ))
+                // In a compare split, show which pane is focused (e.g. "2/3");
+                // otherwise the sidebar cue (NARROW = too narrow, NOREFS =
+                // toggled off, absent = actually visible).
+                let cue = if state.panes.len() >= 2 {
+                    format!(" | {}/{}", state.focus + 1, state.panes.len())
                 } else if state.sidebar_visible() {
-                    Cow::Owned(format!("-- {base} --"))
+                    String::new()
                 } else if state.show_sidebar {
-                    // Asked for, but the window is too narrow to fit it.
-                    Cow::Owned(format!("-- {base} | NARROW --"))
+                    " | NARROW".to_string()
                 } else {
-                    Cow::Owned(format!("-- {base} | NOREFS --"))
-                }
+                    " | NOREFS".to_string()
+                };
+                // showcmd: the in-progress count/chord (vim's last-line cue),
+                // so a pending `5` or `g` is visible rather than silent (#66 #7).
+                let showcmd = state
+                    .keys
+                    .pending_hint()
+                    .map_or_else(String::new, |h| format!(" {h}"));
+                Cow::Owned(format!("-- {base}{cue}{showcmd} --"))
             }
         },
     }
@@ -2511,6 +2581,11 @@ fn apply_action(
 /// relative to `(pos, cursor_verse)`. Wraps around when the end is reached,
 /// matching vim's default `wrapscan` behavior. `None` when the query yields
 /// no hits at all (or only the hit at the current verse).
+/// Find the next/previous match for `query` relative to the cursor, in
+/// canonical book/chapter/verse order. Returns the target position and whether
+/// the search **wrapped** past the last/first match (so the caller can show a
+/// vim-style "search hit BOTTOM, continuing at TOP" cue). `None` when the query
+/// has no matches at all (issue #66, finding #10).
 fn repeat_search(
     db: &Db,
     books: &[Book],
@@ -2518,7 +2593,7 @@ fn repeat_search(
     pos: &Position,
     cursor_verse: i64,
     forward: bool,
-) -> Option<Position> {
+) -> Option<(Position, bool)> {
     let mut hits = search::search(db, query, search::REPEAT_LIMIT).ok()?;
     if hits.is_empty() {
         return None;
@@ -2533,20 +2608,35 @@ fn repeat_search(
     };
     hits.sort_by_key(|h| key(&h.book, h.chapter, h.verse));
     let here = key(&pos.book, pos.chapter, cursor_verse);
-    let pick = if forward {
-        hits.iter()
+    // `wrapped` is true when the directional search found nothing beyond the
+    // cursor and fell back to the first/last hit.
+    let (pick, wrapped) = if forward {
+        match hits
+            .iter()
             .find(|h| key(&h.book, h.chapter, h.verse) > here)
-            .or_else(|| hits.first())
+        {
+            Some(h) => (Some(h), false),
+            None => (hits.first(), true),
+        }
     } else {
-        hits.iter()
+        match hits
+            .iter()
             .rev()
             .find(|h| key(&h.book, h.chapter, h.verse) < here)
-            .or_else(|| hits.last())
+        {
+            Some(h) => (Some(h), false),
+            None => (hits.last(), true),
+        }
     };
-    pick.map(|h| Position {
-        book: h.book.clone(),
-        chapter: h.chapter,
-        verse: Some(h.verse),
+    pick.map(|h| {
+        (
+            Position {
+                book: h.book.clone(),
+                chapter: h.chapter,
+                verse: Some(h.verse),
+            },
+            wrapped,
+        )
     })
 }
 

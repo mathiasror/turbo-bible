@@ -154,6 +154,15 @@ impl KeyState {
 
     pub fn handle(&mut self, key: KeyEvent) -> Option<Action> {
         self.tick();
+        // Esc first aborts an in-progress command — a pending count or a
+        // half-typed chord — vim-style, without leaving the screen. Only a
+        // "clean" Esc (nothing pending) falls through to the base-layer Back.
+        // With the showcmd indicator the cleared count/chord is visible, so
+        // this no longer silently eats the keystroke (issue #66, finding #6).
+        if key.code == KeyCode::Esc && (self.count != 0 || !self.pending.is_empty()) {
+            self.reset();
+            return None;
+        }
         // Count prefix is a vim-layer feature. In turbo mode digits are inert
         // — they just fall through to the resolver which returns Unknown.
         if self.keymap == Keymap::Vim
@@ -188,6 +197,23 @@ impl KeyState {
 
     const fn count_or(&self, default: u16) -> u16 {
         if self.count == 0 { default } else { self.count }
+    }
+
+    /// The in-progress count/chord, for a vim-style `showcmd` indicator —
+    /// e.g. `"5"` while a count builds, `"g"` / `"^W"` mid-chord, `"5g"` for
+    /// both. `None` when nothing is pending (issue #66, finding #7).
+    pub fn pending_hint(&self) -> Option<String> {
+        if self.count == 0 && self.pending.is_empty() {
+            return None;
+        }
+        let mut s = String::new();
+        if self.count != 0 {
+            s.push_str(&self.count.to_string());
+        }
+        for ev in &self.pending {
+            push_key_label(&mut s, ev);
+        }
+        (!s.is_empty()).then_some(s)
     }
 
     #[cfg(test)]
@@ -332,6 +358,20 @@ impl KeyState {
     }
 }
 
+/// Render one pending key for the `showcmd` hint: a Ctrl-modified key as
+/// `^X` (e.g. `Ctrl-W` → `^W`), a plain char verbatim. Other key kinds don't
+/// stage as pending chord keys, so they contribute nothing.
+fn push_key_label(out: &mut String, ev: &KeyEvent) {
+    if ev.modifiers.contains(KeyModifiers::CONTROL) {
+        out.push('^');
+        if let KeyCode::Char(c) = ev.code {
+            out.push(c.to_ascii_uppercase());
+        }
+    } else if let KeyCode::Char(c) = ev.code {
+        out.push(c);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +507,53 @@ mod tests {
         assert_eq!(ks.handle(ev(KeyCode::F(3))), Some(Action::OpenFind));
         assert_eq!(ks.handle(ev(KeyCode::Char('q'))), Some(Action::Quit));
         assert_eq!(ks.handle(ev(KeyCode::Char('/'))), Some(Action::OpenFind));
+    }
+
+    #[test]
+    fn esc_aborts_pending_count_without_leaving() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        // Build a count, then Esc: the count is dropped and Esc does NOT Back.
+        assert_eq!(ks.handle(ev(KeyCode::Char('5'))), None);
+        assert_eq!(ks.pending_hint().as_deref(), Some("5"));
+        assert_eq!(ks.handle(ev(KeyCode::Esc)), None, "Esc aborts the count");
+        assert_eq!(ks.pending_hint(), None);
+        // The count is gone: a bare `j` now steps by 1, not 5.
+        assert_eq!(
+            ks.handle(ev(KeyCode::Char('j'))),
+            Some(Action::CursorDown(1))
+        );
+        // And a clean Esc (nothing pending) still backs out.
+        assert_eq!(ks.handle(ev(KeyCode::Esc)), Some(Action::Back));
+    }
+
+    #[test]
+    fn esc_aborts_half_typed_chord_then_backs() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        // `g` is a chord starter (gg) — pending, no action yet.
+        assert_eq!(ks.handle(ev(KeyCode::Char('g'))), None);
+        assert_eq!(ks.pending_hint().as_deref(), Some("g"));
+        // First Esc clears the half-chord (no Back); second Esc backs.
+        assert_eq!(ks.handle(ev(KeyCode::Esc)), None);
+        assert_eq!(ks.pending_hint(), None);
+        assert_eq!(ks.handle(ev(KeyCode::Esc)), Some(Action::Back));
+    }
+
+    #[test]
+    fn pending_hint_renders_count_chord_and_ctrl_w() {
+        let cfg = KeysConfig::default();
+        let mut ks = KeyState::with_user_bindings(&cfg, Keymap::Vim);
+        assert_eq!(ks.pending_hint(), None);
+        ks.handle(ev(KeyCode::Char('5')));
+        ks.handle(ev(KeyCode::Char('g'))); // count + chord starter
+        assert_eq!(ks.pending_hint().as_deref(), Some("5g"));
+        // Resolve the chord (gg → top) and the hint clears.
+        assert_eq!(ks.handle(ev(KeyCode::Char('g'))), Some(Action::GotoTop));
+        assert_eq!(ks.pending_hint(), None);
+        // Ctrl-W renders as ^W.
+        ks.handle(evm(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(ks.pending_hint().as_deref(), Some("^W"));
     }
 
     #[test]
