@@ -121,8 +121,9 @@ pub struct Passage {
     pub verses: Vec<Verse>,
     pub headings: Vec<Heading>,
     pub footnotes: Vec<Footnote>,
-    /// Sorted by `from_verse` then `votes` DESC, so the UI can slice per
-    /// cursor verse with `binary_search_by_key` and trust the order.
+    /// Sorted by `from_verse`, then `votes` DESC within each verse, so the UI
+    /// can `filter`/group the cross-references for the cursor verse and get
+    /// them already in best-first order.
     pub xrefs: Vec<Xref>,
 }
 

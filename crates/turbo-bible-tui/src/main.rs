@@ -719,6 +719,12 @@ fn run(
     }
 
     loop {
+        // Expire transient status messages on every iteration: their TTL is
+        // wall-clock based, so leaving this only on the idle branch let a
+        // transient overstay under a continuous event stream (mouse drag/move)
+        // until input paused.
+        state.tick();
+
         draw_frame(term, &mut state, db)?;
 
         // Apply a finished background download (non-blocking) before
@@ -763,7 +769,6 @@ fn run(
                 }
             }
         } else {
-            state.tick();
             // Keep a drag held past the pane edge scrolling while the pointer
             // is still (crossterm emits no Drag events until it moves again).
             state.autoscroll_drag();
