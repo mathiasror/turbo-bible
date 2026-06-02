@@ -196,53 +196,41 @@ impl HelpDialog {
         }
     }
 
-    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
-        let w: u16 = outer.width.saturating_sub(6).min(64);
-        let h: u16 = outer.height.saturating_sub(4).min(30);
-        let area = dialog::center(outer, w, h);
-        let inner = dialog::draw_modal_dialog(outer, area, "Help", buf);
-
+    /// Build the scrollable help body — one [`Line`] per section header, key
+    /// row, or note — plus a parallel `is_section` mask the scroll logic uses
+    /// to keep a header glued to its first entry. Section headers take the
+    /// `mid_cyan` + BOLD structural tier (the bold weight does the hierarchy
+    /// work; yellow stays reserved for verse numbers + the mode pill — see
+    /// ui-review.md finding #6). Notes render in muted grey as a sub-comment
+    /// under the key rows.
+    fn build_content_lines(&self) -> (Vec<Line<'static>>, Vec<bool>) {
         let bg = Style::new().bg(theme::blue());
         let label = Style::new().fg(theme::bright_white()).bg(theme::blue());
         let key = Style::new()
             .fg(theme::yellow())
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
-        // Section headers: `mid_cyan` + BOLD — the rubric §1 hierarchy levers
-        // (weight > color > whitespace) say a section heading should clearly
-        // outrank the rows below it. `mid_cyan` is the project's structural-
-        // label tier (per the yellow-slot rule: yellow stays reserved for
-        // verse numbers + the mode pill). The bold weight is what does the
-        // hierarchy work; the color just tags the role. See ui-review.md
-        // finding #6.
         let header = Style::new()
             .fg(theme::mid_cyan())
             .bg(theme::blue())
             .add_modifier(Modifier::BOLD);
+        let note = Style::new().fg(theme::light_grey()).bg(theme::blue());
 
         let mut content: Vec<Line<'static>> = Vec::new();
-        // Parallel to `content`: marks which rows are section headers, so the
-        // scroll logic can keep a header glued to its first entry.
         let mut is_section: Vec<bool> = Vec::new();
         // No leading blank row: the cheat-sheet fits a standard ~32-row
-        // terminal without scrolling — so the scroll arrows stay suppressed
-        // (see the overflow gate below) instead of showing a phantom ▲.
-        // For *subsequent* sections we add one blank row above each heading
-        // (the third hierarchy lever, whitespace) so the eye lands on the
-        // heading first when scanning.
-        // Notes (free-text context lines) render in muted grey to read as a
-        // sub-comment under the section's key rows, distinct from the
-        // bright_white description column.
-        let note = Style::new().fg(theme::light_grey()).bg(theme::blue());
+        // terminal without scrolling. For *subsequent* sections we add one
+        // blank row above each heading (the whitespace hierarchy lever) so the
+        // eye lands on the heading first when scanning.
         let mut seen_section = false;
         for row in rows(self.keymap) {
             match row {
                 Section(name) => {
                     if seen_section {
-                        // Blank row above each non-first section. Tagged as
-                        // a non-section row so `keep_with_next`'s
-                        // orphan-guard treats the *heading* (not the gap)
-                        // as the row to keep with its first entry.
+                        // Blank row above each non-first section. Tagged as a
+                        // non-section row so `keep_with_next`'s orphan-guard
+                        // treats the *heading* (not the gap) as the row to keep
+                        // with its first entry.
                         content.push(Line::from(Span::styled("", bg)));
                         is_section.push(false);
                     }
@@ -270,6 +258,17 @@ impl HelpDialog {
                 }
             }
         }
+        (content, is_section)
+    }
+
+    pub fn render(&self, outer: Rect, buf: &mut Buffer) {
+        let w: u16 = outer.width.saturating_sub(6).min(64);
+        let h: u16 = outer.height.saturating_sub(4).min(30);
+        let area = dialog::center(outer, w, h);
+        let inner = dialog::draw_modal_dialog(outer, area, "Help", buf);
+
+        let bg = Style::new().bg(theme::blue());
+        let (content, is_section) = self.build_content_lines();
 
         // Pin the footer to the last inner row; everything above it scrolls.
         let body_h = inner.height.saturating_sub(1) as usize;

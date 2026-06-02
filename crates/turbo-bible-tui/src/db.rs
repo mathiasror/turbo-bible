@@ -445,10 +445,9 @@ impl Db {
             let (target_book, target_chapter): (String, i64) = if present {
                 (book.to_string(), chapter)
             } else {
-                match books.first() {
-                    Some(b) => (b.code.clone(), 1),
-                    None => (book.to_string(), chapter),
-                }
+                books
+                    .first()
+                    .map_or_else(|| (book.to_string(), chapter), |b| (b.code.clone(), 1))
             };
             // Clamp the chapter into the target book's range — the source
             // chapter can exceed it (e.g. a shorter book in the new edition).

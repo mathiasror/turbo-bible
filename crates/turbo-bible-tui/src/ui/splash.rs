@@ -233,13 +233,14 @@ impl SplashView {
             // detour through NORMAL and a second Enter (issue #66, finding #19).
             // Falls back to leaving FILTER if nothing is highlighted (e.g. the
             // filter matched nothing at all).
-            KeyCode::Enter => match self.open_current() {
-                Some(p) => SplashOutcome::OpenBook(p),
-                None => {
+            KeyCode::Enter => {
+                if let Some(p) = self.open_current() {
+                    SplashOutcome::OpenBook(p)
+                } else {
                     self.mode = SplashMode::Normal;
                     SplashOutcome::Continue
                 }
-            },
+            }
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.cursor_ot = 0;
@@ -991,7 +992,7 @@ struct RenderStyles {
     subtitle: Style,
     dim: Style,
     label: Style,
-    /// "Update available" banner — mid_cyan + bold. Deliberately NOT yellow:
+    /// "Update available" banner — `mid_cyan` + bold. Deliberately NOT yellow:
     /// yellow is reserved for the title, mode pills, and single operative
     /// tokens, so an informational banner uses a structural cyan tier.
     update: Style,

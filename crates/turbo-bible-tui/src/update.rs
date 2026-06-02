@@ -142,7 +142,7 @@ pub fn detect_install_method(exe: &Path) -> InstallMethod {
 }
 
 /// The upgrade command to show for a given install method.
-pub fn upgrade_hint(method: InstallMethod) -> &'static str {
+pub const fn upgrade_hint(method: InstallMethod) -> &'static str {
     match method {
         InstallMethod::Homebrew => "brew upgrade turbo-bible",
         InstallMethod::Cargo => "cargo install turbo-bible --force",
@@ -280,7 +280,7 @@ const DAY_SECS: i64 = 86_400;
 
 /// Whether the once-per-day window has elapsed. `last == 0` (never checked)
 /// against a real `now` is always due.
-pub fn should_check(last_checked_unix: i64, now: i64) -> bool {
+pub const fn should_check(last_checked_unix: i64, now: i64) -> bool {
     now - last_checked_unix >= DAY_SECS
 }
 

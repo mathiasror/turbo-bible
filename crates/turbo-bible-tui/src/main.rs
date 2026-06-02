@@ -364,8 +364,8 @@ impl DownloadKind {
     /// (`nb-1930` / `cross-references`).
     fn display_name(&self) -> &str {
         match self {
-            DownloadKind::Translation { code, .. } => code,
-            DownloadKind::Xrefs => "cross-references",
+            Self::Translation { code, .. } => code,
+            Self::Xrefs => "cross-references",
         }
     }
 }
@@ -841,7 +841,7 @@ impl FetchErrorKind {
 fn classify_fetch_error(e: &anyhow::Error) -> FetchErrorKind {
     let chain: String = e
         .chain()
-        .map(|c| c.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("\n");
     let has = |needle: &str| chain.contains(needle);
@@ -975,9 +975,9 @@ fn reload_panes_after_xrefs(state: &mut LoopState, db: &Db) -> Result<()> {
 /// when the executable path can't be read (the safest fallback — re-running
 /// the installer always works).
 fn current_install_method() -> update::InstallMethod {
-    std::env::current_exe()
-        .map(|p| update::detect_install_method(&p))
-        .unwrap_or(update::InstallMethod::CurlOrManual)
+    std::env::current_exe().map_or(update::InstallMethod::CurlOrManual, |p| {
+        update::detect_install_method(&p)
+    })
 }
 
 /// Seed the splash banner from the cache (offline-graceful) and, if the 24h
@@ -1269,9 +1269,117 @@ fn pane_fits_width(total_width: u16, current_panes: usize) -> bool {
     ui::min_pane_interior(total_width, current_panes + 1) >= ui::MIN_PANE_W
 }
 
-/// One pass of the draw cycle. Kept inline (vs split into per-bg
-/// helpers) because the closure borrows many fields and pulling it apart
-/// duplicates the dialog overlay match.
+/// The status-bar tag and whether it should paint the high-attention red
+/// `warn` pill. An in-flight download, then a transient hint (e.g. "Too
+/// narrow"), then the mode pill — first match wins the tag slot. Only a `Warn`
+/// transient that actually won the slot reddens the pill (a download keeps the
+/// neutral pill).
+fn status_tag(state: &LoopState) -> (Cow<'static, str>, bool) {
+    state.download.as_ref().map_or_else(
+        // No download in flight: a transient hint outranks the mode pill, and
+        // only a `Warn` transient reddens the pill.
+        || match &state.transient_msg {
+            Some((msg, _, kind)) => (
+                Cow::Owned(format!("-- {msg} --")),
+                *kind == TransientKind::Warn,
+            ),
+            None => (mode_tag_for(state), false),
+        },
+        // A download owns the tag slot and keeps the neutral pill.
+        |job| {
+            (
+                Cow::Owned(download_label(
+                    job.kind.display_name(),
+                    job.started.elapsed(),
+                )),
+                false,
+            )
+        },
+    )
+}
+
+/// The cross-pane word-diff inputs — the diverging-word spans for each pane,
+/// computed where every pane's text is in hand. Returns one `PaneDiff` per
+/// pane; the caller gates this on `comparing && compare_word_diff`.
+fn compute_pane_diffs(panes: &[Pane], db: &Db) -> Vec<worddiff::PaneDiff> {
+    let language_of = |code: &str| {
+        db.translations()
+            .iter()
+            .find(|t| t.code == code)
+            .map_or("", |t| t.language.as_str())
+    };
+    // Owned per-pane verse lists, borrowed by the `DiffInput`s below.
+    let verse_lists: Vec<Vec<(i64, &str)>> = panes
+        .iter()
+        .map(|p| {
+            p.passage
+                .verses
+                .iter()
+                .map(|v| (v.number, v.text.as_str()))
+                .collect()
+        })
+        .collect();
+    let inputs: Vec<worddiff::DiffInput<'_>> = panes
+        .iter()
+        .zip(&verse_lists)
+        .map(|(p, verses)| worddiff::DiffInput {
+            language: language_of(&p.translation),
+            book_code: &p.passage.book_code,
+            chapter: p.passage.chapter,
+            verses,
+        })
+        .collect();
+    worddiff::compute(&inputs)
+}
+
+/// Assemble the per-pane render inputs. Each `PaneRender` borrows its pane's
+/// passage, bookmark set, and word diff; `focused_verse` is echoed into the
+/// unfocused panes as a read-only cross-pane locator (only while comparing).
+fn build_pane_renders<'a>(
+    panes: &'a [Pane],
+    bookmarks_cache: &'a std::collections::HashMap<BookmarksKey, std::collections::BTreeSet<i64>>,
+    empty_bookmarks: &'a std::collections::BTreeSet<i64>,
+    pane_diffs: &'a [worddiff::PaneDiff],
+    focus: usize,
+    comparing: bool,
+    focused_verse: i64,
+) -> Vec<ui::PaneRender<'a>> {
+    panes
+        .iter()
+        .enumerate()
+        .map(|(i, pane)| {
+            let key = (
+                pane.passage.translation.clone(),
+                pane.passage.book_code.clone(),
+                pane.passage.chapter,
+            );
+            let bookmarked = bookmarks_cache.get(&key).unwrap_or(empty_bookmarks);
+            let selection = pane.visual_anchor.map(|a| {
+                let c = pane.cursor_verse;
+                if a <= c { (a, c) } else { (c, a) }
+            });
+            let is_focused = i == focus;
+            ui::PaneRender {
+                passage: &pane.passage,
+                cursor_verse: pane.cursor_verse,
+                selection,
+                bookmarked,
+                is_focused,
+                origin_label: pane.origin_label.as_deref(),
+                // The cue is read-only and only for the *other* panes, so the
+                // focused pane never tints itself.
+                peer_verse: (comparing && !is_focused).then_some(focused_verse),
+                word_diff: pane_diffs.get(i),
+            }
+        })
+        .collect()
+}
+
+/// One pass of the draw cycle. The per-pane render inputs are assembled up
+/// front by [`compute_pane_diffs`] and [`build_pane_renders`] (while we still
+/// hold `&mut state`); the `term.draw` closure itself stays inline because it
+/// borrows many `state` fields and the dialog overlay match doesn't factor out
+/// cleanly.
 fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
     // Refresh the open-pane width guard, per-pane render geometry, and the
     // per-pane bookmark caches up front, while we still hold `&mut state` — the
@@ -1296,32 +1404,11 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
     state.refresh_all_bookmark_caches();
 
     let status = make_status(state);
-    // An in-flight download, then a transient hint (e.g. "Too narrow"), then
-    // the mode pill — first match wins the tag slot. `status_warn` rides the
-    // same ladder: only a `Warn` transient that actually won the slot paints
-    // the pill red (a download keeps the neutral pill).
-    let (mode_tag, status_warn) = if let Some(job) = &state.download {
-        (
-            Cow::Owned(download_label(
-                job.kind.display_name(),
-                job.started.elapsed(),
-            )),
-            false,
-        )
-    } else {
-        match &state.transient_msg {
-            Some((msg, _, kind)) => (
-                Cow::Owned(format!("-- {msg} --")),
-                *kind == TransientKind::Warn,
-            ),
-            None => (mode_tag_for(state), false),
-        }
-    };
+    let (mode_tag, status_warn) = status_tag(state);
     let menu_title = format!(" Turbo Bible \u{00B7} {} ", state.translation_label);
 
-    // Per-pane render inputs. Borrows `state.panes` + `state.bookmarks_cache`
-    // (disjoint immutable borrows); `empty` covers the can't-happen miss so a
-    // cache gap degrades to "no bookmark stars" rather than a panic.
+    // Per-pane render inputs. `empty_bookmarks` covers the can't-happen cache
+    // miss so a gap degrades to "no bookmark stars" rather than a panic.
     let empty_bookmarks = std::collections::BTreeSet::new();
     // The focused pane's cursor verse, echoed into each unfocused pane as a
     // passive cross-pane locator (only meaningful when comparing). This is a
@@ -1333,74 +1420,22 @@ fn draw_frame(term: &mut Tty, state: &mut LoopState, db: &Db) -> Result<()> {
     // sign-off before we touch motion handling.
     let focused_verse = state.panes.get(state.focus).map_or(1, |p| p.cursor_verse);
     let comparing = state.panes.len() > 1;
-    // Cross-pane word diff: light the words that diverge between same-language
-    // panes on the same passage. Computed here, where every pane's text is in
-    // hand, and only while comparing with the toggle on; otherwise an empty Vec
-    // so every `.get(i)` below is `None` and the panes render exactly as before.
-    let pane_diffs: Vec<worddiff::PaneDiff> = if comparing && state.compare_word_diff {
-        let language_of = |code: &str| {
-            db.translations()
-                .iter()
-                .find(|t| t.code == code)
-                .map_or("", |t| t.language.as_str())
-        };
-        // Owned per-pane verse lists, borrowed by the `DiffInput`s below.
-        let verse_lists: Vec<Vec<(i64, &str)>> = state
-            .panes
-            .iter()
-            .map(|p| {
-                p.passage
-                    .verses
-                    .iter()
-                    .map(|v| (v.number, v.text.as_str()))
-                    .collect()
-            })
-            .collect();
-        let inputs: Vec<worddiff::DiffInput<'_>> = state
-            .panes
-            .iter()
-            .zip(&verse_lists)
-            .map(|(p, verses)| worddiff::DiffInput {
-                language: language_of(&p.translation),
-                book_code: &p.passage.book_code,
-                chapter: p.passage.chapter,
-                verses,
-            })
-            .collect();
-        worddiff::compute(&inputs)
+    // Cross-pane word diff only while comparing with the toggle on; otherwise
+    // an empty Vec so every `.get(i)` is `None` and the panes render as before.
+    let pane_diffs = if comparing && state.compare_word_diff {
+        compute_pane_diffs(&state.panes, db)
     } else {
         Vec::new()
     };
-    let pane_renders: Vec<ui::PaneRender<'_>> = state
-        .panes
-        .iter()
-        .enumerate()
-        .map(|(i, pane)| {
-            let key = (
-                pane.passage.translation.clone(),
-                pane.passage.book_code.clone(),
-                pane.passage.chapter,
-            );
-            let bookmarked = state.bookmarks_cache.get(&key).unwrap_or(&empty_bookmarks);
-            let selection = pane.visual_anchor.map(|a| {
-                let c = pane.cursor_verse;
-                if a <= c { (a, c) } else { (c, a) }
-            });
-            let is_focused = i == state.focus;
-            ui::PaneRender {
-                passage: &pane.passage,
-                cursor_verse: pane.cursor_verse,
-                selection,
-                bookmarked,
-                is_focused,
-                origin_label: pane.origin_label.as_deref(),
-                // The cue is read-only and only for the *other* panes, so the
-                // focused pane never tints itself.
-                peer_verse: (comparing && !is_focused).then_some(focused_verse),
-                word_diff: pane_diffs.get(i),
-            }
-        })
-        .collect();
+    let pane_renders = build_pane_renders(
+        &state.panes,
+        &state.bookmarks_cache,
+        &empty_bookmarks,
+        &pane_diffs,
+        state.focus,
+        comparing,
+        focused_verse,
+    );
 
     term.draw(|f| {
         let area = f.area();

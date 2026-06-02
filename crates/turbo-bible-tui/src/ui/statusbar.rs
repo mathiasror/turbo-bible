@@ -32,7 +32,7 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
     // high-attention red pill. Otherwise VISUAL gets the high-contrast yellow
     // (the colour shift alone signals the mode change) and every other mode
     // shares the standard cyan pill.
-    let (pill_fg, pill_bg) = if warn {
+    let (pill_fg, pill_fill) = if warn {
         (theme::bright_white(), theme::hotkey_red())
     } else if mode_tag.contains("VISUAL") {
         (theme::black(), theme::yellow())
@@ -41,14 +41,14 @@ pub fn render(items: &[Shortcut<'_>], area: Rect, buf: &mut Buffer, mode_tag: &s
     };
     let mode_style = Style::new()
         .fg(pill_fg)
-        .bg(pill_bg)
+        .bg(pill_fill)
         .add_modifier(Modifier::BOLD);
     // Bevel cells: ▌ fills the left half of its cell with a bright_white
     // highlight, ▐ fills the right half with a dark_grey shadow; the
     // remaining half of each cell stays in the pill bg, so the pair reads
     // as a raised period pill catching light from the upper-left.
-    let bevel_left = Style::new().fg(theme::bright_white()).bg(pill_bg);
-    let bevel_right = Style::new().fg(theme::dark_grey()).bg(pill_bg);
+    let bevel_left = Style::new().fg(theme::bright_white()).bg(pill_fill);
+    let bevel_right = Style::new().fg(theme::dark_grey()).bg(pill_fill);
 
     for x in area.left()..area.right() {
         let cell = &mut buf[(x, area.y)];

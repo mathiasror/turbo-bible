@@ -355,7 +355,7 @@ pub(crate) fn pane_content_rects(
 /// one-row status bar. The region the reading panes and the splash are laid
 /// out within; exposed so the run loop's mouse handling can reconstruct the
 /// same region the draw used (see [`Frame::render`] and the splash draw).
-pub(crate) fn body_area(area: Rect) -> Rect {
+pub(crate) const fn body_area(area: Rect) -> Rect {
     split(area).1
 }
 

@@ -282,14 +282,15 @@ impl FootnoteDialog {
         // the *minimum* keeps the "Cross-references:" header (which sits above
         // every entry) in view for as long as the selection allows, so the
         // list never reads as a context-free wall of references.
-        let mut scroll = 0usize;
-        if let Some(&sel_line) = entry_idx.get(self.selected)
+        // Selected entry below the fold: pull it to the bottom row; else stay put.
+        let scroll = if let Some(&sel_line) = entry_idx.get(self.selected)
             && sel_line >= body_h
         {
-            // Selected entry is below the fold: pull it to the bottom row.
-            scroll = sel_line + 1 - body_h;
-        }
-        scroll = scroll.min(max_scroll);
+            sel_line + 1 - body_h
+        } else {
+            0
+        };
+        let scroll = scroll.min(max_scroll);
 
         // Footer — advertise the fetch key when the dataset is missing, the
         // navigation verbs when there's a list to walk, and just Esc otherwise,
@@ -322,7 +323,12 @@ impl FootnoteDialog {
             ]
         };
 
-        let body_area = Rect::new(inner.x, inner.y, inner.width, body_h as u16);
+        let body_area = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            u16::try_from(body_h).unwrap_or(u16::MAX),
+        );
         Paragraph::new(lines)
             .style(bg)
             .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
