@@ -55,6 +55,7 @@ pub fn translation(translations_dir: &Path, code: &str) -> Result<()> {
         translations_dir,
         entry.file,
         entry.sha256,
+        entry.compressed_size,
         entry.decompressed_size,
         &dest,
     )
@@ -86,6 +87,7 @@ pub fn xrefs(translations_dir: &Path) -> Result<()> {
         translations_dir,
         crate::manifest::XREFS.file,
         crate::manifest::XREFS.sha256,
+        crate::manifest::XREFS.compressed_size,
         crate::manifest::XREFS.decompressed_size,
         &dest,
     )
@@ -96,6 +98,7 @@ fn fetch_and_install(
     translations_dir: &Path,
     asset_file: &str,
     expected_sha256: &str,
+    expected_compressed_size: u64,
     expected_decompressed_size: u64,
     final_path: &Path,
 ) -> Result<()> {
@@ -109,14 +112,17 @@ fn fetch_and_install(
     let dl = tempfile::NamedTempFile::new_in(translations_dir)
         .with_context(|| format!("create temp file in {}", translations_dir.display()))?;
 
-    // Cap the download a little above the asset's decompressed size: the
-    // compressed asset is always smaller, so a legitimate file never trips it,
-    // but a hostile/MITM server can't stream gigabytes into memory before the
-    // hash check runs.
+    // Coarse backstop on the bytes curl streams to disk: the asset on the
+    // wire is the zstd-compressed file, so cap a hair above its manifest
+    // compressed size (64 KiB of slack absorbs any benign asset wobble). This
+    // just stops a hostile/MITM server dumping gigabytes onto disk; the real
+    // zip-bomb gate is the bounded zstd decoder in `decode_and_verify` (the
+    // `.take(expected_decompressed_size + 1)`), which refuses to expand past
+    // the manifest's declared decompressed size before the hash is checked.
     run_curl(
         &url,
         dl.path(),
-        expected_decompressed_size.saturating_add(1 << 20),
+        expected_compressed_size.saturating_add(64 << 10),
     )
     .with_context(|| format!("download {url}"))?;
 
