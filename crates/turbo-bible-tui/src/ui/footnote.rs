@@ -322,7 +322,12 @@ impl FootnoteDialog {
             ]
         };
 
-        let body_area = Rect::new(inner.x, inner.y, inner.width, body_h as u16);
+        let body_area = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            u16::try_from(body_h).unwrap_or(u16::MAX),
+        );
         Paragraph::new(lines)
             .style(bg)
             .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
