@@ -145,6 +145,36 @@ fn diff_group(inputs: &[DiffInput], members: &[usize], out: &mut [PaneDiff]) {
 mod tests {
     use super::*;
 
+    /// Load-bearing invariant: [`word_keys`] (the consensus side, built on
+    /// `unicode_words`) and the renderer's tokenizer (`push_body_spans`, built
+    /// on `unicode_word_indices`) must segment a verse identically — otherwise a
+    /// word the consensus marks divergent could fail to match any token the
+    /// renderer lights (or vice versa), and the highlight would be wrong. The
+    /// risk lives at hyphen and apostrophe boundaries, where the two segmenter
+    /// entry points are the most likely to disagree. This pins that they don't,
+    /// so the highlight is correct whether or not a word wraps.
+    #[test]
+    fn word_keys_matches_renderer_tokenization_on_tricky_boundaries() {
+        // Mirror the renderer's `unicode_word_indices()` + `to_lowercase()`,
+        // which is exactly how `push_body_spans` tests a token against the
+        // divergent set.
+        fn renderer_words(text: &str) -> HashSet<String> {
+            text.unicode_word_indices()
+                .map(|(_, w)| w.to_lowercase())
+                .collect()
+        }
+
+        for text in ["well-beloved", "God's", "well-beloved is God's son"] {
+            let consensus: HashSet<String> = word_keys(text).collect();
+            let rendered = renderer_words(text);
+            assert_eq!(
+                consensus, rendered,
+                "word_keys and the renderer's unicode_word_indices tokenization \
+                 must agree on {text:?}: {consensus:?} vs {rendered:?}"
+            );
+        }
+    }
+
     fn input<'a>(language: &'a str, verses: &'a [(i64, &'a str)]) -> DiffInput<'a> {
         DiffInput {
             language,
