@@ -98,7 +98,7 @@ impl Widget for PassageView<'_> {
         //      keep a dim dark_grey border on the blue pane.
         // bright_cyan is the palette's selection tier, so it's house-legal here
         // (yellow stays reserved for verse numbers + the mode pill).
-        let (border_type, title_fg, title_bg) = if loud_focus {
+        let (border_type, title_fg, title_fill) = if loud_focus {
             (BorderType::Double, theme::black(), theme::bright_cyan())
         } else if self.is_focused {
             // Single-pane reading view: the original bright_white chrome.
@@ -113,7 +113,7 @@ impl Widget for PassageView<'_> {
         // Bold the location reference so the eye lands on "where am I" first.
         let title_style = Style::new()
             .fg(title_fg)
-            .bg(title_bg)
+            .bg(title_fill)
             .add_modifier(Modifier::BOLD);
         let mut title_spans = vec![Span::styled(title, title_style)];
         if let Some(origin) = self.origin_label {
@@ -128,17 +128,17 @@ impl Widget for PassageView<'_> {
             };
             title_spans.push(Span::styled(
                 "\u{2190} ",
-                Style::new().fg(arrow_fg).bg(title_bg),
+                Style::new().fg(arrow_fg).bg(title_fill),
             ));
             title_spans.push(Span::styled(
                 format!("{origin} "),
-                Style::new().fg(title_fg).bg(title_bg),
+                Style::new().fg(title_fg).bg(title_fill),
             ));
         }
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(border_type)
-            .border_style(Style::new().fg(title_fg).bg(title_bg))
+            .border_style(Style::new().fg(title_fg).bg(title_fill))
             .title(Line::from(title_spans))
             .style(Style::new().bg(theme::blue()));
         // The focused pane wears the NORMAL/VISUAL pill (single-pane reading

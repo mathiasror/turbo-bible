@@ -233,13 +233,14 @@ impl SplashView {
             // detour through NORMAL and a second Enter (issue #66, finding #19).
             // Falls back to leaving FILTER if nothing is highlighted (e.g. the
             // filter matched nothing at all).
-            KeyCode::Enter => match self.open_current() {
-                Some(p) => SplashOutcome::OpenBook(p),
-                None => {
+            KeyCode::Enter => {
+                if let Some(p) = self.open_current() {
+                    SplashOutcome::OpenBook(p)
+                } else {
                     self.mode = SplashMode::Normal;
                     SplashOutcome::Continue
                 }
-            },
+            }
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.cursor_ot = 0;
