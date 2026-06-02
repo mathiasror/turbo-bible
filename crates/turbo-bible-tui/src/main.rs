@@ -1176,6 +1176,18 @@ impl LoopState {
     fn can_add_pane(&self) -> bool {
         pane_fits_width(self.last_term_width, self.panes.len())
     }
+
+    /// Whether the references sidebar is *actually* on screen: the user asked
+    /// for it, no compare split is suppressing it, and the terminal is wide
+    /// enough to fit it. Drives the mode pill and footer so a width-suppressed
+    /// sidebar reads differently from one toggled off — and so `Tab` never
+    /// looks dead (issue #66, finding #5). `last_term_width == 0` (not yet
+    /// measured) reports not-visible, matching the centered single-pane layout.
+    fn sidebar_visible(&self) -> bool {
+        self.show_sidebar
+            && self.panes.len() < 2
+            && ui::sidebar_fits(self.last_term_width, self.max_reading_width)
+    }
 }
 
 /// Pure width guard behind [`LoopState::can_add_pane`]: would going from
@@ -1826,9 +1838,14 @@ impl LoopState {
             HistoryDir::Forward => pane.history.forward(),
         };
         if let Some(p) = target {
+            // Restore the stored cursor verse so a `Ctrl-O`/`Ctrl-I` round-trip
+            // lands where you left, like vim's jumplist — not always verse 1
+            // (issue #66, finding #4). Clamp to the passage in case a stored
+            // entry out-ranges a re-loaded chapter.
+            let target_verse = p.verse;
             pane.pos = p;
             pane.passage = ctx.db.load_passage(&pane.pos.book, pane.pos.chapter)?;
-            pane.cursor_verse = 1;
+            pane.cursor_verse = target_verse.unwrap_or(1).clamp(1, max_verse(&pane.passage));
         }
         Ok(())
     }
@@ -2047,6 +2064,19 @@ fn dispatch_reading(
             } else {
                 state.show_sidebar = !state.show_sidebar;
                 state.sidebar_pref = state.show_sidebar;
+                // If the user just asked for the sidebar but the terminal is
+                // too narrow to fit it, Tab would otherwise look dead — say why
+                // (issue #66, finding #5).
+                if state.show_sidebar && !state.sidebar_visible() {
+                    // Warn (red, held longer), matching the analogous
+                    // compare-pane "Too narrow" refusal — both are
+                    // "you asked, can't, here's why".
+                    let need = ui::sidebar_min_width(state.max_reading_width);
+                    state.set_transient_warn(format!(
+                        "Too narrow for sidebar \u{2014} need {need}+ cols (have {})",
+                        state.last_term_width
+                    ));
+                }
             }
         }
         Action::ToggleVisual => state.toggle_visual(),
@@ -2140,8 +2170,9 @@ fn mode_tag_for(state: &LoopState) -> Cow<'static, str> {
                 crate::ui::splash::SplashMode::Normal => Cow::Borrowed("-- NORMAL --"),
                 crate::ui::splash::SplashMode::Filter => Cow::Borrowed("-- FILTER --"),
             },
-            // NOREFS is a persistent cue that the sidebar is toggled off, so
-            // the reading area looking different on return is self-explained.
+            // A persistent cue tells the reader why the sidebar is (or isn't)
+            // there: NOREFS = toggled off, NARROW = wanted but the terminal is
+            // too narrow to fit it. Both are absent when it's actually visible.
             Bg::Reading => {
                 let base = if state.focused().visual_anchor.is_some() {
                     "VISUAL"
@@ -2149,15 +2180,18 @@ fn mode_tag_for(state: &LoopState) -> Cow<'static, str> {
                     "NORMAL"
                 };
                 // In a compare split, show which pane is focused (e.g. "2/3")
-                // instead of the sidebar's NOREFS cue.
+                // instead of the sidebar cue.
                 if state.panes.len() >= 2 {
                     Cow::Owned(format!(
                         "-- {base} | {}/{} --",
                         state.focus + 1,
                         state.panes.len()
                     ))
-                } else if state.show_sidebar {
+                } else if state.sidebar_visible() {
                     Cow::Owned(format!("-- {base} --"))
+                } else if state.show_sidebar {
+                    // Asked for, but the window is too narrow to fit it.
+                    Cow::Owned(format!("-- {base} | NARROW --"))
                 } else {
                     Cow::Owned(format!("-- {base} | NOREFS --"))
                 }
@@ -2235,9 +2269,12 @@ const fn reading_shortcuts(tab_action: &'static str) -> [Shortcut<'static>; 8] {
 // finding. Esc is the app-wide exit key (Goto, Find, dialogs all use
 // `Esc cancel` / `Esc close`), so it's the one we surface here.
 const STATUS_VISUAL: &[Shortcut<'static>] = &[
+    // `y` copies only the cursor verse, not the whole selection (the range
+    // "isn't yanked in v1" per the README) — so the hint says "Copy verse",
+    // not the bare "Copy" that implied the selection (issue #66, finding #2).
     Shortcut {
         key: "y",
-        action: "Copy",
+        action: "Copy verse",
     },
     Shortcut {
         key: "b",
@@ -2286,7 +2323,10 @@ fn make_status(state: &LoopState) -> &'static [Shortcut<'static>] {
         // carry their own mode-specific footers).
         Bg::Reading if state.focused().visual_anchor.is_some() => STATUS_VISUAL,
         Bg::Reading if state.panes.len() >= 2 => STATUS_READING_COMPARE,
-        Bg::Reading if state.show_sidebar => STATUS_READING_HIDE,
+        // Drive the Tab label off the *actual* layout: "Hide" only when the
+        // sidebar is really on screen, "Refs" otherwise (toggled off or
+        // width-suppressed) so pressing Tab matches the verb shown.
+        Bg::Reading if state.sidebar_visible() => STATUS_READING_HIDE,
         Bg::Reading => STATUS_READING_REFS,
     }
 }
@@ -2857,6 +2897,26 @@ mod tests {
             name: format!("Name {code}"),
             language: "en".to_string(),
         }
+    }
+
+    /// The history stack must carry the cursor-verse hint through back/forward
+    /// so `history_step` (Ctrl-O / Ctrl-I) can restore it instead of snapping to
+    /// verse 1 — the regression behind issue #66, finding #4.
+    #[test]
+    fn history_round_trip_preserves_the_cursor_verse() {
+        let at = |book: &str, chapter: i64, verse: i64| Position {
+            book: book.into(),
+            chapter,
+            verse: Some(verse),
+        };
+        let mut h = History::new(at("GEN", 1, 1));
+        h.push(at("JHN", 3, 16));
+        h.push(at("ROM", 8, 28));
+        // Back lands on the stored verse, not a forced 1.
+        assert_eq!(h.back().and_then(|p| p.verse), Some(16), "JHN 3:16");
+        assert_eq!(h.back().and_then(|p| p.verse), Some(1), "GEN 1:1");
+        // Forward returns with the verse intact.
+        assert_eq!(h.forward().and_then(|p| p.verse), Some(16), "JHN 3:16");
     }
 
     /// A click in the reading body must resolve to the verse drawn on that row,

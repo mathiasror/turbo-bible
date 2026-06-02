@@ -1,5 +1,7 @@
 //! Find dialog (F3 / `/`). FTS5 search with live results.
 
+use std::cell::Cell;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -23,6 +25,10 @@ pub struct FindDialog {
     input: String,
     results: Vec<SearchHit>,
     selected: usize,
+    /// First-visible hit index, remembered across renders so the list scrolls
+    /// minimally to keep `selected` on screen. `Cell` because `render` takes
+    /// `&self` but needs to persist the offset it lands on (issue #66, #1).
+    scroll: Cell<usize>,
     error: Option<String>,
     /// Active translation code — drives the locale reference separator.
     translation: String,
@@ -41,6 +47,7 @@ impl FindDialog {
             input: String::new(),
             results: Vec::new(),
             selected: 0,
+            scroll: Cell::new(0),
             error: None,
             translation: translation.to_string(),
         }
@@ -97,6 +104,7 @@ impl FindDialog {
 
     fn refresh(&mut self, db: &Db) {
         self.selected = 0;
+        self.scroll.set(0);
         if self.input.trim().is_empty() {
             self.results.clear();
             self.error = None;
@@ -196,8 +204,25 @@ impl FindDialog {
         let budget = (inner.height as usize)
             .saturating_sub(lines.len())
             .saturating_sub(footer_reserve);
+        // Each hit costs a reference row + its (1–2-line) snippet + a blank, so
+        // the rows-per-screen varies. Measure every hit's cost, then pick the
+        // first-visible index that keeps `selected` on screen — without this
+        // the loop always renders from 0 and a selection past the visible
+        // window is highlighted nowhere while the footer still counts up
+        // (issue #66, finding #1).
+        let costs: Vec<usize> = self
+            .results
+            .iter()
+            .map(|hit| {
+                let snippet =
+                    wrap_snippet(&hit.text, &hit.hits, snippet_w, SNIPPET_MAX_LINES, bg, bg);
+                1 + snippet.len() + 1
+            })
+            .collect();
+        let start = scroll_offset(&costs, self.selected, self.scroll.get(), budget);
+        self.scroll.set(start);
         let mut used_rows = 0usize;
-        for (i, hit) in self.results.iter().enumerate() {
+        for (i, hit) in self.results.iter().enumerate().skip(start) {
             let on = i == self.selected;
             // On a selected row the whole slab is one colour, so match and
             // plain both render as sel_bg; otherwise matches get the hit accent.
@@ -398,6 +423,32 @@ fn wrap_snippet(
         .collect()
 }
 
+/// First-visible hit index that keeps `selected` within `budget` rows, given
+/// each hit's row `costs` and the previously-rendered offset `prev`. Scrolls up
+/// to reveal a selection above the window and down to reveal one below it,
+/// moving as little as possible — the vim/ratatui selectable-list rule. Never
+/// scrolls past `selected`, so the selected hit is always at least partly
+/// drawn even when a single hit overflows the budget.
+fn scroll_offset(costs: &[usize], selected: usize, prev: usize, budget: usize) -> usize {
+    let mut start = prev.min(selected);
+    loop {
+        // Last index that still fits when rendering from `start`.
+        let mut used = 0usize;
+        let mut last = start;
+        for (i, &c) in costs.iter().enumerate().skip(start) {
+            if used + c > budget {
+                break;
+            }
+            used += c;
+            last = i;
+        }
+        if selected <= last || start >= selected {
+            return start;
+        }
+        start += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +514,81 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    fn make_hit(verse: i64) -> SearchHit {
+        SearchHit {
+            book: "JHN".to_string(),
+            chapter: 3,
+            verse,
+            // Unique, non-overlapping token per verse so a buffer scan can tell
+            // exactly which hits were drawn ("zeta1word" is not a substring of
+            // "zeta10word").
+            text: format!("zeta{verse}word"),
+            hits: Vec::new(),
+        }
+    }
+
+    fn dialog_with_results(n: i64) -> FindDialog {
+        let mut dlg = FindDialog::new("en-kjv");
+        dlg.input = "zeta".to_string();
+        dlg.results = (1..=n).map(make_hit).collect();
+        dlg
+    }
+
+    #[test]
+    fn scroll_offset_keeps_top_selection_at_zero() {
+        let costs = vec![3usize; 30];
+        assert_eq!(scroll_offset(&costs, 0, 0, 15), 0);
+        assert_eq!(scroll_offset(&costs, 2, 0, 15), 0);
+    }
+
+    #[test]
+    fn scroll_offset_scrolls_down_to_reveal_selection_below_window() {
+        let costs = vec![3usize; 30];
+        // 15 rows / 3 per hit = 5 visible (0..=4). Selecting 10 moves the window
+        // down so 10 is the last fitting row: start = 10 - 5 + 1 = 6.
+        assert_eq!(scroll_offset(&costs, 10, 0, 15), 6);
+    }
+
+    #[test]
+    fn scroll_offset_scrolls_up_to_reveal_selection_above_window() {
+        let costs = vec![3usize; 30];
+        // Window was at 6; selecting 2 (above it) snaps the start down to 2.
+        assert_eq!(scroll_offset(&costs, 2, 6, 15), 2);
+    }
+
+    #[test]
+    fn scroll_offset_anchors_selection_even_when_a_hit_overflows_budget() {
+        // No single hit fits a 10-row budget; still anchor on the selected one
+        // so it's at least partly drawn rather than highlighted off-screen.
+        let costs = vec![100usize; 5];
+        assert_eq!(scroll_offset(&costs, 3, 0, 10), 3);
+    }
+
+    #[test]
+    fn selected_hit_scrolls_into_view_and_is_rendered() {
+        let dlg = dialog_with_results(30);
+        // Pick a hit far past the first screenful (render-time offset is derived
+        // from `selected`, so set it directly).
+        let dlg = FindDialog {
+            selected: 29,
+            ..dlg
+        };
+        let text = buffer_text(&dlg);
+        assert!(
+            dlg.scroll.get() > 0,
+            "a late selection must scroll the window: offset {}",
+            dlg.scroll.get()
+        );
+        assert!(
+            text.contains("zeta30word"),
+            "the selected hit must be drawn: {text:?}"
+        );
+        assert!(
+            !text.contains("zeta1word"),
+            "the first hit should be scrolled off: {text:?}"
+        );
     }
 
     /// With zero results (the `(no matches)` state), the footer must advertise

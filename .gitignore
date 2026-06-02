@@ -20,6 +20,7 @@ data/licenses.csv
 crates/turbo-bible-tui/assets/*.db.zst
 
 # VHS intermediate trace GIFs (the real output is the PNG each tape writes)
+demo/_*-trace.gif
 demo/_screenshots-trace.gif
 demo/_og-trace.gif
 
