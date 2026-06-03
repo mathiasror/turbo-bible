@@ -44,6 +44,48 @@ GitHub Release assets and fetched on demand.
 
 [scrollmapper]: https://github.com/scrollmapper/bible_databases
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Setup](#setup)
+- [Uninstall](#uninstall)
+- [Bring your own translation](#bring-your-own-translation)
+- [Run](#run)
+- [Switching translations](#switching-translations)
+- [Keymap](#keymap)
+- [State and configuration](#state-and-configuration)
+- [Update notifications](#update-notifications)
+- [Troubleshooting](#troubleshooting)
+- [Notes on terminals](#notes-on-terminals)
+- [Layout](#layout)
+- [Known limitations](#known-limitations)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Features
+
+- **Eleven translations across seven languages** — public-domain, CC0, and
+  CC-BY, from the KJV to the Clementine Vulgate.
+- **Instant full-text search** — FTS5 with BM25 ranking, a diacritic-folding
+  tokenizer, and a prefix index, all prebuilt into each database so there's no
+  runtime rebuild.
+- **Side-by-side compare panes** — read translations (or a cross-referenced
+  passage) in vim-style windows, with word-level diff highlighting where
+  same-language wordings diverge.
+- **Cross-references** plus parallel-passage references, surfaced in the `K`
+  popup and the References sidebar.
+- **Two keymap profiles** — a full vim layer (count prefixes, multi-key chords)
+  or a subtractive "turbo" profile (arrows / F-keys / PgUp-PgDn), with
+  user-rebindable single-key aliases.
+- **Fully offline** — the KJV is embedded in the binary; the other ten
+  translations and the cross-references DB are fetched on demand (or pre-staged
+  by the curl installer).
+- **Runtime-themeable** — a CGA / Turbo Vision palette where any slot accepts a
+  24-bit hex color.
+- **Bring your own translation** — import any version from a JSON file with
+  `turbo-bible import`; no data pipeline needed.
+
 ## Install
 
 ```sh
@@ -79,6 +121,29 @@ Re-extract the embedded translation at any time:
 turbo-bible install --force
 ```
 
+## Uninstall
+
+Remove the binary the way you installed it:
+
+```sh
+brew uninstall turbo-bible          # Homebrew (optionally: brew untap mathiasror/tap)
+cargo uninstall turbo-bible         # cargo
+```
+
+For a curl / manual install, delete the `turbo-bible` binary the installer
+placed on your PATH — `/usr/local/bin/turbo-bible` if that directory was
+writable, otherwise `~/.local/bin/turbo-bible` (or `$TB_INSTALL_DIR` if you
+set one).
+
+State and downloaded data are left behind; remove them too for a clean wipe:
+
+```sh
+rm -rf ~/.config/turbo-bible ~/.local/share/turbo-bible
+```
+
+These honour `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` if you've set them — adjust
+the paths accordingly.
+
 ## Bring your own translation
 
 Beyond the bundled eleven, you can import a translation from a JSON file.
@@ -105,16 +170,17 @@ flag, and the resulting database schema.
 
 ## Run
 
-`cargo run -p turbo-bible --release` is for running from a cloned checkout
-(building from source / contributing); installed binaries just run `turbo-bible`.
-
 ```sh
-cargo run -p turbo-bible --release
+turbo-bible
 # Pick a translation explicitly:
-cargo run -p turbo-bible --release -- --translation nb-1930
+turbo-bible --translation nb-1930
 # Or jump straight into a passage:
-cargo run -p turbo-bible --release -- --book JHN --chapter 3
+turbo-bible --book JHN --chapter 3
 ```
+
+Running from a cloned checkout (building from source / contributing)?
+Substitute `cargo run -p turbo-bible --release -- …` for `turbo-bible` —
+e.g. `cargo run -p turbo-bible --release -- --book JHN --chapter 3`.
 
 Translation resolution at startup:
 
@@ -359,6 +425,28 @@ suppressed entirely when:
 Set `TB_UPDATE_CHECK_URL` to point the check at a different base URL (useful
 for testing or a private mirror).
 
+## Troubleshooting
+
+**Rendering looks garbled, or shows boxes instead of shading.** turbo-bible
+needs a 24-bit-RGB terminal that can draw the `▒` glyph — see
+[Notes on terminals](#notes-on-terminals) for the ones that render it cleanly.
+
+**Does it work offline?** Yes. The King James Version is embedded and works on
+first launch with no network. The other ten translations and the
+cross-references DB download once, on demand; a curl-installed copy pre-stages
+all eleven up front, so it's fully offline from the start.
+
+**How do I reset my state / start fresh?** Delete `~/.config/turbo-bible/`
+(config, bookmarks, last position, update cache), and re-extract the embedded translation
+with `turbo-bible install --force`.
+
+**Where does it store data?** See the table under
+[State and configuration](#state-and-configuration).
+
+**A translation or the cross-references won't download.** The fetch is
+best-effort over GitHub Releases and sha256-verified; offline or on any
+failure it carries on without them — retry when you're back online.
+
 ## Notes on terminals
 
 The Turbo Vision look uses 24-bit RGB and a `▒` dither. Recent terminals
@@ -418,6 +506,9 @@ Inside `crates/turbo-bible-tui/src/`:
 Bug reports and PRs are welcome — see
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the workspace layout, the
 `just check` dev gate (fmt + clippy + tests), and the release process.
+By participating you agree to abide by the
+[Code of Conduct](CODE_OF_CONDUCT.md). Found a security issue? Please
+report it privately — see the [security policy](SECURITY.md).
 
 ## License
 

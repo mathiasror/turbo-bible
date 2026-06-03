@@ -141,6 +141,21 @@ impl History {
 #[command(
     version,
     about = "Turbo-Vision Bible reader",
+    long_about = "A Turbo Vision–styled terminal Bible reader. Ships eleven \
+public-domain / CC translations across seven languages with instant full-text \
+search (FTS5/BM25), side-by-side compare panes, ~430k cross-references, and a \
+vim or \"turbo\" keymap profile. Reads offline: the King James Version is \
+embedded in the binary, and the other ten translations plus the shared \
+cross-references database are fetched on demand and verified against an \
+embedded manifest.",
+    after_help = r#"Examples:
+  turbo-bible                                   Open the splash screen
+  turbo-bible --book JHN --chapter 3            Jump straight to a passage
+  turbo-bible --translation nb-1930             Start in a specific translation
+  turbo-bible import my.json --code xx-ver \
+      --name "My Version" --language xx         Import a custom translation
+
+See `turbo-bible import --help` for the import format, or docs/IMPORT.md."#,
     args_conflicts_with_subcommands = true
 )]
 struct Args {
