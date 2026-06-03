@@ -77,7 +77,18 @@ fn extract_into(target_dir: &Path, force: bool) -> Result<InstallStats> {
     // .zst — by-product is the curl-install user starts fully offline
     // even though only KJV was compiled into the binary.
     for entry in fs::read_dir(target_dir)? {
-        let entry = entry?;
+        // A single unreadable dir entry shouldn't abort the whole staged-asset
+        // scan (and with it first-launch startup) when the embedded KJV is
+        // already extracted — skip it, matching the bad-sha / unknown-stem
+        // downgrades below. This runs before the alternate screen, so eprintln
+        // is safe.
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("install: skipping unreadable directory entry: {e}");
+                continue;
+            }
+        };
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;

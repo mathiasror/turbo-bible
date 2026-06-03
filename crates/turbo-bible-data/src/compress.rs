@@ -96,7 +96,10 @@ pub fn run(in_dir: &Path, out_dir: &Path) -> Result<()> {
         built_at.context("no translation .db provided a built_at (only xrefs.db present?)")?;
 
     let manifest = Manifest {
-        schema_version: 1,
+        // Track the source-of-truth schema constant so a future bump propagates
+        // into the manifest without a second edit here.
+        schema_version: u32::try_from(crate::schema::SCHEMA_VERSION)
+            .context("SCHEMA_VERSION does not fit in u32")?,
         scrollmapper_commit,
         built_at,
         translations,

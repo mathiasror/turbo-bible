@@ -111,8 +111,13 @@ fn build_lines(
     lines.push(Line::from(Span::styled(verse_label, accent)));
     lines.push(Line::from(Span::styled("", bg)));
 
-    // 1) Parallel passage (most recent `r` heading ≤ cursor_verse)
-    if let Some(parallel) = current_parallel(p, cursor_verse) {
+    // Most recent `r` heading ≤ cursor_verse. Computed once: the render branch
+    // below and the emptiness guard both consult it (the `rfind` scan is not
+    // free per frame).
+    let parallel = current_parallel(p, cursor_verse);
+
+    // 1) Parallel passage
+    if let Some(parallel) = parallel {
         lines.push(Line::from(Span::styled(" Parallel passage", header)));
         lines.push(Line::from(vec![
             Span::styled("   ", bg),
@@ -161,7 +166,7 @@ fn build_lines(
         lines.push(Line::from(Span::styled("", bg)));
     }
 
-    if notes.is_empty() && xrefs.is_empty() && current_parallel(p, cursor_verse).is_none() {
+    if notes.is_empty() && xrefs.is_empty() && parallel.is_none() {
         lines.push(Line::from(Span::styled(
             " (nothing for this verse)",
             Style::new()

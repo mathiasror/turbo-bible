@@ -28,6 +28,16 @@ pub fn run(scrollmapper: &Path, manifest_path: &Path, out: &Path, only: &[String
     let filter: Option<Vec<&str>> =
         (!only.is_empty()).then(|| only.iter().map(String::as_str).collect());
 
+    // Warn on `--only` tokens that match no manifest code — otherwise a typo'd
+    // filter is a silent no-op (builds nothing for that token, no error).
+    if let Some(f) = &filter {
+        for token in f {
+            if !source.translations.iter().any(|e| e.code == *token) {
+                eprintln!("warning: --only {token:?} matches no translation code in the manifest");
+            }
+        }
+    }
+
     for entry in &source.translations {
         if let Some(f) = &filter
             && !f.contains(&entry.code.as_str())
@@ -66,6 +76,10 @@ fn build_translation(
         fs::remove_file(db_path).with_context(|| format!("remove stale {}", db_path.display()))?;
     }
     let mut conn = Connection::open(db_path)?;
+    // Honor the `REFERENCES book(code)` foreign keys the schema declares (off
+    // by default in SQLite). A verse/heading/label pointing at an unknown book
+    // is then rejected at insert rather than silently shipped.
+    conn.pragma_update(None, "foreign_keys", true)?;
     conn.execute_batch(TRANSLATION_SCHEMA_SQL)?;
 
     let json_path = scrollmapper.join(&entry.source_json);
@@ -89,6 +103,8 @@ fn build_xrefs(scrollmapper: &Path, db_path: &Path) -> Result<()> {
         fs::remove_file(db_path).with_context(|| format!("remove stale {}", db_path.display()))?;
     }
     let mut conn = Connection::open(db_path)?;
+    // Enforce the xref schema's `REFERENCES book(code)` FKs (see build_translation).
+    conn.pragma_update(None, "foreign_keys", true)?;
     conn.execute_batch(XREF_SCHEMA_SQL)?;
     let count = xrefs::build(scrollmapper, &mut conn)?;
     eprintln!("   xrefs inserted: {count}");
@@ -245,9 +261,11 @@ fn git_commit_unixtime(scrollmapper: &Path) -> Result<i64> {
         .context("git committer timestamp not an integer")
 }
 
-/// Guard against a truncated or partial source export silently shipping: every
-/// one of the 66 canonical books must have received at least one verse. The
-/// bundled translations are full Bibles, so a missing book means the upstream
+/// Coarse guard against a wholesale-missing book: every one of the 66 canonical
+/// books must have received *at least one* verse. This catches a source export
+/// that dropped an entire book, but it is **not** a completeness check — a book
+/// truncated to a single chapter (or verse) still passes. The bundled
+/// translations are full Bibles, so a book with zero verses means the upstream
 /// JSON changed shape — fail the build rather than publish a hole.
 fn assert_canonical_coverage(tx: &rusqlite::Transaction<'_>, code: &str) -> Result<()> {
     let present: i64 = tx.query_row("SELECT COUNT(DISTINCT book) FROM verse", [], |r| r.get(0))?;
@@ -304,6 +322,8 @@ mod tests {
     #[test]
     fn populate_verse_skips_noncanonical_books_and_trims_text() {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.pragma_update(None, "foreign_keys", true)
+            .expect("enable foreign keys");
         conn.execute_batch(crate::schema::TRANSLATION_SCHEMA_SQL)
             .expect("apply schema");
         let tx = conn.transaction().expect("begin tx");
@@ -357,6 +377,8 @@ mod tests {
     #[test]
     fn canonical_coverage_rejects_a_truncated_build() {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.pragma_update(None, "foreign_keys", true)
+            .expect("enable foreign keys");
         conn.execute_batch(crate::schema::TRANSLATION_SCHEMA_SQL)
             .expect("apply schema");
         let tx = conn.transaction().expect("begin tx");
@@ -375,5 +397,42 @@ mod tests {
             err.to_string().contains("truncated"),
             "unexpected error: {err}"
         );
+    }
+
+    /// The schema declares `verse.book REFERENCES book(code)`, but SQLite only
+    /// enforces it when `PRAGMA foreign_keys = ON`. The build path now sets that
+    /// pragma; this pins the behavior so a regression that dropped the pragma
+    /// (letting an orphan verse ship) fails in CI.
+    #[test]
+    fn verse_with_unknown_book_is_rejected_when_fk_enforced() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.pragma_update(None, "foreign_keys", true)
+            .expect("enable foreign keys");
+        conn.execute_batch(crate::schema::TRANSLATION_SCHEMA_SQL)
+            .expect("apply schema");
+        conn.execute(
+            "INSERT INTO book(code, testament, ord) VALUES ('GEN', 'OT', 1)",
+            [],
+        )
+        .expect("insert canonical book");
+
+        // 'ZZZ' is not present in `book` — the FK must reject this insert.
+        let res = conn.execute(
+            "INSERT INTO verse (book, chapter, verse, osis_id, text) \
+             VALUES ('ZZZ', 1, 1, 'x', 't')",
+            [],
+        );
+        assert!(
+            res.is_err(),
+            "verse referencing an unknown book must be rejected when FKs are enforced"
+        );
+
+        // Sanity: a verse pointing at a known book still inserts.
+        conn.execute(
+            "INSERT INTO verse (book, chapter, verse, osis_id, text) \
+             VALUES ('GEN', 1, 1, 'GEN.1.1', 'In the beginning')",
+            [],
+        )
+        .expect("verse referencing a known book should insert");
     }
 }

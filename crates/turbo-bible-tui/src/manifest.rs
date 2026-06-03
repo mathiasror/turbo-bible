@@ -14,7 +14,7 @@
 #[allow(
     dead_code,
     reason = "license / attribution are read by future affordances (About dialog). \
-              decompressed_size is read by fetch::decode_and_verify; the struct \
+              compressed_size / decompressed_size are read by fetch; the struct \
               mirrors the JSON 1:1 so the build.rs codegen stays uniform."
 )]
 pub struct TranslationManifestEntry {
@@ -31,13 +31,9 @@ pub struct TranslationManifestEntry {
     pub decompressed_size: u64,
 }
 
-/// Manifest entry for the shared cross-references DB.
-#[allow(
-    dead_code,
-    reason = "file / sha256 / decompressed_size are consumed by fetch::xrefs; \
-              compressed_size mirrors the JSON 1:1 so the build.rs codegen stays \
-              uniform with TranslationManifestEntry."
-)]
+/// Manifest entry for the shared cross-references DB. Every field is now
+/// consumed by `fetch::xrefs` (file / sha256 / compressed_size /
+/// decompressed_size), so no `dead_code` allow is needed here.
 pub struct XrefsManifestEntry {
     pub file: &'static str,
     pub sha256: &'static str,

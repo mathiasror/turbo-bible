@@ -122,6 +122,126 @@ fn import_shard(shard: &Path, insert: &mut rusqlite::CachedStatement<'_>) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::XREF_SCHEMA_SQL;
+
+    /// The source-shard schema `build` SELECTs from, mirrored from a real
+    /// scrollmapper `cross_references_*.db` (`formats/sqlite/extras/`). The
+    /// `id` autoincrement column is present-but-unread, exactly as upstream.
+    const SOURCE_SHARD_SCHEMA: &str = "
+        CREATE TABLE cross_references (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_book TEXT,
+            from_chapter INTEGER,
+            from_verse INTEGER,
+            to_book TEXT,
+            to_chapter INTEGER,
+            to_verse_start INTEGER,
+            to_verse_end INTEGER,
+            votes INTEGER
+        );";
+
+    /// One synthetic source row: `(from_book, from_chapter, from_verse,
+    /// to_book, to_chapter, to_verse_start, to_verse_end, votes)`.
+    type ShardRow<'a> = (&'a str, i64, i64, &'a str, i64, i64, i64, i64);
+
+    /// Write one synthetic source shard at
+    /// `<extras>/cross_references_<n>.db` with the upstream schema and `rows`.
+    fn write_shard(extras: &Path, n: usize, rows: &[ShardRow<'_>]) {
+        let path = extras.join(format!("cross_references_{n}.db"));
+        let conn = Connection::open(&path).expect("create shard db");
+        conn.execute_batch(SOURCE_SHARD_SCHEMA)
+            .expect("apply source shard schema");
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO cross_references
+                   (from_book, from_chapter, from_verse,
+                    to_book, to_chapter, to_verse_start, to_verse_end, votes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )
+            .expect("prepare insert");
+        for (fb, fc, fv, tb, tc, tvs, tve, votes) in rows {
+            stmt.execute(params![fb, fc, fv, tb, tc, tvs, tve, votes])
+                .expect("insert shard row");
+        }
+    }
+
+    /// End-to-end of `xrefs::build` against synthetic shards — no scrollmapper
+    /// checkout required (the pipeline integration test is `#[ignore]`-gated on
+    /// one). Proves: a normal coordinate lands with its votes, a numbered/variant
+    /// book name resolves via the OSIS variant lookup, and a garbage book name is
+    /// dropped rather than corrupting the FK.
+    #[test]
+    fn build_resolves_variants_and_drops_unknown_books() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let extras = tmp.path().join("formats").join("sqlite").join("extras");
+        std::fs::create_dir_all(&extras).expect("create extras layout");
+
+        // Shard 0 carries the real rows; shards 1..6 must exist (build opens
+        // all seven), so create them empty.
+        write_shard(
+            &extras,
+            0,
+            &[
+                // (a) normal coordinate: Genesis 1:1 -> John 1:1, 50 votes.
+                ("Genesis", 1, 1, "John", 1, 1, 1, 50),
+                // (b) variant name "1 John" must resolve to OSIS "1JN".
+                ("1 John", 1, 9, "Psalms", 32, 5, 5, 7),
+                // (c) garbage from_book — must be skipped entirely.
+                ("Nonexistent Book", 1, 1, "John", 1, 1, 1, 99),
+                // (c') garbage to_book — must also be skipped.
+                ("John", 3, 16, "Bogus", 1, 1, 1, 99),
+            ],
+        );
+        for n in 1..XREF_SHARDS {
+            write_shard(&extras, n, &[]);
+        }
+
+        let mut out = Connection::open_in_memory().expect("open out db");
+        out.pragma_update(None, "foreign_keys", true)
+            .expect("enable foreign keys");
+        out.execute_batch(XREF_SCHEMA_SQL)
+            .expect("apply xref schema");
+
+        let inserted = build(tmp.path(), &mut out).expect("build xrefs");
+        // Two of the four source rows survive (the two garbage rows drop).
+        assert_eq!(inserted, 2, "only resolvable rows should be inserted");
+
+        let total: i64 = out
+            .query_row("SELECT COUNT(*) FROM xref", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 2);
+
+        // (a) the normal coordinate landed with its votes and OSIS codes.
+        let votes: i64 = out
+            .query_row(
+                "SELECT votes FROM xref
+                 WHERE from_book='GEN' AND from_chapter=1 AND from_verse=1
+                   AND to_book='JHN'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("Genesis 1:1 -> John row present");
+        assert_eq!(votes, 50);
+
+        // (b) "1 John" resolved to "1JN" via the variant lookup.
+        let from_one_john: i64 = out
+            .query_row("SELECT COUNT(*) FROM xref WHERE from_book='1JN'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(from_one_john, 1, "'1 John' should resolve to OSIS 1JN");
+
+        // (c) nothing landed for the unknown book names.
+        let garbage: i64 = out
+            .query_row(
+                "SELECT COUNT(*) FROM xref WHERE from_book IN ('Nonexistent Book','Bogus')
+                    OR to_book IN ('Nonexistent Book','Bogus')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(garbage, 0, "unknown-book rows must be dropped");
+    }
 
     #[test]
     fn xref_variants_resolve() {

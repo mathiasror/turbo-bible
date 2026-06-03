@@ -232,7 +232,7 @@ pub fn parse_command(input: &str) -> Option<GotoCommand> {
 /// Norwegian convention uses `,` for chapter-verse separator; we accept `:`,
 /// `,`, and `.` too.
 pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
-    let s = input.trim().to_lowercase();
+    let s = crate::text::fold_diacritics(input.trim());
     if s.is_empty() {
         return None;
     }
@@ -240,9 +240,9 @@ pub fn parse_reference(input: &str, books: &[Book]) -> Option<Position> {
     let mut best: Option<(usize, String)> = None;
     for b in books {
         let candidates = [
-            b.name.to_lowercase(),
-            b.abbreviation.to_lowercase(),
-            b.code.to_lowercase(),
+            crate::text::fold_diacritics(&b.name),
+            crate::text::fold_diacritics(&b.abbreviation),
+            crate::text::fold_diacritics(&b.code),
         ];
         for cand in &candidates {
             if cand.is_empty() {
@@ -447,6 +447,25 @@ mod tests {
     #[test]
     fn rejects_unknown() {
         assert!(parse_reference("xyzzy 1", &books()).is_none());
+    }
+
+    #[test]
+    fn parses_accented_name_from_unaccented_input() {
+        // FTS5 search folds diacritics, so typing the plain-ASCII form must
+        // reach an accented book name in Goto too — "genesis 1" resolving to
+        // the Spanish "Génesis" book (issue: Goto/splash filter folded case but
+        // not diacritics).
+        let spanish = vec![Book {
+            code: "GEN".into(),
+            name: "Génesis".into(),
+            abbreviation: "Gén".into(),
+            testament: "OT".into(),
+            ord: 1,
+            full_name: None,
+        }];
+        let p = parse_reference("genesis 1", &spanish).expect("must resolve un-accented input");
+        assert_eq!(p.book, "GEN");
+        assert_eq!(p.chapter, 1);
     }
 
     // ----- Ambiguity policy -----

@@ -824,6 +824,64 @@ mod tests {
     }
 
     #[test]
+    fn malformed_json_surfaces_friendly_parse_context() {
+        // A non-integer `verse` can't deserialize into `ImportVerse.verse: i64`,
+        // so `serde_json::from_str` fails. The `run` path wraps that failure with
+        // a "parse … as turbo-bible import JSON" context frame; assert the user
+        // sees that friendly frame rather than a bare serde error.
+        let dir = tempfile::tempdir().unwrap();
+        let json_path = dir.path().join("bad.json");
+        fs::write(
+            &json_path,
+            r#"{ "books": [ { "book": "JHN", "chapters": [ { "chapter": 1, "verses": [ { "verse": "not-an-int", "text": "x" } ] } ] } ] }"#,
+        )
+        .unwrap();
+        let args = ImportArgs {
+            file: json_path,
+            code: "zz-bad".into(),
+            name: "Bad".into(),
+            language: "en".into(),
+            license: "CC0-1.0".into(),
+            attribution: String::new(),
+            force: false,
+            translations_dir: Some(dir.path().to_path_buf()),
+        };
+        let err = run(&args).unwrap_err();
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("turbo-bible import JSON"),
+            "expected the friendly parse-context frame, got: {rendered}"
+        );
+        // And no partial `<code>.db` was left behind on the parse failure.
+        assert!(!dir.path().join("zz-bad.db").exists());
+    }
+
+    #[test]
+    fn top_level_non_object_surfaces_friendly_parse_context() {
+        // A top-level JSON array (not the expected object) also fails to
+        // deserialize into `ImportJson`; the same context frame must wrap it.
+        let dir = tempfile::tempdir().unwrap();
+        let json_path = dir.path().join("bad2.json");
+        fs::write(&json_path, r#"[ "not", "an", "object" ]"#).unwrap();
+        let args = ImportArgs {
+            file: json_path,
+            code: "zz-bad2".into(),
+            name: "Bad".into(),
+            language: "en".into(),
+            license: "CC0-1.0".into(),
+            attribution: String::new(),
+            force: false,
+            translations_dir: Some(dir.path().to_path_buf()),
+        };
+        let err = run(&args).unwrap_err();
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("turbo-bible import JSON"),
+            "expected the friendly parse-context frame, got: {rendered}"
+        );
+    }
+
+    #[test]
     fn resolve_book_matches_osis_and_name_case_insensitively() {
         assert_eq!(resolve_book("JHN").unwrap().osis, "JHN");
         assert_eq!(resolve_book("jhn").unwrap().osis, "JHN");

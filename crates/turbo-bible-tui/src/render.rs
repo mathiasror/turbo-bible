@@ -302,7 +302,14 @@ pub fn render_passage_with_diff(
         // Pre-wrap the verse text so wrapped lines hang-indent under the
         // verse number gutter. Append the marker glyph to the last chunk so
         // it sits at the very end of the verse, not on a row of its own.
-        let text = v.text.replace('\n', " ");
+        // Fold embedded newlines to spaces, but only allocate a new String for
+        // the rare verse that actually contains one — most don't, and this runs
+        // for every verse on every draw.
+        let text: std::borrow::Cow<'_, str> = if v.text.contains('\n') {
+            v.text.replace('\n', " ").into()
+        } else {
+            v.text.as_str().into()
+        };
         let body_w = (wrap_width as usize)
             .saturating_sub(PANEL_PAD + VERSE_PREFIX + poetry_indent)
             .clamp(20, MAX_BODY_WIDTH);
@@ -313,7 +320,7 @@ pub fn render_passage_with_diff(
         let mut chunks = if omitted {
             vec![OMITTED_PLACEHOLDER.to_string()]
         } else {
-            word_wrap(&text, body_w)
+            word_wrap(text.as_ref(), body_w)
         };
         if chunks.is_empty() {
             chunks.push(String::new());

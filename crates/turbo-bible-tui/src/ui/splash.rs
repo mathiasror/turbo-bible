@@ -151,12 +151,15 @@ impl SplashView {
         if self.filter.is_empty() {
             return true;
         }
-        let f = self.filter.to_lowercase();
+        // Fold both case and diacritics (mirroring FTS5 search) so an
+        // un-accented filter like "genes" matches an accented book name such as
+        // "Génesis".
+        let f = crate::text::fold_diacritics(&self.filter);
         let hay = format!(
             "{} {} {}",
-            b.name.to_lowercase(),
-            b.abbreviation.to_lowercase(),
-            b.code.to_lowercase()
+            crate::text::fold_diacritics(&b.name),
+            crate::text::fold_diacritics(&b.abbreviation),
+            crate::text::fold_diacritics(&b.code)
         );
         hay.contains(&f)
     }
@@ -1567,5 +1570,26 @@ mod tests {
             SplashOutcome::Continue
         ));
         assert!(matches!(splash.mode, SplashMode::Normal));
+    }
+
+    /// The filter folds diacritics like FTS5 search, so an un-accented query
+    /// matches an accented book name (typing "genes" finds "Génesis").
+    #[test]
+    fn filter_matches_accented_name_from_unaccented_input() {
+        let mut splash =
+            SplashView::new(fake_books(0, 0), None, "t".into(), "es-rv1909".into(), None);
+        let genesis = Book {
+            code: "GEN".into(),
+            name: "Génesis".into(),
+            abbreviation: "Gén".into(),
+            testament: "OT".into(),
+            ord: 1,
+            full_name: None,
+        };
+        splash.filter = "genes".into();
+        assert!(
+            splash.matches(&genesis),
+            "un-accented filter must match the accented book name"
+        );
     }
 }

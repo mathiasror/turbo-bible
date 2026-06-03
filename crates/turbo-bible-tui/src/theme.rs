@@ -11,8 +11,11 @@ use crate::config::ThemeConfig;
 
 static THEME: OnceLock<ThemeConfig> = OnceLock::new();
 
+/// Install the runtime palette. First init wins; accessors before init lazily
+/// lock the default palette (see [`theme`]), in which case a later `init` is a
+/// silent no-op rather than a panic.
 pub fn init(t: ThemeConfig) {
-    THEME.set(t).expect("theme initialized twice");
+    let _ = THEME.set(t);
 }
 
 fn theme() -> &'static ThemeConfig {
