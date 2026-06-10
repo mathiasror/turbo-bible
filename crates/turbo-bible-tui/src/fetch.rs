@@ -62,27 +62,37 @@ pub fn translation(translations_dir: &Path, code: &str) -> Result<()> {
     .with_context(|| format!("fetch translation {}", entry.code))
 }
 
-/// Download the shared cross-references DB `xrefs.db.zst` and install it
-/// as `<translations_dir>/xrefs.db`, replacing the empty stand-in that
-/// `install::ensure_installed` seeds so `Db::open_ro`'s ATTACH always
-/// succeeds. Unlike [`translation`] there's no `dest.exists()` guard —
-/// the stand-in always exists, so existence can't mean "already
-/// fetched"; the caller gates on `Db::has_xrefs` (which distinguishes
-/// the empty stand-in from the real dataset) and only calls this when
-/// the real data is absent. The atomic rename overwrites the stand-in.
+/// Staging filename `xrefs` downloads to, next to the final
+/// `<translations_dir>/xrefs.db`. `Db::swap_in_xrefs` renames it into
+/// place once the connections have let go of the stand-in.
+pub(crate) const XREFS_STAGED: &str = "xrefs.db.staged";
+
+/// Download the shared cross-references DB `xrefs.db.zst` and *stage*
+/// it as `<translations_dir>/xrefs.db.staged` ([`XREFS_STAGED`]), next
+/// to the empty stand-in `xrefs.db` that `install::ensure_installed`
+/// seeds so `Db::open_ro`'s ATTACH always succeeds. Unlike
+/// [`translation`] there's no `dest.exists()` guard — the stand-in
+/// always exists, so existence can't mean "already fetched"; the caller
+/// gates on `Db::has_xrefs` (which distinguishes the empty stand-in
+/// from the real dataset) and only calls this when the real data is
+/// absent.
 ///
 /// Mirrors [`translation`]: same `curl` → sha256 → zstd-decompress →
-/// atomic-rename pipeline, verified against the embedded manifest. After
-/// it returns `Ok`, the caller must `Db::attach_xrefs` to point the open
-/// connections at the freshly-installed file (the ATTACH is bound at
-/// connection-open time, so the swap isn't visible until then).
+/// atomic-rename pipeline, verified against the embedded manifest —
+/// except the rename lands on the staging path, not the final one. We
+/// can't rename over `xrefs.db` here: every open connection still has
+/// the stand-in ATTACHed, and Windows refuses to rename over an open
+/// file (SQLite opens without `FILE_SHARE_DELETE`). After this returns
+/// `Ok`, the caller must `Db::swap_in_xrefs` the staged file — that
+/// runs where the connections live, so it can DETACH them first, then
+/// rename the staged DB into place and re-ATTACH.
 ///
 /// # Errors
 /// - `curl` missing or download failed (no network, 404).
 /// - SHA-256 mismatch between the decompressed bytes and the manifest.
 /// - IO failure when writing to `translations_dir`.
 pub fn xrefs(translations_dir: &Path) -> Result<()> {
-    let dest = translations_dir.join("xrefs.db");
+    let dest = translations_dir.join(XREFS_STAGED);
     fetch_and_install(
         translations_dir,
         crate::manifest::XREFS.file,

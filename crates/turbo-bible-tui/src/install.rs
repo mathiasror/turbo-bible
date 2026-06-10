@@ -134,8 +134,9 @@ fn extract_into(target_dir: &Path, force: bool) -> Result<InstallStats> {
     }
 
     // Seed an empty xrefs.db so Db::open_ro's ATTACH succeeds even
-    // before the user (or install.sh) has fetched the real ~6 MB
-    // file. fetch::xrefs swaps in the real DB later, atomic-rename.
+    // before the user (or install.sh) has fetched the real ~6 MB file.
+    // fetch::xrefs stages the real DB next to it later; Db::swap_in_xrefs
+    // renames it over this stand-in once the connections detach.
     let xrefs = target_dir.join("xrefs.db");
     if !xrefs.exists() {
         crate::db::create_empty_xrefs_db(&xrefs)?;
