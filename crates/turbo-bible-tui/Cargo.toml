@@ -38,7 +38,9 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-arboard = "3"
+# default = ["image-data"] only: it drags image/tiff into a text-only
+# clipboard. wayland-data-control was never a default, so nothing regresses.
+arboard = { version = "3", default-features = false }
 clap.workspace = true
 crossterm = "0.29"
 etcetera = "0.11"
