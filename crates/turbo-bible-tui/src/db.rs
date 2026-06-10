@@ -764,10 +764,37 @@ fn attach_ro(conn: &Connection, path: &Path, alias: &str) -> Result<()> {
     // compile-time constant identifier (XREFS_SCHEMA), not user input, so it
     // stays inline — identifiers can't be bound.
     let abs = fs::canonicalize(path).with_context(|| format!("canonicalize {}", path.display()))?;
-    let uri = format!("file://{}?mode=ro", encode_uri_path(&abs.to_string_lossy()));
+    let uri = format!("file://{}?mode=ro", encode_uri_path(&uri_path(&abs)));
     conn.execute(&format!("ATTACH DATABASE ?1 AS {alias}"), params![uri])
         .with_context(|| format!("ATTACH {alias} ({})", path.display()))?;
     Ok(())
+}
+
+/// The canonicalized path in `SQLite` `file:` URI shape. Unix paths pass
+/// through (they already start with `/`); Windows paths go through
+/// [`windows_uri_path`].
+fn uri_path(abs: &Path) -> String {
+    let s = abs.to_string_lossy();
+    if cfg!(windows) {
+        windows_uri_path(&s)
+    } else {
+        s.into_owned()
+    }
+}
+
+/// Rewrite a Windows path into the `/C:/…` (or `//server/share/…`) form
+/// `SQLite`'s URI parser accepts. `fs::canonicalize` on Windows returns
+/// verbatim paths (`\\?\C:\…`, `\\?\UNC\server\share\…`); a raw
+/// backslash path has no `/` after `file://`, so `SQLite` would read the
+/// whole thing as a (rejected) authority — and [`encode_uri_path`] would
+/// mangle the `?` in the verbatim prefix to `%3F`.
+fn windows_uri_path(s: &str) -> String {
+    let body = s
+        .strip_prefix(r"\\?\UNC\")
+        .map(|r| format!("/{r}"))
+        .or_else(|| s.strip_prefix(r"\\?\").map(str::to_owned))
+        .unwrap_or_else(|| s.to_owned());
+    format!("/{}", body.replace('\\', "/"))
 }
 
 /// Percent-encode the characters that would otherwise break a `SQLite` `file:`
@@ -1081,6 +1108,19 @@ mod tests {
         assert_eq!(encode_uri_path("/Users/O'Brien/x"), "/Users/O'Brien/x"); // `'` is fine in a URI
         assert_eq!(encode_uri_path("/a b/c?d#e%f"), "/a%20b/c%3Fd%23e%25f");
         assert_eq!(encode_uri_path("/Bøker/blå"), "/Bøker/blå"); // non-ASCII passes through
+    }
+
+    #[test]
+    fn windows_uri_path_rewrites_verbatim_and_drive_paths() {
+        // Not cfg(windows)-gated: the transform is pure, so unix CI covers
+        // the shapes `fs::canonicalize` produces on Windows.
+        assert_eq!(windows_uri_path(r"\\?\C:\a b\x.db"), "/C:/a b/x.db");
+        // Defensive: a non-verbatim drive path still gets the leading `/`.
+        assert_eq!(windows_uri_path(r"C:\plain\x.db"), "/C:/plain/x.db");
+        assert_eq!(
+            windows_uri_path(r"\\?\UNC\srv\share\x.db"),
+            "//srv/share/x.db"
+        );
     }
 
     #[test]
