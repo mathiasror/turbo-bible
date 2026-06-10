@@ -10,6 +10,8 @@
 //! positioned individually), so assertions read the side-effect files
 //! (state.toml, config.toml, bookmarks.toml) after `exp_eof`.
 
+#![cfg(unix)] // rexpect drives a PTY via nix; the suite is unix-only.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -99,6 +99,67 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-features
 
+  windows:
+    name: test (windows)
+    runs-on: windows-latest
+    # release.yml ships a windows-msvc artifact, but nothing previously
+    # *executed* a Windows build — the PTY e2e suite's rexpect dev-dependency
+    # pulls in unix-only `nix`, so `cargo test --workspace` couldn't even
+    # build here. That suite now self-excludes via #![cfg(unix)] plus the
+    # target-gated rexpect dev-dependency, so this job runs the portable
+    # unit suites. It also doubles as the automated smoke test for the
+    # Windows SQLite-URI ATTACH fix in db.rs. The ubuntu `check` job owns
+    # fmt/clippy; this one only tests.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Same asset staging as `check`, but with a windows-specific cache key:
+      # Actions caches aren't shared across OSes by default, and the pipeline
+      # isn't bit-deterministic, so the manifest.json must travel with the
+      # .db.zst it was generated against rather than be borrowed from the
+      # ubuntu cache.
+      - name: Cache translation assets
+        id: assets-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
+        with:
+          path: crates/turbo-bible-tui/assets
+          key: tb-assets-windows-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
+
+      - name: Clone scrollmapper at pinned ref
+        if: steps.assets-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: scrollmapper/bible_databases
+          ref: ${{ env.SCROLLMAPPER_REF }}
+          path: data/scrollmapper-checkout
+          sparse-checkout: |
+            formats/json
+            formats/sqlite/extras
+          sparse-checkout-cone-mode: true
+
+      - name: Install rust toolchain
+        run: rustup show
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+
+      - name: Bundle translations into TUI assets/
+        if: steps.assets-cache.outputs.cache-hit != 'true'
+        # windows-latest defaults to pwsh; this block uses bash line
+        # continuations, so pin the shell.
+        shell: bash
+        run: |
+          cargo run -p turbo-bible-data --release -- build \
+            --scrollmapper data/scrollmapper-checkout \
+            --manifest data/manifest_source.toml
+          cargo run -p turbo-bible-data --release -- compress
+          mkdir -p crates/turbo-bible-tui/assets
+          cp dist/translations/*.db.zst crates/turbo-bible-tui/assets/
+          cp dist/translations/manifest.json crates/turbo-bible-tui/assets/
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
   msrv:
     name: msrv (rust-version)
     runs-on: ubuntu-latest
