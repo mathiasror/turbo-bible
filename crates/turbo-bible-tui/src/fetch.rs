@@ -210,6 +210,17 @@ fn run_curl(url: &str, dest: &Path, max_filesize: u64) -> Result<()> {
             "--proto-redir",
             "=https",
             "--tlsv1.2",
+            // Fail fast on a black-holed connection, and abort a transfer
+            // that stalls (<1 byte/s for 30 s) — otherwise a hung curl pins
+            // the single in-flight download slot for the whole session.
+            // No --max-time: a slow link may legitimately need arbitrarily
+            // long for a multi-MB asset. Mirrors update.rs's hardening.
+            "--connect-timeout",
+            "10",
+            "--speed-limit",
+            "1",
+            "--speed-time",
+            "30",
             "--retry",
             "3",
             "--max-filesize",
