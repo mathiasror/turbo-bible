@@ -9,24 +9,30 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
 ### Fixed
 
 - **UX audit (#66): 23 intuitiveness fixes across keymaps, navigation, and
-  reading.** Highlights: the Find dialog now scrolls the selection into view
-  (it used to highlight nothing while the counter climbed); empty critical-text
-  verses render an italic "(omitted)" instead of a bare number; `Ctrl-O`/`Ctrl-I`
-  restore the cursor verse; a width-suppressed references sidebar reads `NARROW`
-  (vs `NOREFS` when toggled off) so `Tab` no longer looks dead. A transient
-  feedback layer + a vim `showcmd` indicator end the silent-feedback problems:
-  pending counts/chords are visible; `Esc` aborts them in one press; `b` truly
-  toggles bookmarks; `y` confirms "Copied …"; `n`/`N` say "Pattern not found"
-  and announce wraps; Goto names an unknown reference instead of dead-`Enter`.
-  Help and the status bar are now keymap-aware (the `turbo` profile no longer
-  advertises vim keys it can't fire); count prefixes drive chapter/book/page
-  motions; `Ctrl-W`/`n`/`N` gained `[keys]` aliases; the informational menubar
-  is de-emphasised. `n`/`N` follow the Find list's order; the splash filter
-  auto-focuses the matching column and opens on one `Enter`; `max_width` is
-  capped so it can't push the sidebar out of reach; chapter/book motion cues
-  "Start/End of the Bible" at the canon edges; the `K` popup is titled
-  "Cross-references" (the footnote table has no source); and on-demand download
-  failures now give distinct, actionable messages.
+  reading.**
+  - Find dialog scrolls the selection into view (it used to highlight nothing
+    while the counter climbed).
+  - Empty critical-text verses render an italic "(omitted)" instead of a bare
+    number.
+  - `Ctrl-O`/`Ctrl-I` restore the cursor verse.
+  - A width-suppressed references sidebar reads `NARROW` (vs `NOREFS` when
+    toggled off) so `Tab` no longer looks dead.
+  - A transient feedback layer + a vim `showcmd` indicator end the
+    silent-feedback problems: pending counts/chords are visible; `Esc` aborts
+    them in one press.
+  - `b` truly toggles bookmarks; `y` confirms "Copied …"; `n`/`N` say "Pattern
+    not found" and announce wraps; Goto names an unknown reference instead of
+    dead-`Enter`.
+  - Help and the status bar are keymap-aware — the `turbo` profile no longer
+    advertises vim keys it can't fire.
+  - Count prefixes drive chapter/book/page motions; `Ctrl-W`/`n`/`N` gained
+    `[keys]` aliases; the informational menubar is de-emphasised.
+  - `n`/`N` follow the Find list's order; the splash filter auto-focuses the
+    matching column and opens on one `Enter`.
+  - `max_width` is capped so it can't push the sidebar out of reach.
+  - Chapter/book motion cues "Start/End of the Bible" at the canon edges.
+  - The `K` popup is titled "Cross-references" (the footnote table has no
+    source); on-demand download failures now give distinct, actionable messages.
 - **Cross-references now actually download on demand.** `cargo` / `brew`
   installs started with an empty `xrefs.db` stand-in and never fetched the real
   ~430k-entry dataset, so cross-references silently never appeared (only the

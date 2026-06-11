@@ -25,8 +25,9 @@ reference, see the [README](../README.md). For an animated overview, see
 
 The King James Version is embedded in the binary and extracted into
 `$XDG_DATA_HOME/turbo-bible/translations/` on first launch, so there is
-nothing to install before reading. Launch with `cargo run -p turbo-bible
---release`. Search works immediately — the FTS5 index (a
+nothing to install before reading. Launch it with `turbo-bible` (from a
+cloned source checkout, run `cargo run -p turbo-bible --release -- …`
+instead). Search works immediately — the FTS5 index (a
 diacritic-folding tokenizer and a prefix index) ships prebuilt in each
 translation database, so there is no runtime rebuild. (The other ten
 translations download from GitHub Releases the first time you select
@@ -38,8 +39,8 @@ You land on the splash screen. If you'd rather skip it and jump straight
 into a passage, pass `--book` and `--chapter`:
 
 ```sh
-cargo run -p turbo-bible --release -- --book JHN --chapter 3
-cargo run -p turbo-bible --release -- --translation nb-1930 --book GEN
+turbo-bible --book JHN --chapter 3
+turbo-bible --translation nb-1930 --book GEN
 ```
 
 Translation resolution at startup follows this order:
@@ -234,15 +235,16 @@ The References sidebar follows the cursor verse and shows:
 Footnote markers in the passage sit at end-of-verse, not mid-verse (a
 known limitation — see "Known limitations" in the README).
 
-For an interactive view, press `K` to open the **footnote popup**. It
-shows every footnote on the verse, with `↑`/`↓` to walk through linked
-cross-references. `Enter` follows the highlighted cross-reference (jumps
-your cursor to that verse); `s` instead opens it in a side-by-side
+For an interactive view, press `K` to open the **cross-reference popup**.
+It lists every cross-reference on the verse, with `↑`/`↓` to walk through
+them. `Enter` follows the highlighted cross-reference (jumps your cursor to
+that verse); `s` instead opens it in a side-by-side
 [compare pane](#comparing-translations-side-by-side). `Esc` or `q` closes
 the popup.
 
-If the cursor verse has no footnotes the popup says so and closes
-politely.
+If the cursor verse has no cross-references the popup says so and closes
+politely. (Footnotes share this popup, but no bundled translation carries
+footnote data yet — see "Known limitations" in the README.)
 
 **Downloading cross-references.** The ~430k-entry cross-references
 dataset ships as a separate ~6 MB asset. A curl-installed copy has it

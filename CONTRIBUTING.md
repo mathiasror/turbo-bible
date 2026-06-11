@@ -134,7 +134,8 @@ the cargo-dist-generated installer.
 
 ## Filing issues
 
-When reporting a bug, include:
+Issues use GitHub templates — pick **Bug report** or **Feature request**
+and the form prompts for what's needed. For a bug, that's:
 
 - The translation code you were reading (`en-kjv`, `nb-1930`,
   `es-rv1909`, ...).
@@ -144,3 +145,8 @@ When reporting a bug, include:
 - Output of `cargo --version` and `rustc --version`.
 - Steps to reproduce. The state files
   (`~/.config/turbo-bible/{state,config,bookmarks}.toml`) often help.
+
+For security vulnerabilities, don't open a public issue — follow the
+[security policy](SECURITY.md). This project follows the
+[Contributor Covenant](CODE_OF_CONDUCT.md); by participating you're
+expected to uphold it.
