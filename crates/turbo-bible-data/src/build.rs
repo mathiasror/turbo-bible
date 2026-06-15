@@ -399,7 +399,7 @@ mod tests {
         );
     }
 
-    /// The schema declares `verse.book REFERENCES book(code)`, but SQLite only
+    /// The schema declares `verse.book REFERENCES book(code)`, but `SQLite` only
     /// enforces it when `PRAGMA foreign_keys = ON`. The build path now sets that
     /// pragma; this pins the behavior so a regression that dropped the pragma
     /// (letting an orphan verse ship) fails in CI.

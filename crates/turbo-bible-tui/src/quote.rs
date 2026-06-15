@@ -106,11 +106,16 @@ fn lookup(
          JOIN book_label bl ON bl.book = v.book
          WHERE v.book = ?1 AND v.chapter = ?2 AND v.verse = ?3",
     )?;
-    let row = stmt
-        .query_row(params![book, chapter, verse], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .ok();
+    let row = match stmt.query_row(params![book, chapter, verse], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    }) {
+        Ok(row) => Some(row),
+        // Row-not-found is the expected miss: pick() walks to the next
+        // curated candidate. Anything else is a real DB failure and must
+        // surface instead of silently degrading the splash quote.
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(e.into()),
+    };
     Ok(row.map(|(text, name)| DailyQuote {
         reference: crate::reference::format(&name, chapter, verse, translation),
         text: text.replace('\n', " "),

@@ -1,6 +1,6 @@
 //! Find dialog (F3 / `/`). FTS5 search with live results.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
@@ -29,6 +29,10 @@ pub struct FindDialog {
     /// minimally to keep `selected` on screen. `Cell` because `render` takes
     /// `&self` but needs to persist the offset it lands on (issue #66, #1).
     scroll: Cell<usize>,
+    /// Per-hit row costs memoized across draws (the run loop redraws every
+    /// poll tick). Invalidated whenever `results` changes; keyed by the
+    /// snippet width because a terminal resize changes the wrapping.
+    costs_cache: RefCell<Option<(usize, Vec<usize>)>>,
     error: Option<String>,
     /// Active translation code — drives the locale reference separator.
     translation: String,
@@ -48,6 +52,7 @@ impl FindDialog {
             results: Vec::new(),
             selected: 0,
             scroll: Cell::new(0),
+            costs_cache: RefCell::new(None),
             error: None,
             translation: translation.to_string(),
         }
@@ -105,6 +110,9 @@ impl FindDialog {
     fn refresh(&mut self, db: &Db) {
         self.selected = 0;
         self.scroll.set(0);
+        // Every write to `self.results` happens below, so drop the memoized
+        // row costs here.
+        *self.costs_cache.borrow_mut() = None;
         if self.input.trim().is_empty() {
             self.results.clear();
             self.error = None;
@@ -210,16 +218,35 @@ impl FindDialog {
         // the loop always renders from 0 and a selection past the visible
         // window is highlighted nowhere while the footer still counts up
         // (issue #66, finding #1).
-        let costs: Vec<usize> = self
-            .results
-            .iter()
-            .map(|hit| {
-                let snippet =
-                    wrap_snippet(&hit.text, &hit.hits, snippet_w, SNIPPET_MAX_LINES, bg, bg);
-                1 + snippet.len() + 1
-            })
-            .collect();
-        let start = scroll_offset(&costs, self.selected, self.scroll.get(), budget);
+        // The costs only change when `results` changes (which invalidates the
+        // cache) or when `snippet_w` changes (resize), so reuse the memoized
+        // vector across the unconditional per-tick redraws.
+        {
+            let mut cache = self.costs_cache.borrow_mut();
+            let fresh = matches!(cache.as_ref(), Some((w, _)) if *w == snippet_w);
+            if !fresh {
+                let costs: Vec<usize> = self
+                    .results
+                    .iter()
+                    .map(|hit| {
+                        let snippet = wrap_snippet(
+                            &hit.text,
+                            &hit.hits,
+                            snippet_w,
+                            SNIPPET_MAX_LINES,
+                            bg,
+                            bg,
+                        );
+                        1 + snippet.len() + 1
+                    })
+                    .collect();
+                *cache = Some((snippet_w, costs));
+            }
+        }
+        let costs_cache = self.costs_cache.borrow();
+        let costs = &costs_cache.as_ref().expect("cache filled above").1;
+        let start = scroll_offset(costs, self.selected, self.scroll.get(), budget);
+        drop(costs_cache);
         self.scroll.set(start);
         let mut used_rows = 0usize;
         for (i, hit) in self.results.iter().enumerate().skip(start) {
@@ -589,6 +616,42 @@ mod tests {
             !text.contains("zeta1word"),
             "the first hit should be scrolled off: {text:?}"
         );
+    }
+
+    /// The per-hit row costs are memoized across draws: two renders at the
+    /// same size produce identical buffers from a populated cache, and a
+    /// resize (different snippet width) recomputes it.
+    #[test]
+    fn render_memoizes_row_costs_keyed_by_snippet_width() {
+        use ratatui::layout::Rect;
+        let dlg = dialog_with_results(10);
+        assert!(dlg.costs_cache.borrow().is_none());
+
+        let area = Rect::new(0, 0, 80, 24);
+        let mut first = Buffer::empty(area);
+        dlg.render(area, &mut first, &[]);
+        let w_at_80 = dlg
+            .costs_cache
+            .borrow()
+            .as_ref()
+            .map(|(w, _)| *w)
+            .expect("render populates the cache");
+
+        let mut second = Buffer::empty(area);
+        dlg.render(area, &mut second, &[]);
+        assert_eq!(first, second, "memoized render must be byte-identical");
+
+        // A narrower terminal changes the snippet width: the cache re-keys.
+        let narrow = Rect::new(0, 0, 60, 24);
+        let mut third = Buffer::empty(narrow);
+        dlg.render(narrow, &mut third, &[]);
+        let w_at_60 = dlg
+            .costs_cache
+            .borrow()
+            .as_ref()
+            .map(|(w, _)| *w)
+            .expect("cache stays populated");
+        assert_ne!(w_at_80, w_at_60, "resize must recompute the costs");
     }
 
     /// With zero results (the `(no matches)` state), the footer must advertise

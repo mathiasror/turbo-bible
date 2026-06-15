@@ -38,7 +38,9 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-arboard = "3"
+# default = ["image-data"] only: it drags image/tiff into a text-only
+# clipboard. wayland-data-control was never a default, so nothing regresses.
+arboard = { version = "3", default-features = false }
 clap.workspace = true
 crossterm = "0.29"
 etcetera = "0.11"
@@ -60,4 +62,8 @@ serde_json.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+
+# rexpect drives a PTY via nix, which is unix-only; gating it here lets
+# `cargo test` build on Windows (tests/e2e.rs self-excludes via #![cfg(unix)]).
+[target.'cfg(unix)'.dev-dependencies]
 rexpect = "0.7"

@@ -340,7 +340,8 @@ impl Db {
     /// ATTACH `xrefs.db` onto every translation connection. Used after
     /// the xrefs DB has been downloaded post-startup (the ATTACH is bound at
     /// connection-open time, so the on-disk swap isn't visible until this
-    /// re-attaches). Called by `poll_download` once `fetch::xrefs` lands.
+    /// re-attaches). Called by [`Self::swap_in_xrefs`] once `fetch::xrefs`
+    /// has staged the download.
     ///
     /// Pre-flights the path with a single `canonicalize` *before* touching any
     /// connection: that's the one realistic failure point, so a bad path fails
@@ -367,6 +368,34 @@ impl Db {
         }
         self.xrefs_path = xrefs_path.to_path_buf();
         Ok(())
+    }
+
+    /// Swap a freshly-downloaded xrefs DB into place and re-ATTACH it on
+    /// every connection: DETACH everywhere, rename `staged` over
+    /// `<translations_dir>/xrefs.db`, then ATTACH the new file. The order
+    /// is load-bearing on Windows — a rename over a file any connection
+    /// still holds ATTACHed fails with access-denied (`SQLite` opens without
+    /// `FILE_SHARE_DELETE`); detaching first closes the stand-in so the
+    /// rename can land. On unix the same sequence is simply equivalent to
+    /// the old rename-then-reattach.
+    ///
+    /// If the rename fails, the re-ATTACH still runs against whatever sits
+    /// at the final path (the stand-in), so connections are never left
+    /// without an `xrefs` schema; the rename error is then returned.
+    ///
+    /// # Errors
+    /// Fails if the rename fails, or if [`Self::attach_xrefs`] fails.
+    pub fn swap_in_xrefs(&mut self, staged: &Path) -> Result<()> {
+        let final_path = self.translations_dir.join("xrefs.db");
+        for conn in self.conns.values() {
+            // Best-effort, mirroring attach_xrefs: a connection with nothing
+            // attached just errors here and that's fine.
+            let _ = conn.execute(&format!("DETACH DATABASE {XREFS_SCHEMA}"), []);
+        }
+        let renamed = fs::rename(staged, &final_path)
+            .with_context(|| format!("swap {} into place", final_path.display()));
+        let attached = self.attach_xrefs(&final_path);
+        renamed.and(attached)
     }
 
     /// `true` when the attached `xrefs.xref` table has any rows — i.e.
@@ -764,10 +793,37 @@ fn attach_ro(conn: &Connection, path: &Path, alias: &str) -> Result<()> {
     // compile-time constant identifier (XREFS_SCHEMA), not user input, so it
     // stays inline — identifiers can't be bound.
     let abs = fs::canonicalize(path).with_context(|| format!("canonicalize {}", path.display()))?;
-    let uri = format!("file://{}?mode=ro", encode_uri_path(&abs.to_string_lossy()));
+    let uri = format!("file://{}?mode=ro", encode_uri_path(&uri_path(&abs)));
     conn.execute(&format!("ATTACH DATABASE ?1 AS {alias}"), params![uri])
         .with_context(|| format!("ATTACH {alias} ({})", path.display()))?;
     Ok(())
+}
+
+/// The canonicalized path in `SQLite` `file:` URI shape. Unix paths pass
+/// through (they already start with `/`); Windows paths go through
+/// [`windows_uri_path`].
+fn uri_path(abs: &Path) -> String {
+    let s = abs.to_string_lossy();
+    if cfg!(windows) {
+        windows_uri_path(&s)
+    } else {
+        s.into_owned()
+    }
+}
+
+/// Rewrite a Windows path into the `/C:/…` (or `//server/share/…`) form
+/// `SQLite`'s URI parser accepts. `fs::canonicalize` on Windows returns
+/// verbatim paths (`\\?\C:\…`, `\\?\UNC\server\share\…`); a raw
+/// backslash path has no `/` after `file://`, so `SQLite` would read the
+/// whole thing as a (rejected) authority — and [`encode_uri_path`] would
+/// mangle the `?` in the verbatim prefix to `%3F`.
+fn windows_uri_path(s: &str) -> String {
+    let body = s
+        .strip_prefix(r"\\?\UNC\")
+        .map(|r| format!("/{r}"))
+        .or_else(|| s.strip_prefix(r"\\?\").map(str::to_owned))
+        .unwrap_or_else(|| s.to_owned());
+    format!("/{}", body.replace('\\', "/"))
 }
 
 /// Percent-encode the characters that would otherwise break a `SQLite` `file:`
@@ -794,7 +850,9 @@ fn encode_uri_path(path: &str) -> String {
 /// time when no real xrefs DB is present yet: the file exists on
 /// disk so every per-translation connection can ATTACH it read-only
 /// like the real thing, and [`Db::load_xrefs`] returns 0 rows until
-/// [`fetch::xrefs`] replaces it atomically.
+/// `fetch::xrefs` stages the real DB and [`Db::swap_in_xrefs`] renames
+/// it over this stand-in (with the connections detached first —
+/// Windows can't rename over a file that's still ATTACHed).
 ///
 /// # Errors
 /// Propagates IO and `SQLite` open / CREATE TABLE failures.
@@ -1084,7 +1142,20 @@ mod tests {
     }
 
     #[test]
-    fn attach_xrefs_after_startup_enables_load() {
+    fn windows_uri_path_rewrites_verbatim_and_drive_paths() {
+        // Not cfg(windows)-gated: the transform is pure, so unix CI covers
+        // the shapes `fs::canonicalize` produces on Windows.
+        assert_eq!(windows_uri_path(r"\\?\C:\a b\x.db"), "/C:/a b/x.db");
+        // Defensive: a non-verbatim drive path still gets the leading `/`.
+        assert_eq!(windows_uri_path(r"C:\plain\x.db"), "/C:/plain/x.db");
+        assert_eq!(
+            windows_uri_path(r"\\?\UNC\srv\share\x.db"),
+            "//srv/share/x.db"
+        );
+    }
+
+    #[test]
+    fn swap_in_xrefs_after_startup_enables_load() {
         let tmp = tempfile::tempdir().unwrap();
         crate::install::ensure_installed(tmp.path()).expect("install");
         // Skip when dist/ isn't populated.
@@ -1094,16 +1165,21 @@ mod tests {
             );
             return;
         }
-        // Open WITHOUT xrefs first, then attach to verify the
-        // post-startup attach path used by the K-popup download flow.
-        let xrefs_target = tmp.path().join("xrefs.db");
-        let staged = tmp.path().join("xrefs.db.staged");
-        fs::rename(&xrefs_target, &staged).expect("hide xrefs");
+        // Move the real xrefs DB to the staging path *before* any Db is
+        // open (nothing holds the file, so the rename is safe on every
+        // OS). This mirrors what `fetch::xrefs` produces on disk: the
+        // staged download next to the seeded empty stand-in.
+        let staged = tmp.path().join(crate::fetch::XREFS_STAGED);
+        fs::rename(tmp.path().join("xrefs.db"), &staged).expect("stage xrefs");
+        // open_ro seeds a fresh empty stand-in at xrefs.db, so every
+        // connection holds the stand-in ATTACHed — exactly the state the
+        // K-popup download flow swaps from. (This also covers
+        // attach_xrefs directly: swap_in_xrefs delegates the re-ATTACH
+        // to it.)
         let mut db = Db::open_ro(tmp.path(), "en-kjv").expect("open_ro");
         assert!(!db.has_xrefs());
         assert!(db.load_passage("JHN", 3).expect("john 3").xrefs.is_empty());
-        fs::rename(&staged, &xrefs_target).expect("unhide");
-        db.attach_xrefs(&xrefs_target).expect("attach_xrefs");
+        db.swap_in_xrefs(&staged).expect("swap");
         assert!(db.has_xrefs());
         let passage = db.load_passage("JHN", 3).expect("John 3 again");
         assert!(

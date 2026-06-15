@@ -32,8 +32,8 @@ pub struct TranslationManifestEntry {
 }
 
 /// Manifest entry for the shared cross-references DB. Every field is now
-/// consumed by `fetch::xrefs` (file / sha256 / compressed_size /
-/// decompressed_size), so no `dead_code` allow is needed here.
+/// consumed by `fetch::xrefs` (`file` / `sha256` / `compressed_size` /
+/// `decompressed_size`), so no `dead_code` allow is needed here.
 pub struct XrefsManifestEntry {
     pub file: &'static str,
     pub sha256: &'static str,

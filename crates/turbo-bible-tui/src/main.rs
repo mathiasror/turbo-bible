@@ -368,9 +368,11 @@ enum DownloadKind {
         intent: PickerIntent,
     },
     /// The shared `xrefs.db`, triggered from the K-popup affordance when the
-    /// cross-references dataset isn't installed yet. On success it's
-    /// re-ATTACHed onto every connection and the visible passages are reloaded
-    /// so markers, the sidebar, and the popup reflect the new data.
+    /// cross-references dataset isn't installed yet. The fetch stages the
+    /// download next to the stand-in; on success the main loop swaps it into
+    /// place and re-ATTACHes it onto every connection, then reloads the
+    /// visible passages so markers, the sidebar, and the popup reflect the
+    /// new data.
     Xrefs,
 }
 
@@ -387,9 +389,10 @@ impl DownloadKind {
 
 /// A background download running on a worker thread. The worker does only
 /// the filesystem-bound fetch (`curl` + sha256 + zstd-decompress + atomic
-/// rename); it never touches the [`Db`], so the connection set stays
-/// single-threaded. The main loop applies the result — registering a
-/// connection or re-attaching xrefs — when it lands (see [`poll_download`]).
+/// rename — for xrefs, onto a staging path); it never touches the [`Db`],
+/// so the connection set stays single-threaded. The main loop applies the
+/// result — registering a connection, or swapping the staged xrefs DB into
+/// place and re-attaching it — when it lands (see [`poll_download`]).
 struct DownloadJob {
     /// What's being fetched and how to apply it.
     kind: DownloadKind,
@@ -933,9 +936,10 @@ fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>)
          between the peek and the take on a single-threaded event loop",
     );
     // The "apply" step differs by kind: a translation registers a new
-    // connection; xrefs re-ATTACHes the freshly-downloaded file onto every
-    // open connection (the ATTACH is bound at connection-open, so the swap
-    // isn't visible until then). Both can fail post-fetch → RegisterFailed.
+    // connection; xrefs swaps the staged download into place and re-ATTACHes
+    // it onto every open connection (the swap must happen here, with the
+    // connections detached — Windows can't rename over the still-ATTACHed
+    // stand-in). Both can fail post-fetch → RegisterFailed.
     let result = match recv {
         Ok(Ok(())) => match &job.kind {
             DownloadKind::Translation { code, .. } => match db.add_translation(code) {
@@ -943,8 +947,8 @@ fn poll_download(state: &mut LoopState, db: &mut Db, warnings: &mut Vec<String>)
                 Err(e) => DownloadResult::RegisterFailed(e),
             },
             DownloadKind::Xrefs => {
-                let path = db.translations_dir().join("xrefs.db");
-                match db.attach_xrefs(&path) {
+                let staged = db.translations_dir().join(fetch::XREFS_STAGED);
+                match db.swap_in_xrefs(&staged) {
                     Ok(()) => DownloadResult::Ready,
                     Err(e) => DownloadResult::RegisterFailed(e),
                 }
@@ -1644,8 +1648,9 @@ fn dispatch_dialog(state: &mut LoopState, ctx: &mut AppCtx, key: KeyEvent) -> Re
                 // `d` on the affordance: download xrefs.db off the event loop,
                 // exactly like the translation picker (curl + sha256 +
                 // zstd-decompress on a worker thread, drained by
-                // `poll_download`), sharing the single in-flight slot. On
-                // success poll_download re-ATTACHes the file and reloads the
+                // `poll_download`), sharing the single in-flight slot. The
+                // worker only stages the file; on success poll_download swaps
+                // it into place (Db::swap_in_xrefs) and reloads the
                 // panes so refs appear; close the popup now — the animated
                 // "-- Downloading cross-references… --" pill takes the status
                 // slot, and the user re-opens `K` to read the landed refs.

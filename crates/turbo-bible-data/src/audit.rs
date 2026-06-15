@@ -268,8 +268,17 @@ mod tests {
     /// gated on its presence so CI doesn't depend on it.
     #[test]
     fn collects_against_local_checkout() {
-        let path =
-            PathBuf::from(std::env::var("HOME").expect("HOME")).join("git/oss/bible_databases");
+        // Resolve the conventional checkout location without assuming a unix
+        // environment: Windows has USERPROFILE, not HOME, and a missing
+        // variable means "no checkout here" — skip, exactly like a present
+        // home with no checkout. `expect("HOME")` panicked on Windows CI
+        // before the skip gate below could fire.
+        let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+        else {
+            eprintln!("skipping: no HOME/USERPROFILE to locate a scrollmapper checkout");
+            return;
+        };
+        let path = PathBuf::from(home).join("git/oss/bible_databases");
         if !path.join("sources").is_dir() {
             eprintln!("skipping: no scrollmapper checkout at {}", path.display());
             return;

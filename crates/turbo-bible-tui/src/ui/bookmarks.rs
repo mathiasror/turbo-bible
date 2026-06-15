@@ -120,7 +120,11 @@ impl BookmarksDialog {
                 if let Some(b) = self.items.get(self.cursor).map(|row| row.bm.clone()) {
                     let drop = self.cursor.min(self.items.len().saturating_sub(1));
                     self.items.remove(drop);
-                    if self.cursor >= self.items.len() && !self.items.is_empty() {
+                    // Maintain `cursor < len || (len == 0 && cursor == 0)` here,
+                    // not in callers.
+                    if self.items.is_empty() {
+                        self.cursor = 0;
+                    } else if self.cursor >= self.items.len() {
                         self.cursor = self.items.len() - 1;
                     }
                     BookmarksOutcome::Delete(b)
@@ -384,6 +388,24 @@ mod tests {
         let cut = truncate_chars("a much longer verse body than fits", 10);
         assert_eq!(cut.chars().count(), 10);
         assert!(cut.ends_with('\u{2026}'));
+    }
+
+    /// Deleting the last remaining bookmark must reset the cursor to 0 — the
+    /// dialog maintains `cursor < len || (len == 0 && cursor == 0)` itself, so
+    /// callers don't have to guard with `is_empty()` before indexing.
+    #[test]
+    fn delete_to_empty_resets_cursor_and_navigation_is_safe() {
+        let mut d = dialog_with(vec![(bm("GEN", 1, 1), None), (bm("EXO", 2, 3), None)]);
+        d.cursor = 1;
+        let del = KeyEvent::from(KeyCode::Char('d'));
+        assert!(matches!(d.handle(del), BookmarksOutcome::Delete(_)));
+        assert!(matches!(d.handle(del), BookmarksOutcome::Delete(_)));
+        assert!(d.items.is_empty());
+        assert_eq!(d.cursor, 0);
+        // Motions on the now-empty list must not panic and keep cursor at 0.
+        let _ = d.handle(KeyEvent::from(KeyCode::Down));
+        let _ = d.handle(KeyEvent::from(KeyCode::Up));
+        assert_eq!(d.cursor, 0);
     }
 
     /// Flatten the whole rendered buffer into one string (row by row) so a

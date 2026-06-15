@@ -13,6 +13,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
+use unicode_width::UnicodeWidthChar;
 
 use crate::db::Book;
 use crate::nav::Position;
@@ -1142,22 +1143,21 @@ fn render_entry_cell(
     let mark_style = if is_cursor { sel } else { dim };
     let detail_style = if is_cursor { sel } else { dim };
 
+    // All width math is in display cells (not chars): imported translations
+    // can carry width-2 CJK glyphs, and `format!("{:<w$}")` pads by char
+    // count, which would misalign the grid columns.
     let mark = if is_cursor { "\u{25B8} " } else { "  " };
-    let mark_w = mark.chars().count();
+    let mark_w = display_width(mark);
     let abbr_w = 8usize.min(width.saturating_sub(mark_w));
-    let abbr_padded = format!(
-        "{:<w$}",
-        truncate(&b.abbreviation, abbr_w.saturating_sub(1)),
-        w = abbr_w
-    );
+    let abbr_padded = pad_to_cells(truncate(&b.abbreviation, abbr_w.saturating_sub(1)), abbr_w);
 
     let name_w = width
         .saturating_sub(mark_w)
-        .saturating_sub(abbr_padded.chars().count());
+        .saturating_sub(display_width(&abbr_padded));
     let name_field = truncate(b.display_name(), name_w);
-    let name_padded = format!("{name_field:<name_w$}");
+    let name_padded = pad_to_cells(name_field, name_w);
 
-    let used = mark_w + name_padded.chars().count() + abbr_padded.chars().count();
+    let used = mark_w + display_width(&name_padded) + display_width(&abbr_padded);
     let pad_right = width.saturating_sub(used);
 
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -1190,15 +1190,37 @@ fn testament_labels(code: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Right-pad `s` with spaces to `width` display cells. `format!("{:<w$}")`
+/// pads by char count, which under-pads strings containing width-2 glyphs.
+fn pad_to_cells(s: String, width: usize) -> String {
+    let pad = width.saturating_sub(display_width(&s));
+    s + &" ".repeat(pad)
+}
+
+/// Truncate `s` to at most `max` display cells, appending `…` (width 1) when
+/// it doesn't fit. Measures cells, not chars, so width-2 CJK glyphs from
+/// imported translations can't overflow a grid cell.
 fn truncate(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        s.to_string()
-    } else if max == 0 {
-        String::new()
-    } else {
-        s.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+    if display_width(s) <= max {
+        return s.to_string();
     }
+    if max == 0 {
+        return String::new();
+    }
+    // Reserve one cell for the ellipsis.
+    let budget = max.saturating_sub(1);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let w = ch.width().unwrap_or(0);
+        if used + w > budget {
+            break;
+        }
+        used += w;
+        out.push(ch);
+    }
+    out.push('…');
+    out
 }
 
 #[cfg(test)]
@@ -1591,5 +1613,63 @@ mod tests {
             splash.matches(&genesis),
             "un-accented filter must match the accented book name"
         );
+    }
+
+    /// `truncate` measures display cells, not chars: ASCII behaves exactly as
+    /// before, while width-2 CJK glyphs consume two cells of the budget.
+    #[test]
+    fn truncate_measures_display_cells_not_chars() {
+        // ASCII: byte-identical to the old char-count behavior.
+        assert_eq!(truncate("abc", 5), "abc");
+        assert_eq!(truncate("abcdef", 5), "abcd…");
+        assert_eq!(truncate("abcdef", 0), "");
+        // "世界の書" is 4 chars but 8 display cells.
+        assert_eq!(truncate("世界の書", 8), "世界の書");
+        let t = truncate("世界の書", 5);
+        assert_eq!(t, "世界…", "two glyphs (4 cells) + ellipsis (1) fit in 5");
+        assert!(display_width(&t) <= 5);
+        // An odd budget that can't fit the next wide glyph stops short.
+        assert_eq!(display_width(&truncate("世界の書", 4)), 3);
+    }
+
+    /// The book-grid cell pads and truncates by display cells, so a CJK book
+    /// name (from an imported translation) fills exactly the cell width — and
+    /// an ASCII name renders exactly as before.
+    #[test]
+    fn entry_cell_width_is_exact_in_display_cells() {
+        let styles = EntryStyles {
+            sel: Style::new(),
+            dim: Style::new(),
+            bg: Style::new(),
+        };
+        let cell_width = 24usize;
+        let cjk = Book {
+            code: "X01".into(),
+            name: "世界の書というとても長い名前".into(),
+            abbreviation: "世の書".into(),
+            testament: "OT".into(),
+            ord: 1,
+            full_name: None,
+        };
+        let spans = render_entry_cell(Some(&cjk), 0, 0, true, cell_width, &styles);
+        let total: usize = spans.iter().map(|s| display_width(&s.content)).sum();
+        assert_eq!(
+            total, cell_width,
+            "CJK cell must fill exactly the cell width in display cells"
+        );
+
+        // ASCII layout is unchanged: mark(2) + name padded to 14 + abbr
+        // padded to 8 = 24, same strings the char-count math produced.
+        let ascii = Book {
+            code: "GEN".into(),
+            name: "Genesis".into(),
+            abbreviation: "Gen".into(),
+            testament: "OT".into(),
+            ord: 1,
+            full_name: None,
+        };
+        let spans = render_entry_cell(Some(&ascii), 0, 0, true, cell_width, &styles);
+        let texts: Vec<&str> = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(texts, vec!["\u{25B8} ", "Genesis       ", "Gen     "]);
     }
 }
