@@ -34,7 +34,7 @@ jobs:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # The generated assets only change when the scrollmapper ref, the
       # data-pipeline crate, the manifest source, or the lockfile change.
@@ -45,14 +45,14 @@ jobs:
       # must travel together).
       - name: Cache translation assets
         id: assets-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
         with:
           path: crates/turbo-bible-tui/assets
           key: tb-assets-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
 
       - name: Clone scrollmapper at pinned ref
         if: steps.assets-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: scrollmapper/bible_databases
           ref: ${{ env.SCROLLMAPPER_REF }}
@@ -111,7 +111,7 @@ jobs:
     # Windows SQLite-URI ATTACH fix in db.rs. The ubuntu `check` job owns
     # fmt/clippy; this one only tests.
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Same asset staging as `check`, but with a windows-specific cache key:
       # Actions caches aren't shared across OSes by default, and the pipeline
@@ -120,14 +120,14 @@ jobs:
       # ubuntu cache.
       - name: Cache translation assets
         id: assets-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
         with:
           path: crates/turbo-bible-tui/assets
           key: tb-assets-windows-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
 
       - name: Clone scrollmapper at pinned ref
         if: steps.assets-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: scrollmapper/bible_databases
           ref: ${{ env.SCROLLMAPPER_REF }}
@@ -178,7 +178,7 @@ jobs:
       # in `check` owns warning-cleanliness on the pinned stable toolchain.
       RUSTFLAGS: ''
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # The same asset staging the `check` job needs: the TUI's include_bytes!
       # sites read crates/turbo-bible-tui/assets/*.db.zst, which are gitignored,
@@ -188,14 +188,14 @@ jobs:
       # DRY win if a third consumer ever appears).
       - name: Cache translation assets
         id: assets-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5.0.5 — node24 runtime (v4 ran on the deprecated node20)
         with:
           path: crates/turbo-bible-tui/assets
           key: tb-assets-${{ env.SCROLLMAPPER_REF }}-${{ hashFiles('crates/turbo-bible-data/**/*.rs', 'crates/turbo-bible-data/Cargo.toml', 'data/manifest_source.toml', 'Cargo.lock') }}
 
       - name: Clone scrollmapper at pinned ref
         if: steps.assets-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: scrollmapper/bible_databases
           ref: ${{ env.SCROLLMAPPER_REF }}
@@ -252,7 +252,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # actions-rust-lang/audit is the maintained composite successor to
       # rustsec/audit-check (whose latest tag, v2, is stuck on the deprecated
       # node20 runtime). Composite actions have no node runtime, so this whole
@@ -273,8 +273,8 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           # `bans` and `sources` catch supply-chain drift the audit job
           # can't see (duplicate-version sprawl, unexpected git deps,
