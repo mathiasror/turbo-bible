@@ -236,6 +236,33 @@ jobs:
           cd dist
           sha256sum translations.tar.gz > translations.tar.gz.sha256
 
+      # Release notes = this version's CHANGELOG.md section. Only this
+      # job sets the body (it runs once, after the build matrix), so the
+      # matrix uploads never fight over it.
+      - name: Check out CHANGELOG.md
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          path: src
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          ver="${TAG#v}"
+          awk -v ver="$ver" '
+            index($0, "## [" ver "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' src/CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::warning::no CHANGELOG.md section for ${ver}; falling back to a pointer"
+            echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md)." > release-notes.md
+          fi
+          cat release-notes.md
+
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -245,6 +272,7 @@ jobs:
             dist/translations.tar.gz
             dist/translations.tar.gz.sha256
           tag_name: ${{ github.ref_name }}
+          body_path: release-notes.md
           fail_on_unmatched_files: true
 
   publish-crate:
