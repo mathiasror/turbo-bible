@@ -42,6 +42,59 @@ versions roughly follow [SemVer](https://semver.org/) until 1.0.
   manifest, like every other asset), then re-attaches it and refreshes the open
   passages so markers, the sidebar, and the popup populate. Offline or on
   failure it degrades quietly, matching the translation-download UX.
+- **Windows: the prebuilt binary failed at startup.** `fs::canonicalize`
+  returns verbatim paths (`\\?\C:\…`) that produced an invalid SQLite URI for
+  the cross-references `ATTACH` ("invalid uri authority"). Paths are now
+  rewritten to the `/C:/…` URI form. The cross-references download also could
+  never land on Windows (it renamed over a file every connection held open); it
+  now stages the file and swaps it in with the connections detached. The test
+  suite runs on Windows in CI from here on.
+- **Downloads can no longer hang forever.** Translation / cross-reference
+  fetches gained a connect timeout and stall detection, so a dead connection
+  fails instead of wedging the single download slot for the session. The size
+  cap is now the manifest's compressed size (it was the much looser
+  decompressed size).
+- **Goto and the splash filter fold diacritics, like Find.** `genesis` now
+  resolves `Génesis` in the Spanish / Portuguese / French / Latin translations
+  instead of dead-ending.
+- **Config, state, bookmarks, and the update cache are written atomically** — a
+  crash or full disk mid-save can no longer truncate your bookmark store.
+  An out-of-range jump (`:John 999`, a stale bookmark, `Ctrl-O` after switching
+  translation) is clamped to a chapter that exists instead of opening a blank
+  pane.
+- **Wide-glyph layout.** Reading pane, dialogs, and the splash grid measure
+  text in display cells rather than chars, so an imported CJK / fullwidth
+  translation wraps and aligns correctly. Bundled translations render
+  identically.
+- Goto / Find honour `Ctrl-U` (clear) and no longer insert a literal letter for
+  `Ctrl`-modified keys.
+- The too-narrow compare-pane refusal is a red warning pill naming the width
+  needed ("Too narrow — need 85+ cols (have 80)") instead of a blink-and-miss
+  hint; transient status messages now expire on time under continuous mouse
+  input.
+- The daily-verse lookup surfaces real database errors instead of swallowing
+  them; an unreadable entry in the translations directory no longer aborts
+  first launch.
+- Removed the dead `F10` / `open_menu` action (the menu it opened is long
+  gone). An existing `open_menu` line in `config.toml` is stripped with a
+  warning rather than resetting the config.
+
+### Changed
+
+- The Find dialog caches per-hit row measurements across redraws, and the
+  chapter renderer allocates per verse only when it must — less work per frame.
+- `turbo-bible --help` gained a long description and worked examples; the
+  README gained Install, Uninstall, Features, and Troubleshooting sections.
+- Data pipeline: builds are reproducible (one deterministic `built_at`, from
+  `SOURCE_DATE_EPOCH` or the scrollmapper commit date), all 66 canonical books
+  are asserted present, and foreign keys are actually enforced.
+
+### Security
+
+- `anyhow` bumped to 1.0.104 for RUSTSEC-2026-0190 (unsound
+  `downcast_mut` after `context`; not reachable from this codebase).
+- The clipboard dependency (`arboard`) drops its unused image support, removing
+  the `image` / `tiff` dependency subtree.
 
 ## [0.2.0] - 2026-05-31
 
