@@ -1,6 +1,6 @@
 [package]
 name = "turbo-bible"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Turbo Vision–styled terminal Bible reader with FTS5 search."
